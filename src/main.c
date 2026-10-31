@@ -1733,10 +1733,12 @@ static int quick(Pos *p, int depth, int alpha, int beta) // own stack, doesnt to
 static Move fun_pick(const Analysis *an)
 {
     static u64 ck;
+    static int cdeep;
     static int cmode = -1;
     static Move cm;
     if (!cfg.chaos || !an->best) return an->best;
-    if (ck == tracker.pos.key && cmode == cfg.chaos) return cm; // same spot same pick, or the arrow jumps around every redraw
+    int deep = an->depth >= 12;
+    if (ck == tracker.pos.key && cmode == cfg.chaos && (cdeep || !deep)) return cm; // same spot same pick, or the arrow jumps around every redraw
     Pos p = tracker.pos;
     Move ms[256];
     int sc[256], n = pos_gen_legal(&p, ms);
@@ -1788,7 +1790,33 @@ static Move fun_pick(const Analysis *an)
             for (int i = 0; i < n; i++)
                 if (sc[i] == worst) pool[np++] = ms[i];
         break;
-    case 7: case 8: case 9: case 10: case 11: {
+    case 10: case 11: { // 2000 and 2400 only pick from the engines top 3, the quick search above is too weak to trust up here
+        double win = cfg.chaos == 11 ? 25 : 70, w3[3], tot = 0;
+        Move cand[3] = {an->best, an->alt[0], an->alt[1]};
+        int last_to = tracker.last_move ? (int)M_TO(tracker.last_move) : -1;
+        for (int k = 0; k < 3; k++) {
+            w3[k] = 0;
+            if (!cand[k]) continue;
+            int sc3 = k ? an->alt_score[k - 1] : an->score, d = an->score - sc3;
+            if (k && (d > win || an->alt_mate[k - 1] < 0)) continue;
+            double x = exp(-d / (win / 2.5));
+            int to = M_TO(cand[k]);
+            if (p.sq[to] != EMPTY) x *= to == last_to ? 1.6 : 1.2;
+            Undo u;
+            pos_make(&p, cand[k], &u);
+            if (pos_in_check(&p, p.side)) x *= 1.2;
+            pos_unmake(&p, &u);
+            w3[k] = x, tot += x;
+        }
+        double r3 = (rand() / (RAND_MAX + 1.0)) * tot;
+        for (int k = 0; k < 3 && tot > 0; k++)
+            if (w3[k] > 0 && (r3 -= w3[k]) <= 0) {
+                pool[np++] = cand[k];
+                break;
+            }
+        break;
+    }
+    case 7: case 8: case 9: {
         static const double temp[] = {150, 95, 60, 38, 22}, cut[] = {350, 220, 130, 80, 50}, eng[] = {1, 1, 1.6, 3, 6};
         int lv = cfg.chaos - 7;
         double w[256], total = 0;
@@ -1827,7 +1855,7 @@ static Move fun_pick(const Analysis *an)
     }
     }
     if (np) pick = pool[rand() % np];
-    ck = tracker.pos.key, cmode = cfg.chaos, cm = pick;
+    ck = tracker.pos.key, cmode = cfg.chaos, cm = pick, cdeep = deep; // repick once when the engine got deep, the early best is shaky
     return pick;
 }
 
@@ -3783,7 +3811,7 @@ static void handle_click(double x, double y)
             dd_open = -1;
             keep_second();
             analyzer_set_think_ms(think_secs[cfg.think] * 1000);
-            analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.lines + 1);
+            analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.chaos >= 10 && cfg.lines < 2 ? 3 : cfg.lines + 1);
             analyzer_set_elo(strength_elo[cfg.strength]);
             save_cfg();
             break;
@@ -3864,8 +3892,8 @@ static void handle_click(double x, double y)
             *st->v = hits[i].arg % 64;
             dd_open = -1;
             if (st->v == &cfg.think) analyzer_set_think_ms(think_secs[cfg.think] * 1000);
-            if (st->v == &cfg.lines || st->v == &cfg.threads || st->v == &cfg.hash)
-                analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.lines + 1);
+            if (st->v == &cfg.lines || st->v == &cfg.threads || st->v == &cfg.hash || st->v == &cfg.chaos)
+                analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.chaos >= 10 && cfg.lines < 2 ? 3 : cfg.lines + 1);
             if (st->v == &cfg.engine) choose_engine(cfg.engine);
             if (st->v == &cfg.strength) analyzer_set_elo(strength_elo[cfg.strength]);
             if (st->v == &cfg.second) keep_second();
@@ -4033,7 +4061,7 @@ int main(int argc, char **argv)
     if (!engine_cli && have_saved_engine && (!*saved_engine || is_exec(saved_engine)))
         engine = *saved_engine ? saved_engine : NULL;
     cfg.engine = engine_index(engine);
-    analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.lines + 1);
+    analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.chaos >= 10 && cfg.lines < 2 ? 3 : cfg.lines + 1);
     analyzer_set_elo(strength_elo[cfg.strength]);
     debug_on = cfg.debug;
     srand((unsigned)time(NULL));
