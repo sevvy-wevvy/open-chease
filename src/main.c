@@ -1556,7 +1556,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
                       fit_text(c, st->v == &cfg.library ? (dl_pid > 0 ? "Getting..." : "Browse") : st->names[*st->v], box.w - 26),
                       0, fg);
             double tx2 = box.x + box.w - 15, ty2 = box.y + box.h / 2 - 2;
-            if (st->v == &cfg.library || st->v == &cfg.engine)
+            if (st->v == &cfg.library || st->v == &cfg.engine || st->v == &cfg.second)
                 draw_text(c, tx2 + 1, box.y + 1, ">", 0, fg);
             else
                 draw_triangle(c, tx2, ty2, tx2 + 9, ty2, tx2 + 4.5, ty2 + 5, fg);
@@ -3217,6 +3217,13 @@ static void add_engine(const char *label, const char *path)
         if (!strcmp(out, path)) snprintf(engine_labels[nengines], sizeof(engine_labels[0]), "%.31s", lib[i].name);
     }
     if (*path) cached_name(path, engine_labels[nengines], sizeof(engine_labels[0]));
+    char base[25];
+    snprintf(base, sizeof(base), "%s", engine_labels[nengines]);
+    for (int i = 0, k = 2; i < nengines; i++) // the stockfish get.sh grabbed and the library one both call themselves Stockfish 19
+        if (!strcmp(engine_labels[i], engine_labels[nengines])) {
+            snprintf(engine_labels[nengines], sizeof(engine_labels[0]), "%s (%d)", base, k++ % 100);
+            i = -1;
+        }
     snprintf(engine_paths[nengines], sizeof(engine_paths[0]), "%.1000s", path);
     engine_names[nengines] = engine_labels[nengines];
     nengines++;
@@ -3717,8 +3724,8 @@ static void handle_click(double x, double y)
                 if (st->v == &cfg.debug) debug_on = cfg.debug;
                 dd_open = -1;
                 save_cfg();
-            } else if (st->v == &cfg.library || st->v == &cfg.engine) {
-                lib_open = 1, lib_tab = st->v == &cfg.engine, lib_scroll = 0, lib_del = -1, lib_query[0] = 0;
+            } else if (st->v == &cfg.library || st->v == &cfg.engine || st->v == &cfg.second) { // second opinion gets picked with the 2nd buttons in there
+                lib_open = 1, lib_tab = st->v != &cfg.library, lib_scroll = 0, lib_del = -1, lib_query[0] = 0;
                 settings_open = 0, dd_open = -1;
             } else {
                 dd_open = dd_open == hits[i].arg ? -1 : hits[i].arg;
