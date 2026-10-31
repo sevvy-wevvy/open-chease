@@ -21,6 +21,11 @@
   <a href="https://sevvy-wevvy.com/discord">Discord</a>
 </p>
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="open-chease on a chess.com bot game" width="700"><br>
+  <sub>me vs the Pepe bot on chess.com</sub>
+</p>
+
 <details>
 <summary align="center"><b>✅ Easy Install ✅</b></summary>
 
