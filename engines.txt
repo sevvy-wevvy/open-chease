@@ -1,19 +1,19 @@
 # engines you can grab in open-chease (Settings > Engine > Get engines (Browse))
 # name|url|type|size in MB|tier|tags|about
-# type: bin = the url is the engine, tgz/tar/zip = archive with the engine inside, add :name to pick which file (tgz:arasanx-64-modern)
+# type: bin = the url is the engine, tgz/tar/zip = archive with the engine inside, add #name to the url to pick which file inside
 # tier is rough, 1 = insane (3500+), 2 = really strong (3200+), 3 = strong (2800+), 4 = beatable-ish
 # tags: old, small, fun, variants, cpu (needs a newer cpu, avx2 or so)
 # if github cant be reached open-chease uses a smaller copy built into it
 Stockfish 19|https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-linux-x86-64-universal.tar.gz|tgz|77.6|1||the strongest one out there
-Stockfish 18|https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-ubuntu-x86-64.tar|tar|109.1|1|old|last years stockfish, still insane
-Stockfish 17.1|https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-ubuntu-x86-64.tar|tar|76.4|1|old|older stockfish, still way past any human
+Stockfish 18|https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-ubuntu-x86-64.tar|tar|109.1|1|old|last years stockfish, you wont notice a difference
+Stockfish 17.1|https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-ubuntu-x86-64.tar|tar|76.4|1|old|older stockfish
 Stockfish 16|https://github.com/official-stockfish/Stockfish/releases/download/sf_16/stockfish-ubuntu-x86-64.tar|tar|39.7|1|old|from 2023, smaller download
 Reckless 0.9|https://github.com/codedeliveryservice/Reckless/releases/download/v0.9.0/reckless-linux-generic|bin|62.0|1||one of the very top engines right now, rust
-Pawnocchio 2|https://github.com/JonathanHallstrom/pawnocchio/releases/download/v2.0.1/pawnocchio-2.0.1-linux-x86_64|bin|67.0|1||crazy strong and written in zig of all things
+Pawnocchio 2|https://github.com/JonathanHallstrom/pawnocchio/releases/download/v2.0.1/pawnocchio-2.0.1-linux-x86_64|bin|67.0|1||crazy strong. its written in zig which almost nobody does for chess
 Quanticade 3|https://github.com/Quanticade/Quanticade/releases/download/Cronus-3.0/Quanticade-Linux-gcc-x86-64-bmi2|bin|60.0|1|cpu|up there with the best, wants a cpu with bmi2
-Arasan 26.1|https://github.com/jdart1/arasan-chess/releases/download/v26.1/arasan-linux-binaries-26.1.tar.gz|tgz:arasanx-64-modern|28.0|1||been around since the 90s and its still elite
+Arasan 26.1|https://github.com/jdart1/arasan-chess/releases/download/v26.1/arasan-linux-binaries-26.1.tar.gz#arasanx-64-modern|tgz|28.0|1||been around since the 90s and somehow keeps getting better
 PlentyChess 8|https://github.com/Yoshie2000/PlentyChess/releases/download/b-v8.0.0/PlentyChess-8.0.0-linux-generic|bin|51.1|1||one of the best right behind stockfish
-Viridithas 20|https://github.com/cosmobobak/viridithas/releases/download/v20.0.0/viridithas-20-linux-x86-64-v3|bin|55.1|1|cpu|top tier, written in rust
+Viridithas 20|https://github.com/cosmobobak/viridithas/releases/download/v20.0.0/viridithas-20-linux-x86-64-v3|bin|55.1|1|cpu|one of the strongest rust engines
 Stormphrax 8|https://github.com/Ciekce/Stormphrax/releases/download/v8.0.0/stormphrax-8.0.0-avx2-bmi2|bin|54.2|1|cpu|top tier
 Koivisto 9|https://github.com/Luecx/Koivisto/releases/download/v9.0/Koivisto_9.0-linux-sse2-pgo|bin|17.0|1||really strong and runs on old cpus
 Fairy-Stockfish 14|https://github.com/fairy-stockfish/Fairy-Stockfish/releases/download/fairy_sf_14/fairy-stockfish_x86-64|bin|2.2|1|variants,small|stockfish that also knows a ton of chess variants
@@ -21,30 +21,30 @@ Halogen 16|https://github.com/KierenP/Halogen/releases/download/v16/Halogen-16.0
 Renegade 1.3|https://github.com/pkrisz99/Renegade/releases/download/v1.3.1/Renegade_1.3.1_linux_x86-64-bmi2|bin|33.2|2|cpu|solid all rounder
 Tarnished 6|https://github.com/Bobingstern/Tarnished/releases/download/v6.0/tarnished-6.0-eternal_x86-64-avx2|bin|45.1|2|cpu|newer engine thats already really good
 Willow 4|https://github.com/Adam-Kulju/Willow/releases/download/4.0.0.1/willow-v2-linux|bin|4.6|2|small|same dev as patricia but plays it straight
-Yukari 2025|https://github.com/yukarichess/yukari/releases/download/2025.11.1/yukari_2025_111_64_ja_sse4_linux|bin|8.3|2|small|strong and tiny
+Yukari 2025|https://github.com/yukarichess/yukari/releases/download/2025.11.1/yukari_2025_111_64_ja_sse4_linux|bin|8.3|2|small|
 Berserk 4.1|https://github.com/jhonnold/berserk/releases/download/4.1.0/berserk-4.1.0-x64-popcnt|bin|2.9|2|old,small|old berserk, the new ones are windows only
-Avalanche 5|https://github.com/SnowballSH/Avalanche/releases/download/v5.0.0/Avalanche-5.0.0-x86_64-linux-v3|bin|25.2|2|cpu|written in zig
+Avalanche 5|https://github.com/SnowballSH/Avalanche/releases/download/v5.0.0/Avalanche-5.0.0-x86_64-linux-v3|bin|25.2|2|cpu|zig again, wants a newer cpu
 Velvet 8|https://github.com/mhonert/velvet-chess/releases/download/v8.1.1/velvet-v8.1.1-x86_64-nopopcnt|bin|49.1|2||rust engine, works on really old cpus
-Black Marlin|https://github.com/jnlt3/blackmarlin/releases/download/9.0/blackmarlin-linux-x86-64|bin|30.9|2||another rust one
-Horsie 1.1|https://github.com/liamt19/Horsie/releases/download/v1.1/horsie-1_1-v2|bin|24.5|2||its called horsie
+Black Marlin|https://github.com/jnlt3/blackmarlin/releases/download/9.0/blackmarlin-linux-x86-64|bin|30.9|2||
+Horsie 1.1|https://github.com/liamt19/Horsie/releases/download/v1.1/horsie-1_1-v2|bin|24.5|2||
 Starzix 6.1|https://github.com/zzzzz151/Starzix/releases/download/6.1/starzix-6.1-avx2|bin|20.0|2|cpu|pretty quick
 Patricia 3|https://github.com/Adam-Kulju/Patricia/releases/download/5.1/patricia_v3|bin|4.8|2|fun,small|the most aggressive engine around, loves throwing pieces at your king
 Princhess|https://github.com/princesslana/princhess/releases/download/0.22.0/princhess|bin|52.6|2|fun|thinks like alphazero (mcts), plays weird human looking moves
-Akimbo 1|https://github.com/jw1912/akimbo/releases/download/v1.0.0/akimbo-1.0.0|bin|6.5|2|small|small rust engine that hits way above its size
+Akimbo 1|https://github.com/jw1912/akimbo/releases/download/v1.0.0/akimbo-1.0.0|bin|6.5|2|small|small and way stronger than it looks
 Carp 3|https://github.com/dede1751/carp/releases/download/v3.0.1/carp-v3.0.1-linux-x86_64-V1|bin|5.7|2|small|tiny download for how good it is
-Sirius 9|https://github.com/mcthouacbb/Sirius/releases/download/v9.0/sirius-9.0-linux-x86-64-v1|bin|0.2|2|small|under 1 MB and still really strong
+Sirius 9|https://github.com/mcthouacbb/Sirius/releases/download/v9.0/sirius-9.0-linux-x86-64-v1|bin|0.2|2|small|the whole thing is 0.2 MB
 Zahak 10|https://github.com/amanjpro/zahak/releases/download/10.0/zahak-linux-amd64-10.0-avx|bin|5.2|3|small|go engine
-Counter 5.5|https://github.com/ChizhovVadim/CounterGo/releases/download/v1.55.0/counter-5.5-linux-amd64|bin|4.1|3|small|written in go
-Minic 3.06|https://github.com/tryingsomestuff/Minic/releases/download/3.06/minic_3.06_linux_x64_nehalem|bin|0.7|3|old,small|older minic, under 1 MB
-Integral 3|https://github.com/aronpetko/integral/releases/download/v3/integral_x86_64_popcnt|bin|0.6|3|old,small|early integral, before it got scary
-Lynx 1.11|https://github.com/lynx-chess/Lynx/releases/download/v1.11.0/Lynx-1.11.0-linux-x64.zip|zip:Lynx.Cli|13.6|3||written in c#, surprisingly good
+Counter 5.5|https://github.com/ChizhovVadim/CounterGo/releases/download/v1.55.0/counter-5.5-linux-amd64|bin|4.1|3|small|also go
+Minic 3.06|https://github.com/tryingsomestuff/Minic/releases/download/3.06/minic_3.06_linux_x64_nehalem|bin|0.7|3|old,small|older minic
+Integral 3|https://github.com/aronpetko/integral/releases/download/v3/integral_x86_64_popcnt|bin|0.6|3|old,small|early version, the new ones are windows only
+Lynx 1.11|https://github.com/lynx-chess/Lynx/releases/download/v1.11.0/Lynx-1.11.0-linux-x64.zip#Lynx.Cli|zip|13.6|3||written in c#, surprisingly good
 Frozenight 6|https://github.com/MinusKelvin/frozenight/releases/download/v6.0.0/frozenight-6.0.0-linux-x86-64|bin|2.0|3|small|small rust engine from the ice4 guy
-Tantabus 2|https://github.com/analog-hors/tantabus/releases/download/v2.0.0/tantabus-ubuntu-20.04-x86-64|bin|2.9|3|small|small and solid
+Tantabus 2|https://github.com/analog-hors/tantabus/releases/download/v2.0.0/tantabus-ubuntu-20.04-x86-64|bin|2.9|3|small|rust, older but holds up
 Nalwald 19|https://github.com/tsoj/Nalwald/releases/download/19/Nalwald-19-linux-amd64|bin|14.6|3||written in nim
 Chess-dot-cpp|https://github.com/GediminasMasaitis/chess-dot-cpp/releases/download/4.10/chessdotcpp-popcnt|bin|22.8|3||plain c++ engine
 4ku 5.1|https://github.com/kz04px/4ku/releases/download/v5.1/4ku-5.1-popcnt|bin|10.4|3|fun|started life as a 4 KB engine
-StockDory 0.3|https://github.com/TheBlackPlague/StockDory/releases/download/0.3/StockDory-Koi-0.3-ubuntu-latest-x86-64|bin|1.3|4|small|you can actually beat it sometimes
+StockDory 0.3|https://github.com/TheBlackPlague/StockDory/releases/download/0.3/StockDory-Koi-0.3-ubuntu-latest-x86-64|bin|1.3|4|small|small, beatable if youre decent
 ice4|https://github.com/MinusKelvin/ice4/releases/download/v6.1/ice4-ob|bin|0.5|4|fun,small|from a 4 KB engine contest, tiny
 Mess|https://github.com/raklaptudirm/mess/releases/download/v0.3.0/mess-linux-amd64|bin|5.1|4|fun,small|a lot weaker, good for chaos games
-Inanis 1.6|https://github.com/Tearth/Inanis/releases/download/v1.6.0/inanis_1.6.0_linux_64bit_x86-64_popcnt.zip|zip|0.4|4|small|you can actually beat this one sometimes
-Blunder 8.5|https://github.com/deanmchris/blunder/releases/download/v8.5.5/blunder-8.5.5.zip|zip:linux/blunder-8.5.5-popcnt|14.8|4|fun|its literally called blunder, plays ok tho
+Inanis 1.6|https://github.com/Tearth/Inanis/releases/download/v1.6.0/inanis_1.6.0_linux_64bit_x86-64_popcnt.zip|zip|0.4|4|small|you can beat this one with some practice
+Blunder 8.5|https://github.com/deanmchris/blunder/releases/download/v8.5.5/blunder-8.5.5.zip#linux/blunder-8.5.5-popcnt|zip|14.8|4|fun|plays better than the name says

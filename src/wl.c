@@ -583,7 +583,7 @@ static void wl_commit(Overlay *ov, const Rect *hits, int nhits)
             }
         }
         if (!b) continue;
-        int *q = o->pend[bi], full = o->pend_all[bi];
+        int *q = o->pend[bi], full = o->pend_all[bi], qx = q[0], qy = q[1], qw = q[2] - q[0], qh = q[3] - q[1];
         if (full)
             memcpy(b->data, o->canvas_px, (size_t)o->cw * o->ch * 4);
         else
@@ -600,8 +600,8 @@ static void wl_commit(Overlay *ov, const Rect *hits, int nhits)
         wl_surface_attach(o->surface, b->buf, 0, 0);
         if (full)
             wl_surface_damage(o->surface, 0, 0, o->cw, o->ch);
-        else if (dmg)
-            wl_surface_damage(o->surface, x0, y0, x1 - x0, y1 - y0);
+        else if (qw > 0 && qh > 0)
+            wl_surface_damage(o->surface, qx, qy, qw, qh);
         wl_surface_commit(o->surface);
     }
     wl_display_flush(dpy);

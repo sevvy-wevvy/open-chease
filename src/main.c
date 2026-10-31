@@ -174,7 +174,7 @@ static const int delay_secs[] = {0, 3, 10};
 static const char *mode_names[] = {"Cheats", "Helper"};
 
 typedef struct {
-    char name[32], url[512], kind[48], tags[48], about[96];
+    char name[32], url[512], kind[8], tags[48], about[96];
     double mb;
     int tier;
 } LibEngine;
@@ -188,22 +188,22 @@ static const char builtin_library[] = // for when engines.txt on github cant be 
     "Stockfish 19|https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-linux-x86-64-universal.tar.gz|tgz|77.6|1||the strongest one out there\n"
     "Stockfish 16|https://github.com/official-stockfish/Stockfish/releases/download/sf_16/stockfish-ubuntu-x86-64.tar|tar|39.7|1|old|from 2023, smaller download\n"
     "Reckless 0.9|https://github.com/codedeliveryservice/Reckless/releases/download/v0.9.0/reckless-linux-generic|bin|62.0|1||one of the very top engines right now, rust\n"
-    "Pawnocchio 2|https://github.com/JonathanHallstrom/pawnocchio/releases/download/v2.0.1/pawnocchio-2.0.1-linux-x86_64|bin|67.0|1||crazy strong and written in zig of all things\n"
-    "Arasan 26.1|https://github.com/jdart1/arasan-chess/releases/download/v26.1/arasan-linux-binaries-26.1.tar.gz|tgz:arasanx-64-modern|28.0|1||been around since the 90s and its still elite\n"
+    "Pawnocchio 2|https://github.com/JonathanHallstrom/pawnocchio/releases/download/v2.0.1/pawnocchio-2.0.1-linux-x86_64|bin|67.0|1||crazy strong. its written in zig which almost nobody does for chess\n"
+    "Arasan 26.1|https://github.com/jdart1/arasan-chess/releases/download/v26.1/arasan-linux-binaries-26.1.tar.gz#arasanx-64-modern|tgz|28.0|1||been around since the 90s and somehow keeps getting better\n"
     "Tarnished 6|https://github.com/Bobingstern/Tarnished/releases/download/v6.0/tarnished-6.0-eternal_x86-64-avx2|bin|45.1|2|cpu|newer engine thats already really good\n"
     "Willow 4|https://github.com/Adam-Kulju/Willow/releases/download/4.0.0.1/willow-v2-linux|bin|4.6|2|small|same dev as patricia but plays it straight\n"
     "PlentyChess 8|https://github.com/Yoshie2000/PlentyChess/releases/download/b-v8.0.0/PlentyChess-8.0.0-linux-generic|bin|51.1|1||one of the best right behind stockfish\n"
-    "Viridithas 20|https://github.com/cosmobobak/viridithas/releases/download/v20.0.0/viridithas-20-linux-x86-64-v3|bin|55.1|1|cpu|top tier, written in rust\n"
+    "Viridithas 20|https://github.com/cosmobobak/viridithas/releases/download/v20.0.0/viridithas-20-linux-x86-64-v3|bin|55.1|1|cpu|one of the strongest rust engines\n"
     "Stormphrax 8|https://github.com/Ciekce/Stormphrax/releases/download/v8.0.0/stormphrax-8.0.0-avx2-bmi2|bin|54.2|1|cpu|top tier\n"
     "Koivisto 9|https://github.com/Luecx/Koivisto/releases/download/v9.0/Koivisto_9.0-linux-sse2-pgo|bin|17.0|1||really strong and runs on old cpus\n"
     "Fairy-Stockfish 14|https://github.com/fairy-stockfish/Fairy-Stockfish/releases/download/fairy_sf_14/fairy-stockfish_x86-64|bin|2.2|1|variants,small|stockfish that also knows a ton of chess variants\n"
     "Halogen 16|https://github.com/KierenP/Halogen/releases/download/v16/Halogen-16.0.0-linux-x86_64-legacy|bin|25.1|2||runs on any cpu\n"
     "Patricia 3|https://github.com/Adam-Kulju/Patricia/releases/download/5.1/patricia_v3|bin|4.8|2|fun,small|the most aggressive engine around, loves throwing pieces at your king\n"
     "Princhess|https://github.com/princesslana/princhess/releases/download/0.22.0/princhess|bin|52.6|2|fun|thinks like alphazero (mcts), plays weird human looking moves\n"
-    "Akimbo 1|https://github.com/jw1912/akimbo/releases/download/v1.0.0/akimbo-1.0.0|bin|6.5|2|small|small rust engine that hits way above its size\n"
+    "Akimbo 1|https://github.com/jw1912/akimbo/releases/download/v1.0.0/akimbo-1.0.0|bin|6.5|2|small|small and way stronger than it looks\n"
     "Carp 3|https://github.com/dede1751/carp/releases/download/v3.0.1/carp-v3.0.1-linux-x86_64-V1|bin|5.7|2|small|tiny download for how good it is\n"
-    "Sirius 9|https://github.com/mcthouacbb/Sirius/releases/download/v9.0/sirius-9.0-linux-x86-64-v1|bin|0.2|2|small|under 1 MB and still really strong\n"
-    "Counter 5.5|https://github.com/ChizhovVadim/CounterGo/releases/download/v1.55.0/counter-5.5-linux-amd64|bin|4.1|3|small|written in go\n"
+    "Sirius 9|https://github.com/mcthouacbb/Sirius/releases/download/v9.0/sirius-9.0-linux-x86-64-v1|bin|0.2|2|small|the whole thing is 0.2 MB\n"
+    "Counter 5.5|https://github.com/ChizhovVadim/CounterGo/releases/download/v1.55.0/counter-5.5-linux-amd64|bin|4.1|3|small|also go\n"
     "4ku 5.1|https://github.com/kz04px/4ku/releases/download/v5.1/4ku-5.1-popcnt|bin|10.4|3|fun|started life as a 4 KB engine\n"
     "ice4|https://github.com/MinusKelvin/ice4/releases/download/v6.1/ice4-ob|bin|0.5|4|fun,small|from a 4 KB engine contest, tiny\n"
     "Mess|https://github.com/raklaptudirm/mess/releases/download/v0.3.0/mess-linux-amd64|bin|5.1|4|fun,small|a lot weaker, good for chaos games\n";
@@ -221,7 +221,7 @@ static const int threads_vals[] = {0, 1, 2, 4, 8};
 static const char *hash_names[] = {"64 MB", "128 MB", "256 MB", "512 MB", "1 GB"};
 static const int hash_vals[] = {64, 128, 256, 512, 1024};
 
-#define MAX_ENGINES 16
+#define MAX_ENGINES 64
 static const char *engine_names[MAX_ENGINES];
 static char engine_paths[MAX_ENGINES][1024], engine_labels[MAX_ENGINES][32];
 static int nengines;
@@ -1037,7 +1037,7 @@ static void draw_library(Canvas *dst, Rect outr, Rect bl, int hit)
     draw_button(c, space, "space", TH->item, TH->item_fg);
     if (hit) add_hit_arg(space, ACT_LIB_KEY, ' ');
     y += 32;
-    int idx[64], n = 0;
+    int idx[MAX_LIB > MAX_ENGINES ? MAX_LIB : MAX_ENGINES], n = 0;
     if (lib_tab == 0) {
         static const char *chips[5] = {"All", "Strongest", "Small", "Fun & weird", "Old ones"};
         double cxp = x;
@@ -1049,10 +1049,10 @@ static void draw_library(Canvas *dst, Rect outr, Rect bl, int hit)
             cxp += w + 6;
         }
         y += 34;
-        for (int i = 0; i < nlib && n < 64; i++)
+        for (int i = 0; i < nlib && n < MAX_LIB; i++)
             if (lib_matches(i)) idx[n++] = i;
     } else {
-        for (int i = 0; i < nengines && n < 64; i++)
+        for (int i = 0; i < nengines && n < MAX_ENGINES; i++)
             if (has_ci(engine_labels[i], lib_query)) idx[n++] = i;
     }
     double rh = 62, top = y, bottom = P.y + P.h - 12;
@@ -2924,7 +2924,7 @@ static void load_library(void)
         LibEngine *e = &lib[nlib];
         snprintf(e->name, sizeof(e->name), "%.31s", f[0]);
         snprintf(e->url, sizeof(e->url), "%.511s", f[1]);
-        snprintf(e->kind, sizeof(e->kind), "%.47s", f[2]);
+        snprintf(e->kind, sizeof(e->kind), "%.7s", f[2]);
         e->kind[strcspn(e->kind, " \r")] = 0;
         e->mb = 0;
         for (const char *q = f[3]; *q; q++)
@@ -2981,12 +2981,12 @@ static void start_download(int i)
     dl_pid = fork();
     if (dl_pid == 0) {
         for (int fd = 3; fd < 1024; fd++) close(fd);
-        char kind[48];
-        snprintf(kind, sizeof(kind), "%s", lib[i].kind);
-        char *pick = strchr(kind, ':');
+        char url[512];
+        snprintf(url, sizeof(url), "%s", lib[i].url);
+        char *pick = strchr(url, '#');
         if (pick) *pick++ = 0;
-        setenv("U", lib[i].url, 1);
-        setenv("K", kind, 1);
+        setenv("U", url, 1);
+        setenv("K", lib[i].kind, 1);
         setenv("P", pick ? pick : "", 1);
         setenv("O", out, 1);
         setenv("D", data_dir, 1);
@@ -3441,7 +3441,9 @@ int main(int argc, char **argv)
     cfg_default = cfg;
     load_cfg();
     for (int i = 0; i < NTHEMES; i++) theme_names[i] = themes[i].name;
-    snprintf(data_dir, sizeof(data_dir), "%s", data);
+    char real_data[4096];
+    const char *dd = realpath(data, real_data) && strlen(real_data) < sizeof(data_dir) ? real_data : data;
+    snprintf(data_dir, sizeof(data_dir), "%.1023s", dd);
     load_library();
     scan_engines(engine);
     if (!replay_dir) fetch_library();
