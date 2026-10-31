@@ -1,7 +1,7 @@
 <h1 align="center">♟️ open-chease ♟️</h1>
 
 <p align="center">
-<b>A chess overlay for Linux that finds boards on your screen and shows you the best move.</b>
+<b>A chess overlay for Linux, Windows and Mac that finds the board on your screen and shows you the best move.</b>
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
 
 <p align="center">
   open-chease watches your screen for a chess board, outlines every square in green and draws an arrow on the best move for your team.<br>
-  It updates twice a second and works on Hyprland, GNOME and XFCE (and sway or most other X11 desktops too).<br>
+  It updates twice a second and works on Linux (Hyprland, GNOME, XFCE, sway and most other X11 desktops), Windows 10/11 and macOS 14+.<br>
   I mainly made this to mess with my friends, so please dont use it in rated games. chess.com and lichess will ban you for it.<br> <br>
   Do you like this project? If so, please let me know!
   <a href="https://sevvy-wevvy.com/discord">Discord</a>
@@ -30,11 +30,11 @@
 <summary align="center"><b>✅ Easy Install ✅</b></summary>
 
 <p align="center">
-The easiest way is one command. It downloads everything into <code>/tmp/open-chease-(your user id)</code> so if you run it again it wont download it all again.
+The easiest way is one command. Paste it in a terminal, it works the same in bash, zsh and fish. It downloads everything into <code>/tmp/open-chease-(your user id)</code> (on a mac its <code>~/Library/Application Support/open-chease</code>) so running it again doesn't download it all again.
 </p>
 
 ```sh
-bash <(curl -fsSL https://raw.githubusercontent.com/sevvy-wevvy/open-chease/main/get.sh)
+curl -fsSL https://raw.githubusercontent.com/sevvy-wevvy/open-chease/main/get.sh | bash
 ```
 
 <p align="center">
@@ -42,11 +42,21 @@ No curl? wget works too:
 </p>
 
 ```sh
-bash <(wget -qO- https://raw.githubusercontent.com/sevvy-wevvy/open-chease/main/get.sh)
+wget -qO- https://raw.githubusercontent.com/sevvy-wevvy/open-chease/main/get.sh | bash
 ```
 
 <p align="center">
-The first run also grabs Stockfish (about 80 MB) so the moves are way stronger. Add <code>--no-stockfish</code> if you dont want it, or <code>--update</code> to get the newest open-chease.
+<b>Windows</b> - open PowerShell (not cmd) and paste this. It goes in <code>%LOCALAPPDATA%\open-chease</code>
+</p>
+
+```powershell
+irm https://raw.githubusercontent.com/sevvy-wevvy/open-chease/main/get.ps1 | iex
+```
+
+<p align="center">
+The first run also grabs Stockfish (about 80 MB) so the moves are way stronger. Add <code>--no-stockfish</code> if you dont want it, or <code>--update</code> to get the newest open-chease, like <code>curl ... | bash -s -- --update</code>. To pass options on windows its <code>& ([scriptblock]::Create((irm https://raw.githubusercontent.com/sevvy-wevvy/open-chease/main/get.ps1))) --team white</code><br> <br>
+<b>Mac</b> - it gets built on your mac the first time, so you need apples command line tools (<code>xcode-select --install</code>). macOS will also ask you to allow screen recording for your terminal, turn it on in System Settings > Privacy & Security and run it again.<br>
+<b>Windows</b> - its not signed, so SmartScreen might say "Windows protected your PC" the first time. More info > Run anyway. Some engines in the library need the <a href="https://aka.ms/vs/17/release/vc_redist.x64.exe">Visual C++ runtime</a>, it says so next to them.
 </p>
 </details>
 
@@ -54,7 +64,7 @@ The first run also grabs Stockfish (about 80 MB) so the moves are way stronger. 
 <summary align="center"><b>📦 Run From A Clone 📦</b></summary>
 
 <p align="center">
-If you clone it, nothing gets downloaded at all. It just uses the prebuilt binary in <code>bin/</code>.
+If you clone it, it just uses the prebuilt binary in <code>bin/</code> and doesnt download open-chease again.
 </p>
 
 ```sh
@@ -64,7 +74,11 @@ cd open-chease
 ```
 
 <p align="center">
-If the prebuilt one doesnt run on your distro (glibc older than 2.34) run.sh rebuilds it for you. All it needs is gcc, every header is already in the repo. Its x86_64 Linux only tho, no Windows or Mac sorry.
+On Windows double click <code>run.bat</code> (or run <code>run.ps1</code> from PowerShell).
+</p>
+
+<p align="center">
+If the prebuilt one doesnt run on your distro (glibc older than 2.34) run.sh rebuilds it for you. All it needs is gcc, every header is already in the repo. Macs always build it on the first run. The Windows exe in <code>bin/</code> gets cross compiled with <code>./build.sh win</code> (needs mingw-w64).
 </p>
 </details>
 
@@ -80,7 +94,7 @@ Open a game on lichess, chess.com or pretty much anywhere with a flat colored bo
 <b>X on the top box</b> - Stop following that board<br>
 <b>Gear on the top box</b> - Settings, they save so they stick next time (theres a whole section on them below)<br>
 <b>... on the top box</b> - Opens the menu:<br>
-&nbsp;&nbsp;<b>Helper mode</b> - Flips between cheats and helper mode in one click (more on helper mode below)<br>
+&nbsp;&nbsp;<b>Helper mode</b> - Click it to go Helper, again for Both, again for back to cheats (more below)<br>
 &nbsp;&nbsp;<b>Show what it sees</b> - Puts a little tag on every square with the piece it thinks is there (white tag = white piece, black tag = black piece)<br>
 &nbsp;&nbsp;<b>Fix pieces</b> - Click a square, then pick what's really there (or Empty, or whose turn it is). Your fixes stick until that piece moves. Click Done fixing in the menu when youre done, the board isnt clickable for the game while this is on<br>
 &nbsp;&nbsp;<b>Its black's/white's turn</b> - If it got whose turn it is wrong<br>
@@ -98,7 +112,7 @@ Open a game on lichess, chess.com or pretty much anywhere with a flat colored bo
 <summary align="center"><b>🤝 Helper Mode 🤝</b></summary>
 
 <p align="center">
-Dont want it playing for you? Hit <b>Helper mode</b> in the ... menu (or Gear > Fun > Mode). It stops showing moves completely and just tells you stuff about the game instead.<br> <br>
+Dont want it playing for you? Hit <b>Helper mode</b> in the ... menu (or Gear > Fun > Mode). It stops showing moves completely and just tells you stuff about the game instead. Clicking it again goes to <b>Both</b>, which keeps the moves and adds all the helper stuff on top, and once more goes back to plain cheats.<br> <br>
 The box always has whose turn it is, your win % (and how much the last move changed it, like +6) and a warning when someone's in check.<br> <br>
 <b>Danger alerts</b> - "your queen is in danger" when something of yours can get taken for cheap, and "they have mate in 3" when its coming<br>
 <b>Threats</b> - what they'd play if they got another move right now, like "Nc2+ would fork your king and rook". Draws a red dashed arrow too unless you turn that off<br>
@@ -107,7 +121,7 @@ The box always has whose turn it is, your win % (and how much the last move chan
 With a second opinion engine picked in Gear > Engine it also tells you when the two engines dont agree. Usually means its a tricky spot<br> <br>
 Then theres a bunch of smaller stuff: material (up 2, down 3), what got taken, the last few moves, your W/L since you started it, a turn timer, and the opening name. It knows about 70 openings (yes the Bongcloud is in there) and says middlegame or endgame once youre out of book.<br>
 The win graph is a little line under the box, green when youre winning. When the game ends you get a game report with an accuracy % for both of you, same formula lichess uses.<br>
-Last move outlines the last move in yellow and hanging pieces puts an orange box on your stuff thats attacked and not defended (off by default since its kinda a hint). Rate my moves still works too, so blunders still get a ?? and a roast.<br> <br>
+Last move outlines the last move in yellow. Hanging pieces marks pieces that are attacked and not defended, yours, theirs or both, and you pick the color and the look (corners, brackets, dashed...). Off by default since its kinda a hint. Rate my moves still works too, so blunders still get a ?? and a roast.<br> <br>
 All of it is under Gear > Helper and you can turn each one off. The win graph, check ring, last move and hanging pieces show in normal mode too, and material and the opening go in the status line there.
 </p>
 </details>
@@ -116,7 +130,7 @@ All of it is under Gear > Helper and you can turn each one off. The win graph, c
 <summary align="center"><b>🎛 Settings 🎛</b></summary>
 
 <p align="center">
-Settings are split into tabs: Look, Your move, Their move, Engine, Fun, Helper and Themes. Every tab has a <b>Reset this tab</b> button if you mess something up. Menus and tabs slide in instead of just popping up.<br> <br>
+Settings are split into tabs: Look, Your move, Their move, Engine, Fun, Helper and Themes. Every tab has a <b>Reset this tab</b> button if you mess something up.<br> <br>
 <b>Look</b><br>
 14 themes, where the box sits (top, bottom, or stacked on the left or right), box size and how see-through it is<br>
 The grid can be lines, just the outline, corners or off, in any color<br>
@@ -127,24 +141,24 @@ Arrows can be straight, bent for knights, curved, a swoosh, dashed, dotted, glow
 The piece to move and where it goes each get their own marker, theres 13 to pick from<br>
 You can show just the piece, just the square, or wait a few seconds before it shows anything so you get to think first<br>
 Top moves shows the 2nd and 3rd best too, as thinner faded arrows with a number on them<br>
-Rainbow is one of the colors. Its dumb and I love it<br> <br>
+Rainbow is one of the colors too<br> <br>
 <b>Their move</b><br>
 Same options as yours, shown as text, on the board or both<br> <br>
 <b>Engine</b><br>
 <b>Engine</b> picks which one it uses and remembers it. <b>Get engines</b> opens the library with 44 engines (Reckless, Pawnocchio and a bunch more besides Stockfish) and how strong and how big each one is. You can type to search in it, Esc closes it<br>
 Think time, updates a second, threads, memory, and whether it keeps thinking on their turn<br>
-<b>Second opinion</b> runs another engine next to the main one. In cheats mode it says "Koivisto says Nf3" with a cyan dotted arrow when it picks something else, or that it agrees<br>
+<b>Second opinion</b> runs another engine next to the main one. In cheats mode it says "Koivisto says Nf3" with a cyan dotted arrow when it picks something else, or that it agrees. You can also turn it on from the Installed tab in the engine library with the 2nd button<br>
 If an engine has faster builds for newer cpus (avx2, avx512...) it downloads the best one yours can run<br>
 <b>Lc0</b> shows up in the library if you have an nvidia card and lc0 installed. Theres no official linux download so you need it from the AUR or built yourself, then Get grabs a net and points it at your gpu<br>
-The list lives in <code>engines.txt</code> here so new ones show up without updating. Engines that come in a zip or tar keep their whole folder, so ones that need a network file next to them (like Arasan) work too. Any UCI engine you drop in <code>/tmp/open-chease-(your user id)/engines</code> shows up too<br> <br>
+The list lives in <code>engines.txt</code> here so new ones show up without updating. Engines that come in a zip or tar keep their whole folder, so ones that need a network file next to them (like Arasan) work too. Any UCI engine you drop in the <code>engines</code> folder (Open folder in the library takes you there) shows up too<br> <br>
 <b>Fun</b><br>
-Mode switches between Cheats and Helper (see Helper Mode above)<br>
-The move picker can give you the best move, a human looking one, one thats close enough, a random top 3, a coin flip, a totally random move, the worst move or only blunders. <br>
+Mode is Cheats, Helper or Both (see Helper Mode above)<br>
+The move picker can give you the best move, one thats close enough, a random top 3, a coin flip, a totally random move, the worst move or only blunders. Theres also 5 human ones from 800 to 2400. They pick like a person that rated would (recaptures first, checks, early queen moves when its low rated) and the higher ones lean on the real engine move a lot more. In my tests 800 loses about a pawn a move on average and 2400 about a fifth of one<br>
 A strength cap (Full down to 1400), trash talk, grades for your moves and theirs with a roast attached, and confetti when you win<br> <br>
 <b>Helper</b><br>
 Material, taken pieces, opening & phase, win graph, turn timer, game report, last move, check warning, hanging pieces, move list, danger alerts, session score, threats, the hint button and what a ___ plays. Each one is its own setting<br> <br>
 <b>Themes</b><br>
-Every theme as a little preview card, click one to use it. Under that you can make up to 3 of your own: pick a slot and a part (box, text, buttons, grid, menus...), then click a color. It changes live so you see it right away. <b>Copy current theme</b> starts you off from whatever theme youre on. Your themes save with the rest of the settings
+Every theme as a little preview card, click one to use it. Under that you can make up to 3 of your own: pick a slot and a part (box, text, buttons, grid, menus...), then click a color. It changes live. <b>Copy current theme</b> starts you off from whatever theme youre on. Your themes save with the rest of the settings
 </p>
 </details>
 
@@ -152,11 +166,11 @@ Every theme as a little preview card, click one to use it. Under that you can ma
 <summary align="center"><b>⚙️ Options ⚙️</b></summary>
 
 <p align="center">
-These work with both run.sh and get.sh.<br> <br>
+These work with run.sh and get.sh, and with run.ps1 / the scriptblock way on windows.<br> <br>
 <b>--team white</b> or <b>--team black</b> - Skips the question and always plays that side<br>
 <b>--builtin</b> - Uses my engine even if Stockfish is there<br>
 <b>--engine PATH</b> - Use any other UCI engine<br>
-<b>--backend wayland / gnome / x11</b> - Force how it grabs the screen if it picks wrong<br>
+<b>--backend wayland / gnome / x11</b> - Force how it grabs the screen if it picks wrong (linux only, windows and mac only have one way)<br>
 <b>-v</b> or <b>-vv</b> - Prints what its seeing
 </p>
 </details>
@@ -166,7 +180,7 @@ These work with both run.sh and get.sh.<br> <br>
 
 <p align="center">
 Start it before the game starts if you can. It learns your piece set from the starting position and in my tests it got 99.9% of moves right that way. It remembers the set for each board look, so once its seen a game start on a site it uses the right pieces there even when you jump in mid game later. Jumping in mid game works too but it has to guess the pieces from shapes it already knows, so with a weird piece set its more like 80%. If it gets something wrong use Fix pieces.<br> <br>
-Flat board themes work best (lichess brown/blue/green, chess.com green, most others). Wood, marble and weird colored boards work too, just less reliably: in my tests it finds almost all of them but reads every piece right on about 7 out of 10. Recolored piece sets (pink, gold) are hit or miss, mostly when the pieces are close to the square color.<br> <br>
+Flat board themes work best (lichess brown/blue/green, chess.com green, most others). Wood and marble boards work too but worse, it finds almost all of them and reads every piece right on about 7 out of 10. Recolored piece sets (pink, gold) are hit or miss, mostly when the pieces are close to the square color.<br> <br>
 If part of the board is covered or scrolled off screen it keeps following the moves it can see, but it wont re-read the whole board until you can see all of it again. Same with the settings or ... menu, if they sit on the board it pauses and catches up when you close them.<br> <br>
 GNOME shows the screen sharing icon while its running, thats normal. On XFCE the compositor has to be on (its on by default, it'll tell you if it isnt).
 </p>
@@ -179,9 +193,9 @@ GNOME shows the screen sharing icon while its running, thats normal. On XFCE the
 <b>It never finds the board</b> - Make sure the whole board is on screen and its a flat theme. Run it with <code>-v</code>, it prints how close it got ("best N/64")<br>
 <b>Every square says ?</b> - Try Rescan board in the ... menu. If it keeps happening send me the <code>-v</code> output<br>
 <b>Wrong piece somewhere</b> - ... > Fix pieces, click the square and pick the right one. It sticks until that piece moves<br>
-<b>Lots of pieces wrong after jumping in mid game</b> - It reads pieces with the shapes it learned last time, and if you switched sites those can be off. It tries its built in shapes too when those fit better, but starting it before a game starts is still the best fix since then it learns the new set<br>
+<b>Lots of pieces wrong after jumping in mid game</b> - It hasnt seen that piece set start a game yet. Best fix is starting it before the game so it learns the set, it remembers it for that board after<br>
 <b>Thinks its the wrong turn</b> - ... > Its black's/white's turn<br>
-<b>It lost track after a fast few moves</b> - ... > Rescan board<br>
+<b>It lost track after a fast few moves</b> - ... > Rescan board. It hides its own arrows for a second so they dont get in the way of the read<br>
 <b>The engine died</b> - It restarts by itself. If one keeps dying pick another in Gear > Engine<br>
 <b>Two monitors</b> - Works, it watches all of them, and plugging one in or out while its running is fine too (Hyprland, sway and GNOME)<br>
 <b>Nothing shows up on Hyprland/sway</b> - Run with <code>-v</code> and check it says what screen formats it got. If it says it cant read them please open an issue with that line<br> <br>
@@ -193,9 +207,9 @@ Still broken? Open an <a href="https://github.com/sevvy-wevvy/open-chease/issues
 <summary align="center"><b>🧠 How It Works 🧠</b></summary>
 
 <p align="center">
-<b>Grabbing the screen</b> - wlr-screencopy on Hyprland/sway, Mutters ScreenCast on GNOME, and XGetImage on X11 stuff like XFCE<br>
-<b>The overlay</b> - a click through layer-shell surface on Hyprland, and a click through override-redirect window on GNOME and X11 since those dont have layer-shell. It only sends the parts of the screen that changed<br>
-<b>Finding boards</b> - looks for rows of alternating square colors, tries every 8x8 grid that fits, then snaps it to the real square edges. If that finds nothing it tries again on a blurred copy looking for square edges instead of exact colors (thats how wood and marble boards get found)<br>
+<b>Grabbing the screen</b> - wlr-screencopy on Hyprland/sway, Mutters ScreenCast on GNOME, XGetImage on X11 stuff like XFCE, plain GDI BitBlt on Windows and ScreenCaptureKit on macOS<br>
+<b>The overlay</b> - a click through layer-shell surface on Hyprland and sway, and a click through override-redirect window on GNOME and X11 since those dont have layer-shell. It only sends the parts of the screen that changed. On Windows its a layered window per monitor and on mac a borderless NSWindow, both of those let clicks through except when the mouse is over one of the buttons<br>
+<b>Finding boards</b> - looks for rows of alternating square colors, tries every 8x8 grid that fits, then snaps it to the real square edges. If that finds nothing it tries again on a blurred copy looking for square edges instead of exact colors (thats how wood and marble boards get found). If the screen didnt change since the last look it skips it, and after 30 seconds with no board it only looks once a second<br>
 <b>Following the game</b> - checks which squares have a white piece, a black piece or nothing, and matches that against every legal move (and pairs of moves) to figure out what was played. Promoted pieces get compared to the pieces already on the board<br>
 <b>The engine</b> - its my own, in src/engine.c, does about 2 million positions a second. bin/open-chease-engine is the same thing as a normal UCI engine if you want to use it somewhere else. If Stockfish is around it uses that instead
 </p>
@@ -220,7 +234,7 @@ tests/page/index.html is a board that plays a game by itself (add <code>?flip=1<
 <p align="center">
 Want to help with this? <a href="https://github.com/sevvy-wevvy/open-chease/pulls">Make A pull request!</a><br>
 Pull request allow for anyone to request a change to this code. In turn meaning that <b>YOU</b> can contribute to this project.<br>
-New desktops, board themes it cant find yet or piece sets it reads wrong are all super welcome. Run <code>tests/perft.sh</code> and the vision test before you send it.<br> <br>
+Boards it cant find or pieces it reads wrong are the most useful ones to fix. Run <code>tests/perft.sh</code> and the vision test before you send it.<br> <br>
 As long as it works, and doesnt vary off too far from the main idea its very likely it get accepted!
 </p>
 </details>
