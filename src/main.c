@@ -300,6 +300,10 @@ static char engine_paths[MAX_ENGINES][1024], engine_labels[MAX_ENGINES][32];
 static int nengines;
 static char saved_engine[1024], saved_second[1024]; // by path, the list order moves around when you add one
 static int have_saved_engine;
+static int btn_teach, btn_forget, btn_rescan; // buttons, not settings, never saved
+
+static int is_action(const int *v) { return v == &btn_teach || v == &btn_forget || v == &btn_rescan; }
+static int is_button(const int *v) { return v == &cfg.library || v == &cfg.engine || v == &cfg.second || is_action(v); }
 
 typedef struct {
     const char *label, *key;
@@ -319,15 +323,13 @@ static Setting sets[] = {
     {"Show score", "score", &cfg.score, 2, onoff, NULL},
     {"Score as", "scorefmt", &cfg.scorefmt, 3, scorefmt_names, NULL},
     {"Eval bar", "evalbar", &cfg.evalbar, 3, evalbar_names, NULL},
-    {"Square names", "sqnames", &cfg.sqnames, 2, onoff, NULL},
-    {"Show what it sees", "debug", &cfg.debug, 2, onoff, NULL},
     {"Mode", "mode", &cfg.mode, 3, mode_names, "Fun"},
     {"Move picker", "picker", &cfg.chaos, 12, chaos_names, NULL},
     {"Strength", "strength", &cfg.strength, 5, strength_names, NULL},
     {"Trash talk", "trash", &cfg.trash, 2, onoff, NULL},
     {"Rate my moves", "rateme", &cfg.rateme, 2, onoff, NULL},
     {"Confetti", "confetti", &cfg.confetti, 2, onoff, NULL},
-    {"Arrow", "arrow", &cfg.arrow, 9, arrow_names, "Your move"},
+    {"Arrow", "arrow", &cfg.arrow, 9, arrow_names, "Yours"},
     {"Arrow size", "thick", &cfg.thick, 4, thick_names, NULL},
     {"Piece to move", "from", &cfg.from, 14, mark_names, NULL},
     {"Where it goes", "to", &cfg.to, 14, mark_names, NULL},
@@ -344,7 +346,7 @@ static Setting sets[] = {
     {"Memory", "hash", &cfg.hash, 5, hash_names, NULL},
     {"Their turn too", "theirtoo", &cfg.theirtoo, 2, onoff, NULL},
     {"Second opinion", "second", &cfg.second, 1, second_names, NULL},
-    {"Show", "theirs", &cfg.theirs, 4, theirs_names, "Their move"},
+    {"Show", "theirs", &cfg.theirs, 4, theirs_names, "Theirs"},
     {"Arrow", "tarrow", &cfg.tarrow, 9, arrow_names, NULL},
     {"Arrow size", "tthick", &cfg.tthick, 4, thick_names, NULL},
     {"Piece to move", "tfrom", &cfg.tfrom, 14, mark_names, NULL},
@@ -368,6 +370,11 @@ static Setting sets[] = {
     {"Threats", "threats", &cfg.threats, 3, threat_names, NULL},
     {"Hint button", "hints", &cfg.hints, 2, onoff, NULL},
     {"What a ___ plays", "level", &cfg.level, 5, level_names, NULL},
+    {"Show what it sees", "debug", &cfg.debug, 2, onoff, "Vision"},
+    {"Square names", "sqnames", &cfg.sqnames, 2, onoff, NULL},
+    {"Rescan board", "rescan", &btn_rescan, 1, NULL, NULL},
+    {"Teach these pieces", "teach", &btn_teach, 1, NULL, NULL},
+    {"Forget learned pieces", "forget", &btn_forget, 1, NULL, NULL},
 };
 #define NSET ((int)(sizeof(sets) / sizeof(sets[0])))
 static int dd_open = -1;
@@ -442,7 +449,7 @@ static void save_cfg(void)
     FILE *f = fopen(cfg_path, "w");
     if (!f) return;
     for (int i = 0; i < NSET; i++)
-        if (sets[i].v != &cfg.engine && sets[i].v != &cfg.library && sets[i].v != &cfg.second) // those get saved as paths below
+        if (!is_button(sets[i].v)) // engine and second get saved as paths below
             fprintf(f, "%s %d\n", sets[i].key, *sets[i].v);
     if (have_saved_engine) fprintf(f, "enginepath %s\n", saved_engine);
     if (*saved_second) fprintf(f, "secondpath %s\n", saved_second);
@@ -904,7 +911,7 @@ static void draw_evalbar(Canvas *c, Rect bl, const Analysis *a, int white_bottom
 
 static const char *piece_letters = "PNBRQK";
 
-static int ui_over_board, learned_here, want_rescan, rescan_hush;
+static int ui_over_board, learned_here, want_rescan, rescan_hush, want_teach, teach_hush, teach_tries;
 static int lib_open, lib_tab, lib_filter, lib_scroll, lib_del = -1;
 static char lib_query[24];
 
@@ -1351,9 +1358,9 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     canvas_blit(dst, c, closing ? 1 - an : an, 0, closing ? -6 * an : -12 * (1 - an), -1);
 }
 
-static const char *tab_names[] = {"Look", "Your move", "Their move", "Engine", "Fun", "Helper", "Themes"};
-#define NTABS 7
-#define TAB_THEMES 6
+static const char *tab_names[] = {"Look", "Yours", "Theirs", "Engine", "Fun", "Helper", "Vision", "Themes"};
+#define NTABS 8
+#define TAB_THEMES 7
 static int set_tab, cslot, cpart;
 
 static int tab_of(int i)
@@ -1545,18 +1552,20 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             draw_round_rect(c, sw, 9, mix(TH->btn, TH->title, v));
             draw_round_rect(c, (Rect){sw.x + 2 + (sw.w - d - 4) * v, sw.y + 2, d, d}, d / 2, mix(0xFFE8E8E8, 0xFF181818, v));
         } else {
-            Rect box = {row.x + row.w - 126, row.y + 3, 120, row.h - 6};
+            int act = is_action(st->v);
+            Rect box = {row.x + row.w - (act ? 36 : 126), row.y + 3, act ? 30 : 120, row.h - 6};
             draw_round_rect(c, box, 5, dd_open == i ? TH->title : TH->btn);
             uint32_t fg = dd_open == i ? 0xFF181818 : TH->btn_fg;
             if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.theme) {
                 uint32_t sw = st->v == &cfg.theme ? TH->panel : pick_color(*st->v, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : st->v == &cfg.hcolor ? 0xD8FF8A1F : 0xC8FF4D4D);
                 draw_round_rect(c, (Rect){box.x - 18, box.y + 4, 12, 12}, 6, sw | 0xFF000000);
             }
-            draw_text(c, box.x + 8, box.y + 1,
-                      fit_text(c, st->v == &cfg.library ? (dl_pid > 0 ? "Getting..." : "Browse") : st->names[*st->v], box.w - 26),
-                      0, fg);
-            double tx2 = box.x + box.w - 15, ty2 = box.y + box.h / 2 - 2;
-            if (st->v == &cfg.library || st->v == &cfg.engine || st->v == &cfg.second)
+            if (!act)
+                draw_text(c, box.x + 8, box.y + 1,
+                          fit_text(c, st->v == &cfg.library ? (dl_pid > 0 ? "Getting..." : "Browse") : st->names[*st->v], box.w - 26),
+                          0, fg);
+            double tx2 = box.x + box.w - (act ? 19 : 15), ty2 = box.y + box.h / 2 - 2;
+            if (is_button(st->v))
                 draw_text(c, tx2 + 1, box.y + 1, ">", 0, fg);
             else
                 draw_triangle(c, tx2, ty2, tx2 + 9, ty2, tx2 + 4.5, ty2 + 5, fg);
@@ -2875,7 +2884,7 @@ static void profile_save(const Board *b)
     templates_save(&tpl, path);
 }
 
-static int profile_load(const Board *b)
+static int profile_find(const Board *b, char *path, size_t size)
 {
     char dir[1100];
     snprintf(dir, sizeof(dir), "%s/pieces", data_dir);
@@ -2896,12 +2905,65 @@ static int profile_load(const Board *b)
     }
     closedir(d);
     if (!*best) return 0;
+    snprintf(path, size, "%s/%s", dir, best);
+    return 1;
+}
+
+static int profile_load(const Board *b)
+{
     char path[1500];
-    snprintf(path, sizeof(path), "%s/%s", dir, best);
+    if (!profile_find(b, path, sizeof(path))) return 0;
     Templates t = tpl;
     if (!templates_load(&t, path)) return 0;
     tpl = t;
-    if (verbose) fprintf(stderr, "using the piece set saved for this board (%s)\n", best);
+    if (verbose) fprintf(stderr, "using the piece set saved for this board (%s)\n", path);
+    return 1;
+}
+
+static void forget_pieces(void)
+{
+    char path[1500];
+    templates_builtin(&tpl);
+    learned_here = 0;
+    remove(tpl_path);
+    if (state != SCANNING && profile_find(&board, path, sizeof(path))) remove(path);
+    set_note("back to the built in piece shapes, start a game so it can learn again");
+}
+
+static int teach_pieces(void)
+{
+    Output *o = &cap->out[board.out];
+    MaskCtx mc = {o};
+    BoardRead *r = malloc(sizeof(BoardRead));
+    vision_read(&o->frame, &board, tracker.white_bottom, tpl.color_thr, r, masked_cb, &mc);
+    if (r->nhidden && (!teach_hush || hushed())) { // same as rescan, maybe its our own marks in the way
+        if (!teach_hush) teach_hush = 1, hush_until = now_ms() + 1500;
+        free(r);
+        return 1;
+    }
+    int same = 1;
+    for (int i = 0; i < 64 && same; i++) {
+        int pc = tracker.pos.sq[i], want = pc == EMPTY ? OBS_EMPTY : (pc / 6 == WHITE ? OBS_WHITE : OBS_BLACK);
+        if (r->obs[i] != want) same = 0;
+    }
+    if (!r->nhidden && !same && ++teach_tries < 20) { // a move landed, let the tracker catch up before it learns from it
+        free(r);
+        return 0;
+    }
+    if (r->nhidden) {
+        set_note("cant see the whole board, close menus and try again");
+    } else if (!same) {
+        set_note("board doesnt match, fix the wrong squares and try again");
+    } else {
+        templates_learn(&tpl, r, &tracker.pos);
+        learned_here = 1;
+        templates_save(&tpl, tpl_path);
+        profile_save(&board);
+        set_note("learned your pieces from this board");
+        if (verbose) fprintf(stderr, "learned piece set from the tracked position\n");
+    }
+    want_teach = teach_hush = teach_tries = 0;
+    free(r);
     return 1;
 }
 
@@ -3186,6 +3248,7 @@ static void tick(void)
     }
     miss_ticks = 0;
     if (state == ASKING) return;
+    if (want_teach && state == TRACKING && teach_pieces()) return;
     read_and_track(want_rescan ? 3 : was_paused ? 2 : 0);
     was_paused = 0;
 }
@@ -3752,6 +3815,17 @@ static void handle_click(double x, double y)
                 if (st->v == &cfg.debug) debug_on = cfg.debug;
                 dd_open = -1;
                 save_cfg();
+            } else if (st->v == &btn_teach) {
+                settings_open = 0, dd_open = -1; // the panel pauses tracking, get it off the board first
+                if (state != TRACKING) set_note("find a board first");
+                else want_teach = 1, teach_hush = teach_tries = 0, set_note("looking at your pieces");
+            } else if (st->v == &btn_forget) {
+                dd_open = -1;
+                forget_pieces();
+            } else if (st->v == &btn_rescan) {
+                settings_open = 0, dd_open = -1;
+                want_rescan = 1, rescan_hush = 0;
+                set_note("rescanning the board");
             } else if (st->v == &cfg.library || st->v == &cfg.engine || st->v == &cfg.second) { // second opinion gets picked with the 2nd buttons in there
                 lib_open = 1, lib_tab = st->v != &cfg.library, lib_scroll = 0, lib_del = -1, lib_query[0] = 0;
                 settings_open = 0, dd_open = -1;
@@ -3804,7 +3878,7 @@ static void handle_click(double x, double y)
         }
         case ACT_RESET:
             for (int k = 0; k < NSET; k++) {
-                if (tab_of(k) != set_tab || sets[k].v == &cfg.engine || sets[k].v == &cfg.library) continue;
+                if (tab_of(k) != set_tab || (is_button(sets[k].v) && sets[k].v != &cfg.second)) continue;
                 *sets[k].v = *(int *)((char *)&cfg_default + ((char *)sets[k].v - (char *)&cfg)); // same field in the defaults copy
             }
             debug_on = cfg.debug;

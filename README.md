@@ -130,19 +130,18 @@ All of it is under Gear > Helper and you can turn each one off. The win graph, c
 <summary align="center"><b>🎛 Settings 🎛</b></summary>
 
 <p align="center">
-Settings are split into tabs: Look, Your move, Their move, Engine, Fun, Helper and Themes. Every tab has a <b>Reset this tab</b> button if you mess something up.<br> <br>
+Settings are split into tabs: Look, Yours, Theirs, Engine, Fun, Helper, Vision and Themes. Every tab has a <b>Reset this tab</b> button if you mess something up.<br> <br>
 <b>Look</b><br>
 14 themes, where the box sits (top, bottom, or stacked on the left or right), box size and how see-through it is<br>
 The grid can be lines, just the outline, corners or off, in any color<br>
-Score as pawns (+0.4), centipawns (+40) or win %, plus an eval bar next to the board if you want one<br>
-Square names on every square and "Show what it sees" on from the start<br> <br>
-<b>Your move</b><br>
+Score as pawns (+0.4), centipawns (+40) or win %, plus an eval bar next to the board if you want one<br> <br>
+<b>Yours</b> (your move)<br>
 Arrows can be straight, bent for knights, curved, a swoosh, dashed, dotted, glowing or double<br>
 The piece to move and where it goes each get their own marker, theres 13 to pick from<br>
 You can show just the piece, just the square, or wait a few seconds before it shows anything so you get to think first<br>
 Top moves shows the 2nd and 3rd best too, as thinner faded arrows with a number on them<br>
 Rainbow is one of the colors too<br> <br>
-<b>Their move</b><br>
+<b>Theirs</b> (their move)<br>
 Same options as yours, shown as text, on the board or both<br> <br>
 <b>Engine</b><br>
 <b>Engine</b> picks which one it uses and remembers it. <b>Get engines</b> opens the library with 44 engines (Reckless, Pawnocchio and a bunch more besides Stockfish) and how strong and how big each one is. You can type to search in it, Esc closes it<br>
@@ -157,6 +156,9 @@ The move picker can give you the best move, one thats close enough, a random top
 A strength cap (Full down to 1400), trash talk, grades for your moves and theirs with a roast attached, and confetti when you win<br> <br>
 <b>Helper</b><br>
 Material, taken pieces, opening & phase, win graph, turn timer, game report, last move, check warning, hanging pieces, move list, danger alerts, session score, threats, the hint button and what a ___ plays. Each one is its own setting<br> <br>
+<b>Vision</b><br>
+"Show what it sees" on from the start, square names on every square, and Rescan board (same as the one in the ... menu)<br>
+If your piece set keeps getting misread (rooks as knights, that kind of thing) fix the wrong ones with ... > Fix pieces, then hit <b>Teach these pieces</b>. It learns the shapes from the board as it is right now and remembers them for that board. <b>Forget learned pieces</b> throws that away and goes back to the built in shapes<br> <br>
 <b>Themes</b><br>
 Every theme as a little preview card, click one to use it. Under that you can make up to 3 of your own: pick a slot and a part (box, text, buttons, grid, menus...), then click a color. It changes live. <b>Copy current theme</b> starts you off from whatever theme youre on. Your themes save with the rest of the settings
 </p>
@@ -193,7 +195,7 @@ GNOME shows the screen sharing icon while its running, thats normal. On XFCE the
 <b>It never finds the board</b> - Make sure the whole board is on screen and its a flat theme. Run it with <code>-v</code>, it prints how close it got ("best N/64")<br>
 <b>Every square says ?</b> - Try Rescan board in the ... menu. If it keeps happening send me the <code>-v</code> output<br>
 <b>Wrong piece somewhere</b> - ... > Fix pieces, click the square and pick the right one. It sticks until that piece moves<br>
-<b>Lots of pieces wrong after jumping in mid game</b> - It hasnt seen that piece set start a game yet. Best fix is starting it before the game so it learns the set, it remembers it for that board after<br>
+<b>Lots of pieces wrong after jumping in mid game</b> - It hasnt seen that piece set start a game yet. Best fix is starting it before the game so it learns the set, it remembers it for that board after. Or fix the wrong ones with Fix pieces and hit Gear > Vision > Teach these pieces<br>
 <b>Thinks its the wrong turn</b> - ... > Its black's/white's turn<br>
 <b>It lost track after a fast few moves</b> - ... > Rescan board. It hides its own arrows for a second so they dont get in the way of the read<br>
 <b>The engine died</b> - It restarts by itself. If one keeps dying pick another in Gear > Engine<br>
