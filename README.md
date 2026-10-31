@@ -129,9 +129,9 @@ Rainbow is one of the colors. Its dumb and i love it<br> <br>
 <b>Their move</b><br>
 Same options as yours, shown as text, on the board or both<br> <br>
 <b>Engine</b><br>
-<b>Engine</b> picks which one it uses and remembers it. <b>Get engines</b> opens the library with 29 engines and how strong and how big each one is. You can type to search in it, Esc closes it<br>
+<b>Engine</b> picks which one it uses and remembers it. <b>Get engines</b> opens the library with 44 engines (Reckless, Pawnocchio, Quanticade, Arasan and a bunch more next to Stockfish) and how strong and how big each one is. You can type to search in it, Esc closes it<br>
 Think time, updates a second, top 2 or 3 moves, threads, memory, and whether it keeps thinking on their turn<br>
-The list lives in <code>engines.txt</code> here so new ones show up without updating. Any UCI engine you drop in <code>/tmp/open-chease-(your user id)/engines</code> shows up too<br> <br>
+The list lives in <code>engines.txt</code> here so new ones show up without updating. Engines that come in a zip or tar keep their whole folder, so ones that need a network file next to them (like Arasan) work too. Any UCI engine you drop in <code>/tmp/open-chease-(your user id)/engines</code> shows up too<br> <br>
 <b>Fun</b><br>
 Mode switches between Cheats and Helper (see Helper Mode above)<br>
 The move picker can give you the best move, a human looking one, one thats close enough, a random top 3, a coin flip, a totally random move, the worst move or only blunders. <br>
@@ -189,7 +189,7 @@ Still broken? Open an <a href="https://github.com/sevvy-wevvy/open-chease/issues
 
 <p align="center">
 <b>Grabbing the screen</b> - wlr-screencopy on Hyprland/sway, Mutters ScreenCast on GNOME, and XGetImage on X11 stuff like XFCE<br>
-<b>The overlay</b> - a click through layer-shell surface on Hyprland, and a click through override-redirect window on GNOME and X11 since those dont have layer-shell<br>
+<b>The overlay</b> - a click through layer-shell surface on Hyprland, and a click through override-redirect window on GNOME and X11 since those dont have layer-shell. It only redraws and sends the parts of the screen that changed, so a menu sliding in doesnt mean copying your whole 5K screen 60 times a second<br>
 <b>Finding boards</b> - looks for rows of alternating square colors, tries every 8x8 grid that fits, then snaps it to the real square edges. If that finds nothing it tries again on a blurred copy looking for square edges instead of exact colors, which is what lets wood and marble boards work<br>
 <b>Following the game</b> - checks which squares have a white piece, a black piece or nothing, and matches that against every legal move (and pairs of moves) to figure out what was played<br>
 <b>The engine</b> - its my own, in src/engine.c, does about 2 million positions a second. bin/open-chease-engine is the same thing as a normal UCI engine if you want to use it somewhere else. If Stockfish is around it uses that instead

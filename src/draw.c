@@ -31,14 +31,62 @@ static inline void blend(uint32_t *dst, uint32_t src)
     *dst = a << 24 | r << 16 | g << 8 | b;
 }
 
+static inline void mark(Canvas *c, int x0, int y0, int x1, int y1)
+{
+    if (c->dx1 <= c->dx0) {
+        c->dx0 = x0, c->dy0 = y0, c->dx1 = x1, c->dy1 = y1;
+        return;
+    }
+    if (x0 < c->dx0) c->dx0 = x0;
+    if (y0 < c->dy0) c->dy0 = y0;
+    if (x1 > c->dx1) c->dx1 = x1;
+    if (y1 > c->dy1) c->dy1 = y1;
+}
+
 static inline void plot(Canvas *c, int x, int y, uint32_t argb, double cover)
 {
     if (x < 0 || y < 0 || x >= c->w || y >= c->h || cover <= 0) return;
     if (cover > 1) cover = 1;
+    mark(c, x, y, x + 1, y + 1);
     blend(&c->px[y * c->w + x], premul(argb, cover));
 }
 
-void canvas_clear(Canvas *c) { memset(c->px, 0, (size_t)c->w * c->h * 4); }
+static void fill_span(Canvas *c, int y, int xa, int xb, uint32_t src)
+{
+    if (xb <= xa) return;
+    mark(c, xa, y, xb, y + 1);
+    uint32_t *p = c->px + (size_t)y * c->w;
+    for (int x = xa; x < xb; x++) blend(&p[x], src);
+}
+
+void canvas_clear(Canvas *c)
+{
+    c->cx0 = c->dx0, c->cy0 = c->dy0, c->cx1 = c->dx1, c->cy1 = c->dy1;
+    if (c->dx1 > c->dx0) {
+        int x0 = c->dx0 < 0 ? 0 : c->dx0, x1 = c->dx1 > c->w ? c->w : c->dx1;
+        int y0 = c->dy0 < 0 ? 0 : c->dy0, y1 = c->dy1 > c->h ? c->h : c->dy1;
+        for (int y = y0; y < y1 && x1 > x0; y++) memset(c->px + (size_t)y * c->w + x0, 0, (size_t)(x1 - x0) * 4);
+    }
+    c->dx0 = c->dy0 = c->dx1 = c->dy1 = 0;
+}
+
+int canvas_damage(const Canvas *c, int *x0, int *y0, int *x1, int *y1)
+{
+    int a = c->dx1 > c->dx0, b = c->cx1 > c->cx0;
+    if (!a && !b) return 0;
+    *x0 = a ? c->dx0 : c->cx0, *y0 = a ? c->dy0 : c->cy0, *x1 = a ? c->dx1 : c->cx1, *y1 = a ? c->dy1 : c->cy1;
+    if (a && b) {
+        if (c->cx0 < *x0) *x0 = c->cx0;
+        if (c->cy0 < *y0) *y0 = c->cy0;
+        if (c->cx1 > *x1) *x1 = c->cx1;
+        if (c->cy1 > *y1) *y1 = c->cy1;
+    }
+    if (*x0 < 0) *x0 = 0;
+    if (*y0 < 0) *y0 = 0;
+    if (*x1 > c->w) *x1 = c->w;
+    if (*y1 > c->h) *y1 = c->h;
+    return *x1 > *x0 && *y1 > *y0;
+}
 
 void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double dy, double clip_h)
 {
@@ -48,6 +96,10 @@ void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double
     int ox = (int)lround((src->ox + dx - dst->ox) * dst->scale), oy = (int)lround((src->oy + dy - dst->oy) * dst->scale);
     int h = src->h;
     if (clip_h >= 0 && clip_h * src->scale < h) h = (int)(clip_h * src->scale);
+    if (src->dx1 <= src->dx0) return;
+    mark(dst, ox + src->dx0, oy + src->dy0, ox + src->dx1, oy + (src->dy1 < h ? src->dy1 : h));
+    if (dst->dx0 < 0) dst->dx0 = 0;
+    if (dst->dy0 < 0) dst->dy0 = 0;
     for (int y = 0; y < h; y++) {
         int ty = oy + y;
         if (ty < 0 || ty >= dst->h) continue;
@@ -81,8 +133,18 @@ void draw_rect(Canvas *c, Rect r, uint32_t argb)
     if (iy0 < 0) iy0 = 0;
     if (ix1 > c->w) ix1 = c->w;
     if (iy1 > c->h) iy1 = c->h;
+    uint32_t solid = premul(argb, 1);
     for (int y = iy0; y < iy1; y++) {
         double cy = fmin(y + 1, y1) - fmax(y, y0);
+        int fa = (int)ceil(x0), fb = (int)floor(x1);
+        if (fa < ix0) fa = ix0;
+        if (fb > ix1) fb = ix1;
+        if (cy >= 1 && fb > fa) {
+            for (int x = ix0; x < fa; x++) plot(c, x, y, argb, fmin(x + 1, x1) - fmax(x, x0));
+            fill_span(c, y, fa, fb, solid);
+            for (int x = fb; x < ix1; x++) plot(c, x, y, argb, fmin(x + 1, x1) - fmax(x, x0));
+            continue;
+        }
         for (int x = ix0; x < ix1; x++) {
             double cx = fmin(x + 1, x1) - fmax(x, x0);
             plot(c, x, y, argb, cx * cy);
@@ -106,8 +168,19 @@ void draw_round_rect(Canvas *c, Rect r, double rad, uint32_t argb)
     rad *= c->scale;
     if (!isfinite(x0) || !isfinite(y0) || !isfinite(x1) || !isfinite(y1)) return;
     int ya = (int)fmax(0, floor(y0)), yb = (int)fmin(c->h, ceil(y1)), xa = (int)fmax(0, floor(x0)), xb = (int)fmin(c->w, ceil(x1));
+    uint32_t solid = premul(argb, 1);
     for (int y = ya; y < yb; y++) {
+        int inner = y >= y0 + rad && y + 1 <= y1 - rad;
+        int fa = (int)ceil(inner ? x0 : x0 + rad), fb = (int)floor(inner ? x1 : x1 - rad);
+        if (y < y0 || y + 1 > y1) fa = fb = 0;
+        if (fa < xa) fa = xa;
+        if (fb > xb) fb = xb;
         for (int x = xa; x < xb; x++) {
+            if (x == fa && fb > fa) {
+                fill_span(c, y, fa, fb, solid);
+                x = fb - 1;
+                continue;
+            }
             double cov = 0; // 3x3 samples per pixel
             for (int sy = 0; sy < 3; sy++)
                 for (int sx = 0; sx < 3; sx++) {

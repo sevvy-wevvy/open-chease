@@ -212,10 +212,13 @@ static void set_bounding_shape(void)
 static void x_commit(Overlay *ov, const Rect *hits, int nhits)
 {
     int x0 = xs.w, y0 = xs.h, x1 = -1, y1 = -1;
-    for (int y = 0; y < xs.h; y++) {
+    const Canvas *cv = &xs.canvas;
+    int sx0 = cv->dx0 < 0 ? 0 : cv->dx0, sx1 = cv->dx1 > xs.w ? xs.w : cv->dx1;
+    int sy0 = cv->dy0 < 0 ? 0 : cv->dy0, sy1 = cv->dy1 > xs.h ? xs.h : cv->dy1;
+    for (int y = sy0; y < sy1; y++) {
         const uint32_t *row = xs.canvas.px + (size_t)y * xs.w;
         int first = -1, last = -1;
-        for (int x = 0; x < xs.w; x++)
+        for (int x = sx0; x < sx1; x++)
             if (row[x] >> 24) {
                 if (first < 0) first = x;
                 last = x;

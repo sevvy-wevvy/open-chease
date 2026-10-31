@@ -174,11 +174,11 @@ static const int delay_secs[] = {0, 3, 10};
 static const char *mode_names[] = {"Cheats", "Helper"};
 
 typedef struct {
-    char name[32], url[512], kind[8], tags[48], about[96];
+    char name[32], url[512], kind[48], tags[48], about[96];
     double mb;
     int tier;
 } LibEngine;
-#define MAX_LIB 32
+#define MAX_LIB 96
 static LibEngine lib[MAX_LIB];
 static int nlib;
 static const char *lib_names[MAX_LIB];
@@ -187,6 +187,11 @@ static pid_t lib_pid;
 static const char builtin_library[] = // for when engines.txt on github cant be reached
     "Stockfish 19|https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-linux-x86-64-universal.tar.gz|tgz|77.6|1||the strongest one out there\n"
     "Stockfish 16|https://github.com/official-stockfish/Stockfish/releases/download/sf_16/stockfish-ubuntu-x86-64.tar|tar|39.7|1|old|from 2023, smaller download\n"
+    "Reckless 0.9|https://github.com/codedeliveryservice/Reckless/releases/download/v0.9.0/reckless-linux-generic|bin|62.0|1||one of the very top engines right now, rust\n"
+    "Pawnocchio 2|https://github.com/JonathanHallstrom/pawnocchio/releases/download/v2.0.1/pawnocchio-2.0.1-linux-x86_64|bin|67.0|1||crazy strong and written in zig of all things\n"
+    "Arasan 26.1|https://github.com/jdart1/arasan-chess/releases/download/v26.1/arasan-linux-binaries-26.1.tar.gz|tgz:arasanx-64-modern|28.0|1||been around since the 90s and its still elite\n"
+    "Tarnished 6|https://github.com/Bobingstern/Tarnished/releases/download/v6.0/tarnished-6.0-eternal_x86-64-avx2|bin|45.1|2|cpu|newer engine thats already really good\n"
+    "Willow 4|https://github.com/Adam-Kulju/Willow/releases/download/4.0.0.1/willow-v2-linux|bin|4.6|2|small|same dev as patricia but plays it straight\n"
     "PlentyChess 8|https://github.com/Yoshie2000/PlentyChess/releases/download/b-v8.0.0/PlentyChess-8.0.0-linux-generic|bin|51.1|1||one of the best right behind stockfish\n"
     "Viridithas 20|https://github.com/cosmobobak/viridithas/releases/download/v20.0.0/viridithas-20-linux-x86-64-v3|bin|55.1|1|cpu|top tier, written in rust\n"
     "Stormphrax 8|https://github.com/Ciekce/Stormphrax/releases/download/v8.0.0/stormphrax-8.0.0-avx2-bmi2|bin|54.2|1|cpu|top tier\n"
@@ -963,6 +968,7 @@ static Canvas *layer(int k, const Canvas *c, Rect r)
         if (!lays[k].px) return NULL;
     }
     lays[k].w = w, lays[k].h = h, lays[k].scale = c->scale, lays[k].ox = r.x - pad, lays[k].oy = r.y - pad;
+    lays[k].dx0 = lays[k].dy0 = lays[k].dx1 = lays[k].dy1 = 0;
     memset(lays[k].px, 0, need * 4);
     return &lays[k];
 }
@@ -2918,7 +2924,7 @@ static void load_library(void)
         LibEngine *e = &lib[nlib];
         snprintf(e->name, sizeof(e->name), "%.31s", f[0]);
         snprintf(e->url, sizeof(e->url), "%.511s", f[1]);
-        snprintf(e->kind, sizeof(e->kind), "%.7s", f[2]);
+        snprintf(e->kind, sizeof(e->kind), "%.47s", f[2]);
         e->kind[strcspn(e->kind, " \r")] = 0;
         e->mb = 0;
         for (const char *q = f[3]; *q; q++)
@@ -2975,16 +2981,25 @@ static void start_download(int i)
     dl_pid = fork();
     if (dl_pid == 0) {
         for (int fd = 3; fd < 1024; fd++) close(fd);
+        char kind[48];
+        snprintf(kind, sizeof(kind), "%s", lib[i].kind);
+        char *pick = strchr(kind, ':');
+        if (pick) *pick++ = 0;
         setenv("U", lib[i].url, 1);
-        setenv("K", lib[i].kind, 1);
+        setenv("K", kind, 1);
+        setenv("P", pick ? pick : "", 1);
         setenv("O", out, 1);
         setenv("D", data_dir, 1);
         execl("/bin/sh", "sh", "-c",
               "set -e; mkdir -p \"$D/engines\"; t=$(mktemp -d \"$D/dl.XXXXXX\"); trap 'rm -rf \"$t\"' EXIT; cd \"$t\"; "
               "if command -v curl >/dev/null; then curl -fsL \"$U\" -o got; else wget -qO got \"$U\"; fi; "
               "case \"$K\" in tgz) tar xzf got; rm got;; tar) tar xf got; rm got;; zip) unzip -q got 2>/dev/null || python3 -m zipfile -e got .; rm got;; esac; "
-              "if [ \"$K\" = bin ]; then b=got; else b=$(find . -type f -printf '%s %p\\n' | sort -rn | head -1 | cut -d' ' -f2-); fi; "
-              "[ -n \"$b\" ]; chmod +x \"$b\"; mv \"$b\" \"$O\"",
+              "if [ \"$K\" = bin ]; then chmod +x got; rm -rf \"$O.files\"; mv got \"$O\"; exit 0; fi; "
+              "b=$(find . -type f -printf '%s %p\\n' | sort -rn | while read -r n f; do "
+              "[ \"$(head -c4 \"$f\" | od -An -tx1 | tr -d ' \\n')\" = 7f454c46 ] || continue; "
+              "case \"$f\" in *\"$P\"*) echo \"$f\"; break;; esac; done); "
+              "[ -n \"$b\" ]; chmod +x \"$b\"; rm -rf \"$O.files\" \"$O\"; mkdir \"$O.files\"; cp -R . \"$O.files/\"; "
+              "ln -s \"$O.files/${b#./}\" \"$O\"",
               (char *)NULL);
         _exit(127);
     }
@@ -3266,6 +3281,13 @@ static void handle_click(double x, double y)
             snprintf(gone, sizeof(gone), "%s", engine_labels[k]);
             if (k == cfg.engine) choose_engine(0);
             unlink(engine_paths[k]);
+            char dir[1100];
+            snprintf(dir, sizeof(dir), "%s.files", engine_paths[k]);
+            struct stat ds;
+            if (!lstat(dir, &ds) && S_ISDIR(ds.st_mode)) {
+                char *argv[] = {"rm", "-rf", dir, NULL};
+                run_quiet(argv);
+            }
             scan_engines(NULL);
             load_library();
             cfg.engine = engine_index(saved_engine);

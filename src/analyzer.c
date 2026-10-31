@@ -319,6 +319,11 @@ static int start_uci(const char *path, pid_t *pidp, int *outp, FILE **inp)
         setpgid(0, 0); // ctrl+z / ctrl+c shouldnt hit the engine
         dup2(to_child[0], 0);
         dup2(from_child[1], 1);
+        char real[4096];
+        if (realpath(path, real)) {
+            char *slash = strrchr(real, '/');
+            if (slash && slash != real) *slash = 0, (void)!chdir(real);
+        }
         execl(path, path, (char *)NULL);
         _exit(127);
     }

@@ -34,6 +34,7 @@ typedef struct {
     struct zwlr_layer_surface_v1 *layer;
     int cw, ch, configured;
     ShmBuf draw[2];
+    int pend[2][4], pend_all[2];
     Canvas canvas;
     uint32_t *canvas_px;
 
@@ -509,6 +510,7 @@ static void ls_configure(void *d, struct zwlr_layer_surface_v1 *l, uint32_t seri
         o->ch = (int)h;
         free_shm(&o->draw[0]);
         free_shm(&o->draw[1]);
+        memset(&o->canvas, 0, sizeof(o->canvas));
         free(o->canvas_px);
         o->canvas_px = calloc((size_t)w * h, 4);
     }
@@ -563,15 +565,32 @@ static void wl_commit(Overlay *ov, const Rect *hits, int nhits)
         WlOut *o = &outs[i];
         if (!o->configured || !o->canvas_px) continue;
         ShmBuf *b = NULL;
+        int x0, y0, x1, y1, dmg = canvas_damage(&o->canvas, &x0, &y0, &x1, &y1), bi = 0;
+        for (int k = 0; k < 2 && dmg; k++) {
+            int *q = o->pend[k];
+            if (q[2] <= q[0]) q[0] = x0, q[1] = y0, q[2] = x1, q[3] = y1;
+            if (x0 < q[0]) q[0] = x0;
+            if (y0 < q[1]) q[1] = y0;
+            if (x1 > q[2]) q[2] = x1;
+            if (y1 > q[3]) q[3] = y1;
+        }
         for (int k = 0; k < 2; k++) {
-            if (!o->draw[k].buf) make_shm(&o->draw[k], o->cw, o->ch, o->cw * 4, WL_SHM_FORMAT_ARGB8888);
+            if (!o->draw[k].buf && make_shm(&o->draw[k], o->cw, o->ch, o->cw * 4, WL_SHM_FORMAT_ARGB8888)) o->pend_all[k] = 1;
             if (o->draw[k].buf && !o->draw[k].busy) {
                 b = &o->draw[k];
+                bi = k;
                 break;
             }
         }
         if (!b) continue;
-        memcpy(b->data, o->canvas_px, (size_t)o->cw * o->ch * 4);
+        int *q = o->pend[bi], full = o->pend_all[bi];
+        if (full)
+            memcpy(b->data, o->canvas_px, (size_t)o->cw * o->ch * 4);
+        else
+            for (int y = q[1]; y < q[3]; y++)
+                memcpy((uint32_t *)b->data + (size_t)y * o->cw + q[0], o->canvas_px + (size_t)y * o->cw + q[0], (size_t)(q[2] - q[0]) * 4);
+        q[0] = q[1] = q[2] = q[3] = 0;
+        o->pend_all[bi] = 0;
         b->busy = 1;
         struct wl_region *region = wl_compositor_create_region(compositor);
         for (int h = 0; h < nhits; h++)
@@ -579,7 +598,10 @@ static void wl_commit(Overlay *ov, const Rect *hits, int nhits)
         wl_surface_set_input_region(o->surface, region);
         wl_region_destroy(region);
         wl_surface_attach(o->surface, b->buf, 0, 0);
-        wl_surface_damage(o->surface, 0, 0, o->cw, o->ch);
+        if (full)
+            wl_surface_damage(o->surface, 0, 0, o->cw, o->ch);
+        else if (dmg)
+            wl_surface_damage(o->surface, x0, y0, x1 - x0, y1 - y0);
         wl_surface_commit(o->surface);
     }
     wl_display_flush(dpy);

@@ -21,6 +21,7 @@ typedef struct {
     uint32_t *px;
     int w, h;
     double ox, oy, scale;
+    int dx0, dy0, dx1, dy1, cx0, cy0, cx1, cy1;
 } Canvas;
 
 typedef struct {
@@ -84,6 +85,7 @@ Overlay *overlay_replay(void);
 int replay_frame(void);
 
 void canvas_clear(Canvas *c);
+int canvas_damage(const Canvas *c, int *x0, int *y0, int *x1, int *y1);
 void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double dy, double clip_h);
 void draw_rect(Canvas *c, Rect r, uint32_t argb);
 void draw_frame(Canvas *c, Rect r, double width, uint32_t argb);
