@@ -76,7 +76,7 @@ Open a game on lichess, chess.com or pretty much anywhere with a flat colored bo
 <b>Gear on the top box</b> - Settings, they save so they stick next time (theres a whole section on them below)<br>
 <b>... on the top box</b> - Opens the menu:<br>
 &nbsp;&nbsp;<b>Show what it sees</b> - Puts a little tag on every square with the piece it thinks is there (white tag = white piece, black tag = black piece)<br>
-&nbsp;&nbsp;<b>Fix pieces</b> - Click a square, then pick what's really there (or Empty, or whose turn it is). Your fixes stick until that piece moves. Click Done fixing pieces in the menu when youre done, the board isnt clickable for the game while this is on<br>
+&nbsp;&nbsp;<b>Fix pieces</b> - Click a square, then pick what's really there (or Empty, or whose turn it is). Your fixes stick until that piece moves. Click Done fixing in the menu when youre done, the board isnt clickable for the game while this is on<br>
 &nbsp;&nbsp;<b>Its black's/white's turn</b> - If it got whose turn it is wrong<br>
 &nbsp;&nbsp;<b>Engines</b> - Opens the engine library<br>
 &nbsp;&nbsp;<b>Rescan board</b> - Reads the whole board again if it got lost (moves went by too fast or something)<br>
@@ -89,9 +89,33 @@ Open a game on lichess, chess.com or pretty much anywhere with a flat colored bo
 </details>
 
 <details>
+<summary align="center"><b>🤝 Helper Mode 🤝</b></summary>
+
+<p align="center">
+Dont want it playing for you? Gear > Fun > Mode > <b>Helper</b>. It stops showing moves completely (no arrows, no move names, nothing) and just keeps you company:<br> <br>
+<b>Whose turn it is</b> - and a heads up when you or they are in check (the king gets a red ring too)<br>
+<b>Win %</b> - your chances right now, from the engine, plus how much the last move changed it like (+6)<br>
+<b>Danger alerts</b> - "your queen is in danger" when something of yours is attacked by a cheaper piece or not defended, and "they have mate in 3" when its coming<br>
+<b>Move list</b> - the last few moves written out<br>
+<b>Session score</b> - your wins and losses since you started it, like W2 L1<br>
+<b>Material</b> - up 2, down 3, even<br>
+<b>Taken pieces</b> - what you took and what you lost, like "took Q 2P, lost R"<br>
+<b>Opening & phase</b> - knows about 70 openings (yes the Bongcloud is in there). Once youre out of the opening it says middlegame or endgame instead<br>
+<b>Turn timer</b> - how long the current turn has been going<br>
+<b>Win graph</b> - a little line under the box of how the game went, green when youre winning, red when youre not<br>
+<b>Game report</b> - when the game ends you get an accuracy % for both of you (same formula lichess uses) and how many bad moves each side made<br>
+<b>Last move</b> - outlines the squares of the last move in yellow, handy when the site doesnt<br>
+<b>Hanging pieces</b> - orange box around your pieces that are attacked and not defended. Off by default since its kinda a hint<br>
+<b>Rate my moves</b> - still works, so you still get a ?? and a roast when you blunder<br> <br>
+All of it is under Gear > Helper and you can turn each one off. The win graph, check ring, last move and hanging pieces show in normal mode too, and material and the opening go in the status line there.
+</p>
+</details>
+
+<details>
 <summary align="center"><b>🎛 Settings 🎛</b></summary>
 
 <p align="center">
+Settings are split into tabs: Look, Your move, Their move, Engine, Fun, Helper and Themes. Every tab has a <b>Reset this tab</b> button if you mess something up. Menus and tabs slide in instead of just popping up.<br> <br>
 <b>Look</b><br>
 14 themes, where the box sits (top, bottom, or stacked on the left or right), box size and how see-through it is<br>
 The grid can be lines, just the outline, corners or off, in any color<br>
@@ -109,9 +133,13 @@ Same options as yours, shown as text, on the board or both<br> <br>
 Think time, updates a second, top 2 or 3 moves, threads, memory, and whether it keeps thinking on their turn<br>
 The list lives in <code>engines.txt</code> here so new ones show up without updating. Any UCI engine you drop in <code>/tmp/open-chease-(your user id)/engines</code> shows up too<br> <br>
 <b>Fun</b><br>
-Helper only mode shows no moves at all, just whose turn it is, the win %, the eval bar and square names<br>
+Mode switches between Cheats and Helper (see Helper Mode above)<br>
 The move picker can give you the best move, a human looking one, one thats close enough, a random top 3, a coin flip, a totally random move, the worst move or only blunders. <br>
-A strength cap (Full down to 1400), trash talk, grades for your moves and theirs with a roast attached, and confetti when you win
+A strength cap (Full down to 1400), trash talk, grades for your moves and theirs with a roast attached, and confetti when you win<br> <br>
+<b>Helper</b><br>
+Material, taken pieces, opening & phase, win graph, turn timer, game report, last move, check warning, hanging pieces, move list, danger alerts and session score. Each one is its own switch<br> <br>
+<b>Themes</b><br>
+Every theme as a little preview card, click one to use it. Under that you can make up to 3 of your own: pick a slot and a part (box, text, buttons, grid, menus...), then click a color. It changes live so you see it right away. <b>Copy current theme</b> starts you off from whatever theme youre on. Your themes save with the rest of the settings
 </p>
 </details>
 
@@ -133,9 +161,26 @@ These work with both run.sh and get.sh.<br> <br>
 
 <p align="center">
 Start it before the game starts if you can. It learns your piece set from the starting position and in my tests it got 99.9% of moves right that way. Jumping in mid game works too but it has to guess the pieces from shapes it already knows, so with a weird piece set its more like 80%. If it gets something wrong use Fix pieces.<br> <br>
-Flat board themes only (lichess brown/blue/green, chess.com green, most others). Wood and marble wont work.<br> <br>
+Flat board themes work best (lichess brown/blue/green, chess.com green, most others). Wood, marble and weird colored boards work too, just less reliably: in my tests it finds almost all of them but reads every piece right on about 7 out of 10. Recolored piece sets (pink, gold, whatever) are hit or miss, mostly when the pieces are close to the square color. If it reads one wrong use Fix pieces.<br> <br>
 If part of the board is covered or scrolled off screen it keeps following the moves it can see, but it wont re-read the whole board until you can see all of it again. Same with the settings or ... menu, if they sit on the board it pauses and catches up when you close them.<br> <br>
 GNOME shows the screen sharing icon while its running, thats normal. On XFCE the compositor has to be on (its on by default, it'll tell you if it isnt).
+</p>
+</details>
+
+<details>
+<summary align="center"><b>🩹 If Something Breaks 🩹</b></summary>
+
+<p align="center">
+<b>It never finds the board</b> - Make sure the whole board is on screen and its a flat theme. Run it with <code>-v</code>, it prints how close it got ("best N/64")<br>
+<b>Every square says ?</b> - Try Rescan board in the ... menu. If it keeps happening send me the <code>-v</code> output<br>
+<b>Wrong piece somewhere</b> - ... > Fix pieces, click the square and pick the right one. It sticks until that piece moves<br>
+<b>Lots of pieces wrong after jumping in mid game</b> - It reads pieces with the shapes it learned last time, and if you switched sites those can be off. It tries its built in shapes too when those fit better, but starting it before a game starts is still the best fix since then it learns the new set<br>
+<b>Thinks its the wrong turn</b> - ... > Its black's/white's turn<br>
+<b>It lost track after a fast few moves</b> - ... > Rescan board<br>
+<b>The engine died</b> - It restarts by itself. If one keeps dying pick another in Gear > Engine<br>
+<b>Two monitors</b> - Works, it watches all of them. If a monitor gets plugged in after you start it, restart it from the ... menu<br>
+<b>Nothing shows up on Hyprland/sway</b> - Run with <code>-v</code> and check it says what screen formats it got. If it says it cant read them please open an issue with that line<br> <br>
+Still broken? Open an <a href="https://github.com/sevvy-wevvy/open-chease/issues">issue</a> or yell at me on <a href="https://sevvy-wevvy.com/discord">Discord</a>, the <code>-v</code> output helps a ton.
 </p>
 </details>
 
@@ -145,7 +190,7 @@ GNOME shows the screen sharing icon while its running, thats normal. On XFCE the
 <p align="center">
 <b>Grabbing the screen</b> - wlr-screencopy on Hyprland/sway, Mutters ScreenCast on GNOME, and XGetImage on X11 stuff like XFCE<br>
 <b>The overlay</b> - a click through layer-shell surface on Hyprland, and a click through override-redirect window on GNOME and X11 since those dont have layer-shell<br>
-<b>Finding boards</b> - looks for rows of alternating square colors, tries every 8x8 grid that fits, then snaps it to the real square edges<br>
+<b>Finding boards</b> - looks for rows of alternating square colors, tries every 8x8 grid that fits, then snaps it to the real square edges. If that finds nothing it tries again on a blurred copy looking for square edges instead of exact colors, which is what lets wood and marble boards work<br>
 <b>Following the game</b> - checks which squares have a white piece, a black piece or nothing, and matches that against every legal move (and pairs of moves) to figure out what was played<br>
 <b>The engine</b> - its my own, in src/engine.c, does about 2 million positions a second. bin/open-chease-engine is the same thing as a normal UCI engine if you want to use it somewhere else. If Stockfish is around it uses that instead
 </p>
@@ -158,7 +203,7 @@ GNOME shows the screen sharing icon while its running, thats normal. On XFCE the
 <code>./build.sh</code> builds bin/open-chease and bin/open-chease-engine<br>
 <code>tests/perft.sh</code> checks the move generator against known numbers<br>
 <code>tests/fetch_pieces.sh cburnett merida alpha staunty maestro</code> grabs piece sets for the vision test<br>
-<code>python3 tests/run_vision.py 1 60</code> runs 60 random boards through the vision code<br>
+<code>python3 tests/run_vision.py 1 60</code> runs 60 random boards through the vision code. Add <code>TEXTURES=wood,marble,gradient,noise</code>, <code>THEMES=purple,night,wood,red</code> or <code>TINTS="wFFB0B0,b3050C0"</code> to throw custom looking boards and recolored pieces at it<br>
 <code>python3 tests/track_sim.py --games 60</code> plays 60 whole fake games through the tracker with all the annoying stuff sites do (dragging, move dots, promotion popups, check glow, missed moves) and tells you how many moves it got right. Needs <code>pip install chess</code><br> <br>
 tests/page/index.html is a board that plays a game by itself (add <code>?flip=1</code>, <code>?fen=...</code> or <code>?ms=2500</code>). Its really handy for watching the overlay. Serve it with <code>python3 -m http.server</code> from tests/page.
 </p>

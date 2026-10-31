@@ -36,6 +36,7 @@ typedef struct {
     double x, y, s; // frame pixels, not logical
     uint8_t light[3], dark[3];
     int score;
+    int soft;
 } Board;
 
 enum { OBS_EMPTY = 0, OBS_WHITE = 1, OBS_BLACK = 2, OBS_UNKNOWN = 3 };
@@ -83,6 +84,7 @@ Overlay *overlay_replay(void);
 int replay_frame(void);
 
 void canvas_clear(Canvas *c);
+void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double dy, double clip_h);
 void draw_rect(Canvas *c, Rect r, uint32_t argb);
 void draw_frame(Canvas *c, Rect r, double width, uint32_t argb);
 void draw_round_rect(Canvas *c, Rect r, double radius, uint32_t argb);
@@ -90,6 +92,7 @@ void draw_line(Canvas *c, double x0, double y0, double x1, double y1, double wid
 void draw_triangle(Canvas *c, double x0, double y0, double x1, double y1, double x2, double y2, uint32_t argb);
 double draw_text(Canvas *c, double x, double y, const char *s, int big, uint32_t argb);
 double text_width(const char *s, int big);
+double text_lw(const Canvas *c, const char *s, int big);
 void set_text_zoom(int z);
 int canvas_alpha_at(Canvas *c, double lx, double ly);
 

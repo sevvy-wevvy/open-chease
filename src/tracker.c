@@ -497,20 +497,27 @@ void tracker_resync(Tracker *t, const BoardRead *r, Templates *tpl)
     for (int k = 0; k < 4; k++) t->promo_ticks[k] = 10;
 }
 
-static void fit_builtin(Templates *tpl, const BoardRead *r)
+static const Templates *fit_builtin(Templates *tpl, const BoardRead *r)
 {
-    if (tpl->learned) return;
-    Templates tmp;
-    float best = -1;
-    int bs = 0, bk = 0;
+    static Templates tmp, pick;
+    float best = tpl->learned ? board_fit(tpl, r) * 1.03f : -1;
+    int bs = -1, bk = 0;
     for (int set = 0; set < BUILTIN_SETS; set++)
         for (int k = 0; k < BUILTIN_SCALES; k++) {
             load_builtin(&tmp, set, k);
             float f = board_fit(&tmp, r);
             if (f > best) best = f, bs = set, bk = k;
         }
-    load_builtin(tpl, bs, bk);
-    tpl->have = 1;
+    if (bs < 0) return tpl;
+    if (!tpl->learned) {
+        load_builtin(tpl, bs, bk);
+        tpl->have = 1;
+        return tpl;
+    }
+    pick = *tpl;
+    load_builtin(&pick, bs, bk);
+    pick.learned = 0;
+    return &pick;
 }
 
 static const int type_cap[6] = {8, 2, 2, 2, 1, 1};
@@ -518,13 +525,13 @@ static const int type_cap[6] = {8, 2, 2, 2, 1, 1};
 static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *outp)
 {
     if (r->nhidden) return 0;
-    fit_builtin(tpl, r);
+    const Templates *use = fit_builtin(tpl, r);
     float sc[64][6];
     int types[64];
     for (int sq = 0; sq < 64; sq++) {
         types[sq] = -1;
         if (r->obs[sq] != OBS_WHITE && r->obs[sq] != OBS_BLACK) continue;
-        type_scores(tpl, r, sq, sc[sq]);
+        type_scores(use, r, sq, sc[sq]);
         int rank = sq >> 3;
         if (rank == 0 || rank == 7) sc[sq][PAWN] = -1;
         sc[sq][KING] = -1;
@@ -536,7 +543,7 @@ static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *ou
             if (r->obs[sq] != want) continue;
             n++;
             float ks[6];
-            type_scores(tpl, r, sq, ks);
+            type_scores(use, r, sq, ks);
             float alt = 0;
             for (int ty = 0; ty < 5; ty++)
                 if (ty != PAWN && ks[ty] > alt) alt = ks[ty];

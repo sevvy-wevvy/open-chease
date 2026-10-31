@@ -1,6 +1,8 @@
 #define _GNU_SOURCE
+#include <ctype.h>
 #include <math.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,7 +25,8 @@ typedef struct {
 enum {
     ACT_WHITE = 1, ACT_BLACK, ACT_CLOSE, ACT_STOP, ACT_FLIP, ACT_MENU, ACT_DEBUG, ACT_FIX, ACT_RESTART, ACT_UPDATE,
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
-    ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK
+    ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
+    ACT_CPART, ACT_CSWATCH, ACT_RESET
 };
 
 typedef struct {
@@ -55,7 +58,7 @@ typedef struct {
     uint32_t panel, title, title_off, sub, btn, btn_fg, grid, arrow, menu, item, item_fg;
 } Theme;
 
-static const Theme themes[] = {
+static Theme themes[] = {
     {"Dark", 0xF0181818, 0xFFFFD44A, 0xFFDADADA, 0xFF9AE59A, 0xFF3A3A3A, 0xFFFFFFFF, 0xE600E040, 0xC8FFC400, 0xF8181818,
      0xFF2A2A2A, 0xFFF0F0F0},
     {"Light", 0xF2F4F4F4, 0xFF0A7A2A, 0xFF444444, 0xFF555555, 0xFFDADADA, 0xFF222222, 0xE600E040, 0xC8FF8A00, 0xF8F4F4F4,
@@ -84,8 +87,24 @@ static const Theme themes[] = {
      0xFF16303F, 0xFFEAF8FF},
     {"Paper", 0xF2FBF7EE, 0xFF8A3B12, 0xFF5E5547, 0xFF7A6E5C, 0xFFE8DFCC, 0xFF2E271D, 0xE6B08A4A, 0xC8C2410C, 0xF8FBF7EE,
      0xFFF1EADB, 0xFF2E271D},
+    {"Custom 1", 0xF0181818, 0xFFFFD44A, 0xFFDADADA, 0xFF9AE59A, 0xFF3A3A3A, 0xFFFFFFFF, 0xE600E040, 0xC8FFC400, 0xF8181818,
+     0xFF2A2A2A, 0xFFF0F0F0},
+    {"Custom 2", 0xF0101A2A, 0xFFFF8AD8, 0xFFD8E2F0, 0xFF8AD8FF, 0xFF24344E, 0xFFFFFFFF, 0xE68AD8FF, 0xC8FF8AD8, 0xF8101A2A,
+     0xFF1A2840, 0xFFEAF2FF},
+    {"Custom 3", 0xF0F5F0FF, 0xFF6A3DD8, 0xFF4A4460, 0xFF7A6AA8, 0xFFE2DAF5, 0xFF2A2240, 0xE6A08AF0, 0xC86A3DD8, 0xF8F5F0FF,
+     0xFFEAE4F8, 0xFF2A2240},
 };
 #define NTHEMES ((int)(sizeof(themes) / sizeof(themes[0])))
+#define NCUSTOM 3
+#define CUSTOM0 (NTHEMES - NCUSTOM)
+static const char *part_names[] = {"Box", "Big text", "Quiet text", "Status line", "Buttons", "Button icons",
+                                   "Grid", "Arrow", "Menus", "Rows", "Row text"};
+static const size_t part_off[] = {offsetof(Theme, panel), offsetof(Theme, title), offsetof(Theme, title_off),
+                                  offsetof(Theme, sub), offsetof(Theme, btn), offsetof(Theme, btn_fg),
+                                  offsetof(Theme, grid), offsetof(Theme, arrow), offsetof(Theme, menu),
+                                  offsetof(Theme, item), offsetof(Theme, item_fg)};
+#define NPARTS 11
+static uint32_t *part(Theme *t, int k) { return (uint32_t *)((char *)t + part_off[k]); }
 
 static struct {
     int theme; // index into themes[]
@@ -125,8 +144,12 @@ static struct {
     int trash;
     int rateme;
     int confetti;
+    int material, opening, wgraph, lastmove, checkwarn;
+    int taken, timer, report, hanging;
+    int movelist, danger, session;
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
-         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1};
+         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1},
+  cfg_default;
 
 static const char *theme_names[NTHEMES];
 static const char *spot_names[] = {"Top", "Bottom", "Left", "Right"};
@@ -148,7 +171,7 @@ static const char *chaos_names[] = {"Best move", "Close enough", "Random top 3",
 static const char *hint_names[] = {"Whole move", "Just the piece", "Just where"};
 static const char *delay_names[] = {"Right away", "After 3 sec", "After 10 sec"};
 static const int delay_secs[] = {0, 3, 10};
-static const char *mode_names[] = {"Cheats", "Helper only"};
+static const char *mode_names[] = {"Cheats", "Helper"};
 
 typedef struct {
     char name[32], url[512], kind[8], tags[48], about[96];
@@ -204,52 +227,63 @@ typedef struct {
     const char *label, *key;
     int *v, n;
     const char **names;
-    int col;
     const char *section;
 } Setting;
 
 static Setting sets[] = {
-    {"Theme", "theme", &cfg.theme, NTHEMES, theme_names, 0, "Look"},
-    {"Box spot", "spot", &cfg.spot, 4, spot_names, 0, NULL},
-    {"Box size", "size", &cfg.size, 3, size_names, 0, NULL},
-    {"See-through", "fade", &cfg.fade, 4, fade_names, 0, NULL},
-    {"Grid", "grid", &cfg.grid, 4, grid_names, 0, NULL},
-    {"Grid color", "gcolor", &cfg.gcolor, 11, color_names, 0, NULL},
-    {"Status line", "status", &cfg.status, 2, onoff, 0, NULL},
-    {"Show score", "score", &cfg.score, 2, onoff, 0, NULL},
-    {"Score as", "scorefmt", &cfg.scorefmt, 3, scorefmt_names, 0, NULL},
-    {"Eval bar", "evalbar", &cfg.evalbar, 3, evalbar_names, 0, NULL},
-    {"Square names", "sqnames", &cfg.sqnames, 2, onoff, 0, NULL},
-    {"Show what it sees", "debug", &cfg.debug, 2, onoff, 0, NULL},
-    {"Mode", "mode", &cfg.mode, 2, mode_names, 0, "Fun"},
-    {"Move picker", "chaos", &cfg.chaos, 8, chaos_names, 0, NULL},
-    {"Strength", "strength", &cfg.strength, 5, strength_names, 0, NULL},
-    {"Trash talk", "trash", &cfg.trash, 2, onoff, 0, NULL},
-    {"Rate my moves", "rateme", &cfg.rateme, 2, onoff, 0, NULL},
-    {"Confetti", "confetti", &cfg.confetti, 2, onoff, 0, NULL},
-    {"Arrow", "arrow", &cfg.arrow, 9, arrow_names, 1, "Your move"},
-    {"Arrow size", "thick", &cfg.thick, 4, thick_names, 1, NULL},
-    {"Piece to move", "from", &cfg.from, 14, mark_names, 1, NULL},
-    {"Where it goes", "to", &cfg.to, 14, mark_names, 1, NULL},
-    {"Move name", "label", &cfg.label, 2, onoff, 1, NULL},
-    {"Color", "mcolor", &cfg.mcolor, 11, color_names, 1, NULL},
-    {"Show", "hint", &cfg.hint, 3, hint_names, 1, NULL},
-    {"Show it", "delay", &cfg.delay, 3, delay_names, 1, NULL},
-    {"Engine", "engine", &cfg.engine, 1, engine_names, 1, "Engine"},
-    {"Get engines", "library", &cfg.library, 1, lib_names, 1, NULL},
-    {"Think time", "think", &cfg.think, 5, think_names, 1, NULL},
-    {"Updates", "rate", &cfg.rate, 3, rate_names, 1, NULL},
-    {"Lines", "lines", &cfg.lines, 3, lines_names, 1, NULL},
-    {"Threads", "threads", &cfg.threads, 5, threads_names, 1, NULL},
-    {"Memory", "hash", &cfg.hash, 5, hash_names, 1, NULL},
-    {"Their turn too", "theirtoo", &cfg.theirtoo, 2, onoff, 1, NULL},
-    {"Show", "theirs", &cfg.theirs, 4, theirs_names, 2, "Their move"},
-    {"Arrow", "tarrow", &cfg.tarrow, 9, arrow_names, 2, NULL},
-    {"Arrow size", "tthick", &cfg.tthick, 4, thick_names, 2, NULL},
-    {"Piece to move", "tfrom", &cfg.tfrom, 14, mark_names, 2, NULL},
-    {"Where it goes", "tto", &cfg.tto, 14, mark_names, 2, NULL},
-    {"Move name", "tlabel", &cfg.tlabel, 2, onoff, 2, NULL},
-    {"Color", "tcolor", &cfg.tcolor, 11, color_names, 2, NULL},
+    {"Theme", "theme", &cfg.theme, NTHEMES, theme_names, "Look"},
+    {"Box spot", "spot", &cfg.spot, 4, spot_names, NULL},
+    {"Box size", "size", &cfg.size, 3, size_names, NULL},
+    {"See-through", "fade", &cfg.fade, 4, fade_names, NULL},
+    {"Grid", "grid", &cfg.grid, 4, grid_names, NULL},
+    {"Grid color", "gcolor", &cfg.gcolor, 11, color_names, NULL},
+    {"Status line", "status", &cfg.status, 2, onoff, NULL},
+    {"Show score", "score", &cfg.score, 2, onoff, NULL},
+    {"Score as", "scorefmt", &cfg.scorefmt, 3, scorefmt_names, NULL},
+    {"Eval bar", "evalbar", &cfg.evalbar, 3, evalbar_names, NULL},
+    {"Square names", "sqnames", &cfg.sqnames, 2, onoff, NULL},
+    {"Show what it sees", "debug", &cfg.debug, 2, onoff, NULL},
+    {"Mode", "mode", &cfg.mode, 2, mode_names, "Fun"},
+    {"Move picker", "chaos", &cfg.chaos, 8, chaos_names, NULL},
+    {"Strength", "strength", &cfg.strength, 5, strength_names, NULL},
+    {"Trash talk", "trash", &cfg.trash, 2, onoff, NULL},
+    {"Rate my moves", "rateme", &cfg.rateme, 2, onoff, NULL},
+    {"Confetti", "confetti", &cfg.confetti, 2, onoff, NULL},
+    {"Arrow", "arrow", &cfg.arrow, 9, arrow_names, "Your move"},
+    {"Arrow size", "thick", &cfg.thick, 4, thick_names, NULL},
+    {"Piece to move", "from", &cfg.from, 14, mark_names, NULL},
+    {"Where it goes", "to", &cfg.to, 14, mark_names, NULL},
+    {"Move name", "label", &cfg.label, 2, onoff, NULL},
+    {"Color", "mcolor", &cfg.mcolor, 11, color_names, NULL},
+    {"Show", "hint", &cfg.hint, 3, hint_names, NULL},
+    {"Show it", "delay", &cfg.delay, 3, delay_names, NULL},
+    {"Engine", "engine", &cfg.engine, 1, engine_names, "Engine"},
+    {"Get engines", "library", &cfg.library, 1, lib_names, NULL},
+    {"Think time", "think", &cfg.think, 5, think_names, NULL},
+    {"Updates", "rate", &cfg.rate, 3, rate_names, NULL},
+    {"Lines", "lines", &cfg.lines, 3, lines_names, NULL},
+    {"Threads", "threads", &cfg.threads, 5, threads_names, NULL},
+    {"Memory", "hash", &cfg.hash, 5, hash_names, NULL},
+    {"Their turn too", "theirtoo", &cfg.theirtoo, 2, onoff, NULL},
+    {"Show", "theirs", &cfg.theirs, 4, theirs_names, "Their move"},
+    {"Arrow", "tarrow", &cfg.tarrow, 9, arrow_names, NULL},
+    {"Arrow size", "tthick", &cfg.tthick, 4, thick_names, NULL},
+    {"Piece to move", "tfrom", &cfg.tfrom, 14, mark_names, NULL},
+    {"Where it goes", "tto", &cfg.tto, 14, mark_names, NULL},
+    {"Move name", "tlabel", &cfg.tlabel, 2, onoff, NULL},
+    {"Color", "tcolor", &cfg.tcolor, 11, color_names, NULL},
+    {"Material", "material", &cfg.material, 2, onoff, "Helper"},
+    {"Taken pieces", "taken", &cfg.taken, 2, onoff, NULL},
+    {"Opening & phase", "opening", &cfg.opening, 2, onoff, NULL},
+    {"Win graph", "wgraph", &cfg.wgraph, 2, onoff, NULL},
+    {"Turn timer", "timer", &cfg.timer, 2, onoff, NULL},
+    {"Game report", "report", &cfg.report, 2, onoff, NULL},
+    {"Last move", "lastmove", &cfg.lastmove, 2, onoff, NULL},
+    {"Check warning", "checkwarn", &cfg.checkwarn, 2, onoff, NULL},
+    {"Hanging pieces", "hanging", &cfg.hanging, 2, onoff, NULL},
+    {"Move list", "movelist", &cfg.movelist, 2, onoff, NULL},
+    {"Danger alerts", "danger", &cfg.danger, 2, onoff, NULL},
+    {"Session score", "session", &cfg.session, 2, onoff, NULL},
 };
 #define NSET ((int)(sizeof(sets) / sizeof(sets[0])))
 static int dd_open = -1;
@@ -289,6 +323,18 @@ static void load_cfg(void)
             have_saved_engine = 1;
             continue;
         }
+        if (!strncmp(k, "custom", 6) && k[6] >= '1' && k[6] < '1' + NCUSTOM && !k[7]) {
+            Theme *t = &themes[CUSTOM0 + k[6] - '1'];
+            char *q = sp + 1;
+            for (int j = 0; j < NPARTS; j++) {
+                uint32_t v = 0;
+                int nd = 0;
+                for (; *q == ' '; q++) {}
+                for (; isxdigit((unsigned char)*q) && nd < 8; q++, nd++) v = v * 16 + (*q <= '9' ? *q - '0' : (*q | 32) - 'a' + 10);
+                if (nd == 8) *part(t, j) = v;
+            }
+            continue;
+        }
         if (!strcmp(k, "engine") || !strcmp(k, "library")) continue;
         if (!strcmp(k, "from") || !strcmp(k, "to")) has_marks = 1;
         for (int i = 0; i < NSET; i++)
@@ -305,6 +351,11 @@ static void save_cfg(void)
     for (int i = 0; i < NSET; i++)
         if (sets[i].v != &cfg.engine && sets[i].v != &cfg.library) fprintf(f, "%s %d\n", sets[i].key, *sets[i].v);
     if (have_saved_engine) fprintf(f, "enginepath %s\n", saved_engine);
+    for (int i = 0; i < NCUSTOM; i++) {
+        fprintf(f, "custom%d", i + 1);
+        for (int j = 0; j < NPARTS; j++) fprintf(f, " %08X", *part(&themes[CUSTOM0 + i], j));
+        fputc('\n', f);
+    }
     fclose(f);
 }
 static char note[96];
@@ -438,7 +489,7 @@ static void move_to_san(Pos *p, Move m, char *out)
 static void draw_button(Canvas *c, Rect r, const char *label, uint32_t bg, uint32_t fg)
 {
     draw_round_rect(c, r, 6, bg);
-    double tw = text_width(label, 0) / c->scale;
+    double tw = text_lw(c, label, 0);
     draw_text(c, r.x + (r.w - tw) / 2, r.y + (r.h - 14) / 2 - 1, label, 0, fg);
 }
 
@@ -692,7 +743,7 @@ static void draw_move(Canvas *c, Rect bl, Move m, int white_bottom, uint32_t col
         }
     }
     if (label && *label) {
-        double tw = text_width(label, 0) / c->scale, w = tw + 10, h = 19;
+        double tw = text_lw(c, label, 0), w = tw + 10, h = 19;
         Rect lr = {bl.x + c1 * s + (s - w) / 2, bl.y + r1 * s + s - h - 3, w, h};
         draw_round_rect(c, lr, 5, faded(0xF0181818));
         draw_text(c, lr.x + 5, lr.y + 1, label, 0, faded(0xFFF5F5F5));
@@ -728,11 +779,18 @@ static void format_score(const Analysis *a, int user_is_side_to_move, char *out,
         snprintf(out, n, "%+.1f", sc / 100.0);
 }
 
+static int bar_moving;
+static long pick_t = -99999;
+
 static void draw_evalbar(Canvas *c, Rect bl, const Analysis *a, int white_bottom, int side)
 {
     double w = fmax(10, bl.w / 8 * 0.2), x = cfg.evalbar == 1 ? bl.x - w - 6 : bl.x + bl.w + 6;
     int sc = side == WHITE ? a->score : -a->score, mate = side == WHITE ? a->mate : -a->mate;
-    double wp = mate > 0 ? 1 : mate < 0 ? 0 : 1 / (1 + exp(-0.00368208 * sc));
+    double target = mate > 0 ? 1 : mate < 0 ? 0 : 1 / (1 + exp(-0.00368208 * sc));
+    static double wp = 0.5;
+    wp += (target - wp) * 0.3;
+    if (fabs(target - wp) < 0.003) wp = target;
+    bar_moving = wp != target;
     double wh = bl.h * wp;
     draw_rect(c, (Rect){x, bl.y, w, bl.h}, faded(0xF0303030));
     if (white_bottom)
@@ -788,12 +846,26 @@ static const char *fit_text(Canvas *c, const char *t, double maxw)
 {
     static char buf[200];
     snprintf(buf, sizeof(buf), "%s", t);
-    if (text_width(buf, 0) / c->scale <= maxw) return buf;
+    if (text_lw(c, buf, 0) <= maxw) return buf;
     for (size_t l = strlen(buf); l > 3; l--) {
         buf[l - 3] = '.', buf[l - 2] = '.', buf[l - 1] = '.', buf[l] = 0;
-        if (text_width(buf, 0) / c->scale <= maxw) break;
+        if (text_lw(c, buf, 0) <= maxw) break;
     }
     return buf;
+}
+
+static void cut_to(char *t, double maxw, int big)
+{
+    size_t l = strlen(t);
+    if (text_width(t, big) <= maxw) return;
+    while (l > 3) {
+        t[--l] = 0;
+        char save[4];
+        memcpy(save, t + l - 3, 4);
+        memcpy(t + l - 3, "...", 4);
+        if (text_width(t, big) <= maxw) return;
+        memcpy(t + l - 3, save, 4);
+    }
 }
 
 static int dl_percent(double mb)
@@ -818,13 +890,102 @@ static int dl_percent(double mb)
     return pct > 99 ? 99 : pct;
 }
 
-static void draw_library(Canvas *c, Rect outr, Rect bl, int hit)
+static int set_tab;
+static long menu_t = -99999, menu_shut = -99999, set_t = -99999, set_shut = -99999, lib_t = -99999, conf_t = -99999,
+            tab_t = -99999, dd_t = -99999, tog_t = -99999;
+static int tab_dir, tab_prev, tog_i = -1;
+static double anim_force = -1;
+
+static double ease(long since, int ms)
+{
+    if (anim_force >= 0) return anim_force;
+    double t = (now_ms() - since) / (double)ms;
+    if (t >= 1) return 1;
+    if (t <= 0) return 0;
+    return 1 - (1 - t) * (1 - t) * (1 - t);
+}
+
+static int animating(void)
+{
+    long n = now_ms();
+    return n - menu_t < 200 || n - menu_shut < 140 || n - set_t < 220 || n - set_shut < 140 || n - lib_t < 240 ||
+           n - conf_t < 200 || n - tab_t < 200 || n - dd_t < 170 || n - tog_t < 170 || n - pick_t < 240 || bar_moving;
+}
+
+static void track_anims(void)
+{
+    static int was_menu, was_set, was_lib, was_conf, was_tab, was_dd = -1;
+    long n = now_ms();
+    if (menu_open != was_menu) {
+        if (menu_open) menu_t = n;
+        else menu_shut = n;
+        was_menu = menu_open;
+    }
+    if (settings_open != was_set) {
+        if (settings_open) set_t = n;
+        else set_shut = n;
+        was_set = settings_open;
+    }
+    if (lib_open && !was_lib) lib_t = n;
+    if (confirm_quit && !was_conf) conf_t = n;
+    if (dd_open >= 0 && dd_open != was_dd) dd_t = n;
+    if (set_tab != was_tab) {
+        tab_dir = set_tab > was_tab ? 1 : -1;
+        tab_prev = was_tab;
+        tab_t = n;
+        was_tab = set_tab;
+    }
+    was_lib = lib_open, was_conf = confirm_quit, was_dd = dd_open;
+}
+
+static uint32_t mix(uint32_t a, uint32_t b, double t)
+{
+    uint32_t o = 0;
+    for (int k = 0; k < 32; k += 8) {
+        double x = ((a >> k) & 255) * (1 - t) + ((b >> k) & 255) * t;
+        o |= (uint32_t)(x + 0.5) << k;
+    }
+    return o;
+}
+
+static Canvas lays[3];
+static size_t lay_cap[3];
+
+static Canvas *layer(int k, const Canvas *c, Rect r)
+{
+    double pad = 16;
+    int w = (int)ceil((r.w + 2 * pad) * c->scale) + 2, h = (int)ceil((r.h + 2 * pad) * c->scale) + 2;
+    size_t need = (size_t)w * h;
+    if (need > lay_cap[k]) {
+        free(lays[k].px);
+        lays[k].px = malloc(need * 4);
+        lay_cap[k] = lays[k].px ? need : 0;
+        if (!lays[k].px) return NULL;
+    }
+    lays[k].w = w, lays[k].h = h, lays[k].scale = c->scale, lays[k].ox = r.x - pad, lays[k].oy = r.y - pad;
+    memset(lays[k].px, 0, need * 4);
+    return &lays[k];
+}
+
+static void panel_bg(Canvas *c, Rect m, double rad, uint32_t fill)
+{
+    for (int k = 4; k >= 1; k--)
+        draw_round_rect(c, (Rect){m.x - k + 1, m.y - k + 4, m.w + 2 * k - 2, m.h + 2 * k - 2}, rad + k, 0x16000000);
+    draw_round_rect(c, (Rect){m.x - 1, m.y - 1, m.w + 2, m.h + 2}, rad + 1, (TH->btn & 0xFFFFFF) | 0xC0000000);
+    draw_round_rect(c, m, rad, fill);
+}
+
+static void draw_library(Canvas *dst, Rect outr, Rect bl, int hit)
 {
     double W = fmin(680, outr.w - 20), H = fmin(640, outr.h - 20);
     Rect P = {outr.x + (outr.w - W) / 2, outr.y + (outr.h - H) / 2, W, H};
     covers(P, bl);
-    draw_round_rect(c, (Rect){P.x - 1, P.y - 1, P.w + 2, P.h + 2}, 13, TH->title);
-    draw_round_rect(c, P, 12, TH->menu);
+    Canvas *c = layer(0, dst, P);
+    if (!c) return;
+    for (int k = 4; k >= 1; k--)
+        draw_round_rect(c, (Rect){P.x - k + 1, P.y - k + 4, P.w + 2 * k - 2, P.h + 2 * k - 2}, 14 + k, 0x16000000);
+    draw_round_rect(c, (Rect){P.x - 1, P.y - 1, P.w + 2, P.h + 2}, 15, TH->title);
+    draw_round_rect(c, P, 14, TH->menu);
     if (hit) add_hit(P, ACT_BLOCK); // eat clicks on empty popup space so they dont hit stuff underneath
     double x = P.x + 14, y = P.y + 12;
     draw_text(c, x, y, "Engine library", 1, TH->title);
@@ -875,7 +1036,7 @@ static void draw_library(Canvas *c, Rect outr, Rect bl, int hit)
         static const char *chips[5] = {"All", "Strongest", "Small", "Fun & weird", "Old ones"};
         double cxp = x;
         for (int k = 0; k < 5; k++) {
-            double w = text_width(chips[k], 0) / c->scale + 22;
+            double w = text_lw(c, chips[k], 0) + 22;
             Rect ch = {cxp, y, w, 26};
             draw_button(c, ch, chips[k], lib_filter == k ? TH->title : TH->btn, lib_filter == k ? 0xFF181818 : TH->btn_fg);
             if (hit) add_hit_arg(ch, ACT_LIB_FILTER, k);
@@ -893,7 +1054,7 @@ static void draw_library(Canvas *c, Rect outr, Rect bl, int hit)
     if (fit < 1) fit = 1;
     if (lib_scroll > n - fit) lib_scroll = n - fit;
     if (lib_scroll < 0) lib_scroll = 0;
-    if (!n) draw_text(c, x + 4, y + 8, lib_tab ? "nothing matches" : "nothing matches, try another word or filter", 0, TH->sub);
+    if (!n) draw_text(c, x + 4, y + 8, "nothing here", 0, TH->sub);
     static const char *tiers[5] = {"", "insane (3500+)", "really strong (3200+)", "strong (2800+)", "beatable-ish"};
     for (int k = 0; k < fit && lib_scroll + k < n; k++) {
         int i = idx[lib_scroll + k];
@@ -948,6 +1109,381 @@ static void draw_library(Canvas *c, Rect outr, Rect bl, int hit)
         draw_text(c, up.x - 2, (top + bottom) / 2 - 8, pg, 0, TH->sub);
         snprintf(pg, sizeof(pg), "of %d", n);
         draw_text(c, up.x - 2, (top + bottom) / 2 + 8, pg, 0, TH->sub);
+    }
+    double an = ease(lib_t, 230);
+    canvas_blit(dst, c, an, 0, 18 * (1 - an), -1);
+}
+
+
+static void arc(Canvas *c, double cx, double cy, double rx, double ry, double a0, double a1, double w, uint32_t col)
+{
+    int n = 24;
+    for (int k = 0; k < n; k++) {
+        double t0 = a0 + (a1 - a0) * k / n, t1 = a0 + (a1 - a0) * (k + 1) / n;
+        draw_line(c, cx + cos(t0) * rx, cy + sin(t0) * ry, cx + cos(t1) * rx, cy + sin(t1) * ry, w, col);
+    }
+}
+
+static void draw_icon(Canvas *c, Rect r, int kind, uint32_t col)
+{
+    double x = r.x, y = r.y, s = r.w, cx = x + s / 2, cy = y + s / 2, w = fmax(1.6, s * 0.11);
+    switch (kind) {
+    case 0:
+        arc(c, cx, cy, s * 0.45, s * 0.28, 0, 2 * M_PI, w, col);
+        draw_round_rect(c, (Rect){cx - s * 0.15, cy - s * 0.15, s * 0.3, s * 0.3}, s * 0.15, col);
+        break;
+    case 1:
+        draw_line(c, x + s * 0.3, y + s * 0.7, x + s * 0.85, y + s * 0.15, s * 0.2, col);
+        draw_triangle(c, x + s * 0.08, y + s * 0.92, x + s * 0.17, y + s * 0.6, x + s * 0.4, y + s * 0.83, col);
+        break;
+    case 2:
+        arc(c, cx, cy, s * 0.42, s * 0.42, 0, 2 * M_PI, w, col);
+        for (int k = 0; k < 12; k++) {
+            double a = M_PI / 2 + M_PI * k / 12, b = M_PI / 2 + M_PI * (k + 1) / 12;
+            draw_triangle(c, cx, cy, cx + cos(a) * s * 0.42, cy + sin(a) * s * 0.42, cx + cos(b) * s * 0.42, cy + sin(b) * s * 0.42, col);
+        }
+        break;
+    case 3:
+        for (int k = 0; k < 4; k++) {
+            double px = k & 1 ? x + s * 0.92 : x + s * 0.08, py = k & 2 ? y + s * 0.92 : y + s * 0.08, dx = k & 1 ? -1 : 1, dy = k & 2 ? -1 : 1;
+            draw_line(c, px, py, px + dx * s * 0.3, py, w, col);
+            draw_line(c, px, py, px, py + dy * s * 0.3, w, col);
+        }
+        draw_line(c, x + s * 0.2, cy, x + s * 0.8, cy, w, col);
+        break;
+    case 4:
+        draw_frame(c, (Rect){x + s * 0.22, y + s * 0.22, s * 0.56, s * 0.56}, w, col);
+        for (int k = 0; k < 3; k++) {
+            double o = s * (0.34 + 0.16 * k);
+            draw_line(c, x + o, y, x + o, y + s * 0.22, w * 0.8, col);
+            draw_line(c, x + o, y + s * 0.78, x + o, y + s, w * 0.8, col);
+            draw_line(c, x, y + o, x + s * 0.22, y + o, w * 0.8, col);
+            draw_line(c, x + s * 0.78, y + o, x + s, y + o, w * 0.8, col);
+        }
+        break;
+    case 5:
+        draw_line(c, x + s * 0.1, y + s * 0.3, x + s * 0.75, y + s * 0.3, w, col);
+        draw_triangle(c, x + s * 0.95, y + s * 0.3, x + s * 0.7, y + s * 0.12, x + s * 0.7, y + s * 0.48, col);
+        draw_line(c, x + s * 0.25, y + s * 0.72, x + s * 0.9, y + s * 0.72, w, col);
+        draw_triangle(c, x + s * 0.05, y + s * 0.72, x + s * 0.3, y + s * 0.54, x + s * 0.3, y + s * 0.9, col);
+        break;
+    case 6:
+        arc(c, cx, cy, s * 0.38, s * 0.38, -M_PI * 0.35, M_PI * 1.5, w, col);
+        draw_triangle(c, cx + s * 0.18, y + s * 0.02, cx + s * 0.48, y + s * 0.2, cx + s * 0.16, y + s * 0.34, col);
+        break;
+    case 7:
+        draw_line(c, cx, y + s * 0.05, cx, y + s * 0.55, w * 1.2, col);
+        draw_triangle(c, cx, y + s * 0.78, cx - s * 0.3, y + s * 0.45, cx + s * 0.3, y + s * 0.45, col);
+        draw_line(c, x + s * 0.1, y + s * 0.93, x + s * 0.9, y + s * 0.93, w, col);
+        break;
+    default:
+        draw_line(c, x + s * 0.15, y + s * 0.15, x + s * 0.85, y + s * 0.85, w * 1.3, col);
+        draw_line(c, x + s * 0.85, y + s * 0.15, x + s * 0.15, y + s * 0.85, w * 1.3, col);
+    }
+}
+
+static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
+{
+    const char *items[9] = {debug_on ? "Hide what it sees" : "Show what it sees", fix_mode ? "Done fixing" : "Fix pieces",
+                            tracker.pos.side == WHITE ? "Its black's turn" : "Its white's turn", "Rescan board",
+                            "Engines", "Switch team", "Restart", "Update", "Quit"};
+    const char *hint[9] = {"tags on every square", "click one, pick whats there", "", "if it got lost",
+                           "get, pick or delete them", "", "", "pulls the newest version", ""};
+    int acts[9] = {ACT_DEBUG, ACT_FIX, ACT_TURN, ACT_RESCAN, ACT_LIB_OPEN, ACT_FLIP, ACT_RESTART, ACT_UPDATE, ACT_QUIT};
+    int group[9] = {0, 0, 0, 0, 1, 1, 2, 2, 3};
+    double mw = 236, ih = 42, gap = 9, mh = 9 * ih + 3 * gap + 12;
+    Rect m = {p.x + p.w - mw, p.y + p.h + 6, mw, mh};
+    if (m.y + mh > outr.y + outr.h) m.y = p.y - mh - 6;
+    if (m.y < outr.y) m.y = outr.y + 4;
+    if (m.x < outr.x + 4) m.x = outr.x + 4;
+    int closing = !menu_open;
+    double an = closing ? ease(menu_shut, 130) : ease(menu_t, 190);
+    Canvas *c = layer(0, dst, m);
+    if (!c) return;
+    if (!closing) covers(m, bl);
+    panel_bg(c, m, 14, TH->menu);
+    if (hit) add_hit(m, ACT_BLOCK);
+    double y = m.y + 6;
+    for (int k = 0; k < 9; k++) {
+        if (k && group[k] != group[k - 1]) {
+            draw_line(c, m.x + 14, y + gap / 2 - 1, m.x + m.w - 14, y + gap / 2 - 1, 1, TH->btn);
+            y += gap;
+        }
+        Rect it = {m.x + 6, y, m.w - 12, ih - 3};
+        int on = (k == 0 && debug_on) || (k == 1 && fix_mode);
+        uint32_t fg = k == 8 ? 0xFFFF5A5A : TH->item_fg;
+        draw_round_rect(c, it, 10, on ? TH->btn : TH->item);
+        if (on) draw_round_rect(c, (Rect){it.x + 2, it.y + 8, 3, it.h - 16}, 1.5, TH->title);
+        Rect ib = {it.x + 10, it.y + (it.h - 30) / 2, 30, 30};
+        draw_round_rect(c, ib, 8, k == 8 ? 0x40FF5A5A : (TH->btn | 0xFF000000));
+        draw_icon(c, (Rect){ib.x + 7, ib.y + 7, 16, 16}, k, k == 8 ? 0xFFFF5A5A : on ? TH->title : TH->btn_fg);
+        if (*hint[k]) {
+            draw_text(c, it.x + 48, it.y + 2, items[k], 0, fg);
+            draw_text(c, it.x + 48, it.y + 19, fit_text(c, hint[k], it.w - 54), 0, (TH->item_fg & 0xFFFFFF) | 0x90000000);
+        } else {
+            draw_text(c, it.x + 48, it.y + (it.h - 17) / 2, items[k], 0, fg);
+        }
+        if (hit) add_hit(it, acts[k]);
+        y += ih;
+    }
+    canvas_blit(dst, c, closing ? 1 - an : an, 0, closing ? -6 * an : -12 * (1 - an), -1);
+}
+
+static const char *tab_names[] = {"Look", "Your move", "Their move", "Engine", "Fun", "Helper", "Themes"};
+#define NTABS 7
+#define TAB_THEMES 6
+static int set_tab, cslot, cpart;
+
+static int tab_of(int i)
+{
+    int t = 0;
+    for (int k = 0; k <= i; k++)
+        if (sets[k].section)
+            for (int j = 0; j < NTABS; j++)
+                if (!strcmp(sets[k].section, tab_names[j])) t = j;
+    return t;
+}
+
+static uint32_t swatch(int i)
+{
+    if (i >= 60) {
+        uint32_t g = (uint32_t)(255 * (i - 60) / 11);
+        return 0xFF000000u | g << 16 | g << 8 | g;
+    }
+    double h = (i % 12) / 12.0 * 6, l = (double[]){0.22, 0.38, 0.52, 0.68, 0.84}[i / 12], sat = 0.85;
+    double ch = (1 - fabs(2 * l - 1)) * sat, x = ch * (1 - fabs(wrap(h, 2) - 1)), m = l - ch / 2, r = 0, g = 0, b = 0;
+    switch ((int)h) {
+    case 0: r = ch, g = x; break;
+    case 1: r = x, g = ch; break;
+    case 2: g = ch, b = x; break;
+    case 3: g = x, b = ch; break;
+    case 4: r = x, b = ch; break;
+    default: r = ch, b = x;
+    }
+    return 0xFF000000u | (uint32_t)((r + m) * 255) << 16 | (uint32_t)((g + m) * 255) << 8 | (uint32_t)((b + m) * 255);
+}
+
+static void draw_theme_card(Canvas *c, Rect r, int ti, int hit)
+{
+    const Theme *t = &themes[ti];
+    if (ti == cfg.theme) draw_round_rect(c, (Rect){r.x - 2, r.y - 2, r.w + 4, r.h + 4}, 9, TH->title);
+    draw_round_rect(c, r, 7, t->panel | 0xFF000000);
+    draw_text(c, r.x + 7, r.y + 4, fit_text(c, t->name, r.w - 9), 0, t->title);
+    uint32_t dots[] = {t->sub, t->btn, t->grid, t->arrow};
+    for (int k = 0; k < 4; k++)
+        draw_round_rect(c, (Rect){r.x + 8 + k * 15, r.y + r.h - 16, 11, 11}, 5.5, dots[k] | 0xFF000000);
+    if (hit) add_hit_arg(r, ACT_THEME, ti);
+}
+
+static double themes_tab(Canvas *c, Rect m, double y, double pad, int draw, int hit)
+{
+    double w = m.w - 2 * pad, x0 = m.x + pad, chh = 44, g = 8;
+    int per = (int)((w + g) / (80 + g));
+    if (per < 1) per = 1;
+    double cw = (w - (per - 1) * g) / per;
+    if (draw) draw_text(c, x0 + 2, y, "Pick one", 0, TH->title);
+    y += 22;
+    for (int i = 0; i < NTHEMES; i++) {
+        Rect r = {x0 + (i % per) * (cw + g), y + (i / per) * (chh + g), cw, chh};
+        if (draw) draw_theme_card(c, r, i, hit);
+    }
+    y += ((NTHEMES + per - 1) / per) * (chh + g) + 6;
+    if (draw) draw_text(c, x0 + 2, y, "Make your own", 0, TH->title);
+    y += 24;
+    double bx = x0;
+    for (int k = 0; k < NCUSTOM; k++) {
+        Rect b = {bx, y, 84, 26};
+        int on = cslot == k;
+        if (draw) {
+            draw_button(c, b, themes[CUSTOM0 + k].name, on ? TH->title : TH->btn, on ? 0xFF181818 : TH->btn_fg);
+            if (hit) add_hit_arg(b, ACT_CSLOT, k);
+        }
+        bx += 90;
+    }
+    const char *cpl = cfg.theme >= CUSTOM0 ? "Start from Dark" : "Copy current theme";
+    Rect cp = {bx, y, text_lw(c, cpl, 0) + 22, 26};
+    if (cp.x + cp.w > x0 + w) cp.x = x0, cp.y = y += 32;
+    if (draw) {
+        draw_button(c, cp, cpl, TH->btn, TH->btn_fg);
+        if (hit) add_hit(cp, ACT_CCOPY);
+    }
+    y += 34;
+    double lw = 150, sw = 22, sg = 4, pw = 12 * (sw + sg);
+    int side = w >= lw + 12 + pw;
+    for (int k = 0; k < NPARTS; k++) {
+        Rect r = {x0, y + k * 24, lw, 22};
+        if (draw) {
+            draw_round_rect(c, r, 5, k == cpart ? TH->btn : TH->item);
+            draw_round_rect(c, (Rect){r.x + 5, r.y + 4, 14, 14}, 7, (TH->item_fg & 0xFFFFFF) | 0x60000000);
+            draw_round_rect(c, (Rect){r.x + 6, r.y + 5, 12, 12}, 6, *part(&themes[CUSTOM0 + cslot], k) | 0xFF000000);
+            draw_text(c, r.x + 24, r.y + 2, part_names[k], 0, TH->item_fg);
+            if (hit) add_hit_arg(r, ACT_CPART, k);
+        }
+    }
+    double py = side ? y : y + NPARTS * 24 + 8, px = side ? x0 + lw + 12 : x0;
+    uint32_t cur = *part(&themes[CUSTOM0 + cslot], cpart) | 0xFF000000;
+    for (int i = 0; i < 72; i++) {
+        Rect r = {px + (i % 12) * (sw + sg), py + (i / 12) * (sw + sg), sw, sw};
+        if (!draw) continue;
+        uint32_t col = swatch(i);
+        if (col == cur) draw_round_rect(c, (Rect){r.x - 2, r.y - 2, r.w + 4, r.h + 4}, 7, TH->item_fg);
+        else draw_round_rect(c, (Rect){r.x - 1, r.y - 1, r.w + 2, r.h + 2}, 6, (TH->item_fg & 0xFFFFFF) | 0x30000000);
+        draw_round_rect(c, r, 5, col);
+        if (hit) add_hit_arg(r, ACT_CSWATCH, i);
+    }
+    double ph = 6 * (sw + sg);
+    if (draw) draw_text(c, px, py + ph + 4, "Changes show up right away", 0, TH->sub);
+    return side ? y + fmax(NPARTS * 24, ph + 24) + 4 : py + ph + 28;
+}
+
+static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
+{
+    Canvas *c = dst;
+    double cw = 272, rh = 28, pad = 12;
+    int ncol = outr.w >= cw * 2 + pad * 3 + 8 ? 2 : 1;
+    double mw = cw * ncol + pad * (ncol + 1);
+    int idx[NSET], n = 0;
+    for (int i = 0; i < NSET; i++)
+        if (tab_of(i) == set_tab) idx[n++] = i;
+    double tabh = 26, tg = 4, tx = pad, ty = 46;
+    Rect tabr[NTABS];
+    for (int k = 0; k < NTABS; k++) {
+        double tw = text_lw(c, tab_names[k], 0) + 16;
+        if (tx + tw > mw - pad) tx = pad, ty += tabh + tg;
+        tabr[k] = (Rect){tx, ty, tw, tabh};
+        tx += tw + tg;
+    }
+    double top = ty + tabh + 14, body;
+    int per = (n + ncol - 1) / ncol;
+    Rect m = {0, 0, mw, 0};
+    if (set_tab == TAB_THEMES)
+        body = themes_tab(c, m, top, pad, 0, 0) - top;
+    else
+        body = per * rh + 40;
+    double mh = top + body + pad;
+    static double from_h, to_h;
+    static long h_t = -99999;
+    if (mh != to_h) {
+        from_h = to_h ? from_h + (to_h - from_h) * ease(h_t, 200) : mh;
+        to_h = mh, h_t = now_ms();
+    }
+    mh = from_h + (to_h - from_h) * ease(h_t, 200);
+    m = (Rect){p.x + p.w - mw, p.y + p.h + 6, mw, mh};
+    if (m.x < outr.x + 4) m.x = outr.x + 4;
+    if (m.x + mw > outr.x + outr.w - 4) m.x = outr.x + outr.w - 4 - mw;
+    if (m.y + mh > outr.y + outr.h) m.y = p.y - mh - 6;
+    if (m.y < outr.y) m.y = outr.y + 4;
+    int closing = !settings_open;
+    double an = closing ? ease(set_shut, 130) : ease(set_t, 210);
+    c = layer(0, dst, m);
+    if (!c) return;
+    if (!closing) covers(m, bl);
+    panel_bg(c, m, 14, TH->menu);
+    if (hit) add_hit(m, ACT_BLOCK);
+    set_text_zoom(1);
+    draw_text(c, m.x + pad, m.y + 10, "Settings", 1, TH->title);
+    Rect x = {m.x + m.w - pad - 26, m.y + 10, 26, 26};
+    draw_close(c, x);
+    if (hit) add_hit(x, ACT_SETTINGS);
+    draw_line(c, m.x + pad, m.y + 40, m.x + m.w - pad, m.y + 40, 1, TH->btn);
+    double tq = ease(tab_t, 200);
+    Rect a0 = tabr[tab_prev < NTABS ? tab_prev : set_tab], a1 = tabr[set_tab];
+    Rect pill = {m.x + a0.x + (a1.x - a0.x) * tq, m.y + a0.y + (a1.y - a0.y) * tq, a0.w + (a1.w - a0.w) * tq, tabh};
+    for (int k = 0; k < NTABS; k++) {
+        Rect r = tabr[k];
+        r.x += m.x, r.y += m.y;
+        draw_round_rect(c, r, 13, TH->item);
+        if (hit) add_hit_arg(r, ACT_TAB, k);
+    }
+    draw_round_rect(c, pill, 13, TH->title);
+    for (int k = 0; k < NTABS; k++) {
+        Rect r = tabr[k];
+        r.x += m.x, r.y += m.y;
+        double tw = text_lw(c, tab_names[k], 0), cx = r.x + r.w / 2;
+        int under = cx > pill.x && cx < pill.x + pill.w && fabs(r.y - pill.y) < 4;
+        draw_text(c, r.x + (r.w - tw) / 2, r.y + 4, tab_names[k], 0, under ? 0xFF181818 : TH->item_fg);
+    }
+    Canvas *panel = c;
+    Rect area = {m.x, m.y + top - 6, m.w, m.h - top + 6};
+    if (tq < 1 && (c = layer(1, panel, area)) == NULL) c = panel;
+    Rect ddbox = {0};
+    if (set_tab == TAB_THEMES) themes_tab(c, m, m.y + top, pad, 1, hit);
+    for (int j = 0; set_tab != TAB_THEMES && j < n; j++) {
+        int i = idx[j];
+        const Setting *st = &sets[i];
+        int col = j / per;
+        Rect row = {m.x + pad + col * (cw + pad), m.y + top + (j % per) * rh, cw, rh - 3};
+        draw_round_rect(c, row, 7, TH->item);
+        draw_text(c, row.x + 10, row.y + 4, st->label, 0, TH->item_fg);
+        if (st->names == onoff) {
+            int on = *st->v;
+            Rect sw = {row.x + row.w - 46, row.y + 3.5, 38, 18};
+            double d = 14, q = i == tog_i ? ease(tog_t, 160) : 1, v = on ? q : 1 - q;
+            draw_round_rect(c, sw, 9, mix(TH->btn, TH->title, v));
+            draw_round_rect(c, (Rect){sw.x + 2 + (sw.w - d - 4) * v, sw.y + 2, d, d}, d / 2, mix(0xFFE8E8E8, 0xFF181818, v));
+        } else {
+            Rect box = {row.x + row.w - 126, row.y + 3, 120, row.h - 6};
+            draw_round_rect(c, box, 5, dd_open == i ? TH->title : TH->btn);
+            uint32_t fg = dd_open == i ? 0xFF181818 : TH->btn_fg;
+            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.theme) {
+                uint32_t sw = st->v == &cfg.theme ? TH->panel : pick_color(*st->v, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : 0xC8FF4D4D);
+                draw_round_rect(c, (Rect){box.x - 18, box.y + 4, 12, 12}, 6, sw | 0xFF000000);
+            }
+            draw_text(c, box.x + 8, box.y + 1,
+                      fit_text(c, st->v == &cfg.library ? (dl_pid > 0 ? "Getting..." : "Browse") : st->names[*st->v], box.w - 26),
+                      0, fg);
+            double tx2 = box.x + box.w - 15, ty2 = box.y + box.h / 2 - 2;
+            if (st->v == &cfg.library || st->v == &cfg.engine)
+                draw_text(c, tx2 + 1, box.y + 1, ">", 0, fg);
+            else
+                draw_triangle(c, tx2, ty2, tx2 + 9, ty2, tx2 + 4.5, ty2 + 5, fg);
+            if (dd_open == i) ddbox = box;
+        }
+        if (hit) add_hit_arg(row, ACT_SET, i);
+    }
+    Rect rs = {m.x + pad, m.y + top + body - 30, 150, 26};
+    if (set_tab != TAB_THEMES) {
+        draw_button(c, rs, "Reset this tab", TH->btn, TH->btn_fg);
+        if (hit) add_hit(rs, ACT_RESET);
+    }
+    if (set_tab == 0) {
+        Rect tt = {rs.x + rs.w + 8, rs.y, 140, 26};
+        draw_button(c, tt, "More themes >", TH->btn, TH->btn_fg);
+        if (hit) add_hit_arg(tt, ACT_TAB, TAB_THEMES);
+    }
+    if (c != panel) canvas_blit(panel, c, tq, 30 * (1 - tq) * tab_dir, 0, -1);
+    canvas_blit(dst, panel, closing ? 1 - an : an, 0, closing ? -6 * an : -12 * (1 - an), -1);
+    c = dst;
+    if (closing) return;
+    if (dd_open >= 0 && ddbox.w > 0) {
+        const Setting *st = &sets[dd_open];
+        double iw = ddbox.w, ih = 24;
+        for (int k = 0; k < st->n; k++) iw = fmax(iw, text_lw(c, st->names[k], 0) + 30);
+        Rect l = {ddbox.x + ddbox.w - iw, ddbox.y + ddbox.h + 3, iw, st->n * ih + 6};
+        if (l.y + l.h > outr.y + outr.h) l.y = ddbox.y - l.h - 3;
+        if (l.y < outr.y) l.y = outr.y + 4;
+        covers(l, bl);
+        double dq = ease(dd_t, 160);
+        Canvas *base = c;
+        if ((c = layer(2, base, l)) == NULL) c = base;
+        for (int k = 3; k >= 1; k--)
+            draw_round_rect(c, (Rect){l.x - k, l.y - k + 3, l.w + 2 * k, l.h + 2 * k}, 9 + k, 0x18000000);
+        draw_round_rect(c, (Rect){l.x - 1, l.y - 1, l.w + 2, l.h + 2}, 10, TH->title);
+        draw_round_rect(c, l, 9, TH->menu);
+        if (hit) add_hit(l, ACT_BLOCK);
+        for (int k = 0; k < st->n; k++) {
+            Rect it = {l.x + 3, l.y + 3 + k * ih, l.w - 6, ih - 2};
+            if (k == *st->v) draw_round_rect(c, it, 5, TH->btn);
+            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.theme) {
+                uint32_t sw = (st->v == &cfg.theme ? themes[k].panel : pick_color(k, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : 0xC8FF4D4D)) | 0xFF000000;
+                draw_round_rect(c, (Rect){it.x + 6, it.y + 5, 12, 12}, 6, sw);
+                draw_text(c, it.x + 24, it.y + 3, st->names[k], 0, TH->item_fg);
+            } else {
+                draw_text(c, it.x + 8, it.y + 3, st->names[k], 0, TH->item_fg);
+            }
+            if (hit) add_hit_arg(it, ACT_PICK, dd_open * 64 + k);
+        }
+        if (c != base) canvas_blit(base, c, fmin(1, dq * 1.5), 0, -5 * (1 - dq), 18 + l.h * dq);
     }
 }
 
@@ -1010,106 +1546,15 @@ static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
                 }
         }
     }
-    if (menu_open) {
-        const char *items[9] = {debug_on ? "Hide what it sees" : "Show what it sees",
-                                fix_mode ? "Done fixing pieces" : "Fix pieces",
-                                tracker.pos.side == WHITE ? "Its black's turn" : "Its white's turn", "Rescan board",
-                                "Engines", "Switch team", "Restart", "Update", "Quit"};
-        int acts[9] = {ACT_DEBUG, ACT_FIX, ACT_TURN, ACT_RESCAN, ACT_LIB_OPEN, ACT_FLIP, ACT_RESTART, ACT_UPDATE, ACT_QUIT};
-        double mw = 190, mh = 9 * 32 + 8;
-        Rect m = {p.x + p.w - mw, p.y + p.h + 6, mw, mh};
-        if (m.y + mh > outr.y + outr.h) m.y = p.y - mh - 6;
-        if (m.y < outr.y) m.y = outr.y + 4;
-        if (m.x < outr.x + 4) m.x = outr.x + 4;
-        covers(m, bl);
-        draw_round_rect(c, m, 10, TH->menu);
-        if (hit) add_hit(m, ACT_BLOCK);
-        for (int k = 0; k < 9; k++) {
-            Rect it = {m.x + 4, m.y + 4 + k * 32, m.w - 8, 30};
-            draw_round_rect(c, it, 6, TH->item);
-            draw_text(c, it.x + 10, it.y + 6, items[k], 0, k == 8 ? 0xFFFF5A5A : TH->item_fg);
-            if (hit) add_hit(it, acts[k]);
-        }
-    }
-    if (settings_open) {
-        double cw = 272, rh = 28, sh = 24, pad = 10, ch[3] = {0, 0, 0};
-        int ncol = outr.w >= cw * 3 + pad * 4 + 8 ? 3 : 2;
-#define COL(st) ((st)->col < ncol ? (st)->col : 0)
-        for (int i = 0; i < NSET; i++) ch[COL(&sets[i])] += rh + (sets[i].section ? sh : 0);
-        double mw = cw * ncol + pad * (ncol + 1), mh = fmax(ch[0], fmax(ch[1], ch[2])) + pad * 2;
-        Rect m = {p.x + p.w - mw, p.y + p.h + 6, mw, mh};
-        if (m.x < outr.x + 4) m.x = outr.x + 4;
-        if (m.x + mw > outr.x + outr.w - 4) m.x = outr.x + outr.w - 4 - mw;
-        if (m.y + mh > outr.y + outr.h) m.y = p.y - mh - 6;
-        if (m.y < outr.y) m.y = outr.y + 4;
-        covers(m, bl);
-        draw_round_rect(c, m, 10, TH->menu);
-        if (hit) add_hit(m, ACT_BLOCK);
-        double cy[3] = {m.y + pad, m.y + pad, m.y + pad};
-        Rect ddbox = {0};
-        for (int i = 0; i < NSET; i++) {
-            const Setting *st = &sets[i];
-            int col = COL(st);
-            double x = m.x + pad + col * (cw + pad);
-            if (st->section) {
-                draw_text(c, x + 4, cy[col] + 4, st->section, 0, TH->title);
-                cy[col] += sh;
-            }
-            Rect row = {x, cy[col], cw, rh - 2};
-            cy[col] += rh;
-            draw_round_rect(c, row, 6, TH->item);
-            draw_text(c, row.x + 9, row.y + 5, st->label, 0, TH->item_fg);
-            if (st->names == onoff) {
-                int on = *st->v;
-                Rect pill = {row.x + row.w - 46, row.y + 4, 38, 18};
-                draw_round_rect(c, pill, 9, on ? TH->title : TH->btn);
-                double d = 14, kx = on ? pill.x + pill.w - d - 2 : pill.x + 2;
-                draw_round_rect(c, (Rect){kx, pill.y + 2, d, d}, d / 2, on ? 0xFF181818 : 0xFFE8E8E8);
-            } else {
-                Rect box = {row.x + row.w - 124, row.y + 3, 118, row.h - 6};
-                draw_round_rect(c, box, 5, dd_open == i ? TH->title : TH->btn);
-                uint32_t fg = dd_open == i ? 0xFF181818 : TH->btn_fg;
-                draw_text(c, box.x + 8, box.y + 2,
-                          fit_text(c, st->v == &cfg.library ? (dl_pid > 0 ? "Getting..." : "Browse") : st->names[*st->v], box.w - 26),
-                          0, fg);
-                double tx = box.x + box.w - 15, ty = box.y + box.h / 2 - 2;
-                if (st->v == &cfg.library || st->v == &cfg.engine)
-                    draw_text(c, tx + 1, box.y + 2, ">", 0, fg);
-                else
-                    draw_triangle(c, tx, ty, tx + 9, ty, tx + 4.5, ty + 5, fg);
-                if (dd_open == i) ddbox = box;
-            }
-            if (hit) add_hit_arg(row, ACT_SET, i);
-        }
-        if (dd_open >= 0 && ddbox.w > 0) {
-            const Setting *st = &sets[dd_open];
-            double iw = ddbox.w, ih = 24;
-            for (int k = 0; k < st->n; k++) iw = fmax(iw, text_width(st->names[k], 0) / c->scale + 30);
-            Rect l = {ddbox.x + ddbox.w - iw, ddbox.y + ddbox.h + 3, iw, st->n * ih + 6};
-            if (l.y + l.h > outr.y + outr.h) l.y = ddbox.y - l.h - 3;
-            covers(l, bl);
-            draw_round_rect(c, (Rect){l.x - 1, l.y - 1, l.w + 2, l.h + 2}, 8, TH->title);
-            draw_round_rect(c, l, 7, TH->menu);
-            if (hit) add_hit(l, ACT_BLOCK);
-            for (int k = 0; k < st->n; k++) {
-                Rect it = {l.x + 3, l.y + 3 + k * ih, l.w - 6, ih - 2};
-                if (k == *st->v) draw_round_rect(c, it, 5, TH->btn);
-                if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor) {
-                    uint32_t sw = pick_color(k, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : 0xC8FF4D4D) | 0xFF000000;
-                    draw_round_rect(c, (Rect){it.x + 6, it.y + 5, 12, 12}, 6, sw);
-                    draw_text(c, it.x + 24, it.y + 3, st->names[k], 0, TH->item_fg);
-                } else {
-                    draw_text(c, it.x + 8, it.y + 3, st->names[k], 0, TH->item_fg);
-                }
-                if (hit) add_hit_arg(it, ACT_PICK, dd_open * 16 + k);
-            }
-        }
-    }
+    if (menu_open || now_ms() - menu_shut < 130) draw_menu(c, p, bl, outr, menu_open && hit);
+    if (settings_open || now_ms() - set_shut < 130) draw_settings(c, p, bl, outr, settings_open && hit);
     if (confirm_quit) {
         Rect q = {p.x + p.w - 250, p.y + p.h + 6, 250, 74};
         if (q.y + q.h > outr.y + outr.h) q.y = p.y - q.h - 6;
         covers(q, bl);
-        draw_round_rect(c, q, 10, TH->menu);
+        Canvas *dst = c;
+        if ((c = layer(0, dst, q)) == NULL) c = dst;
+        panel_bg(c, q, 14, TH->menu);
         if (hit) add_hit(q, ACT_BLOCK);
         draw_text(c, q.x + 14, q.y + 9, "Quit open-chease?", 0, TH->item_fg);
         Rect yes = {q.x + 14, q.y + 36, 104, 28}, no = {q.x + 128, q.y + 36, 104, 28};
@@ -1118,6 +1563,11 @@ static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
         if (hit) {
             add_hit(yes, ACT_QUIT_YES);
             add_hit(no, ACT_QUIT_NO);
+        }
+        if (c != dst) {
+            double an = ease(conf_t, 180);
+            canvas_blit(dst, c, an, 0, -10 * (1 - an), -1);
+            c = dst;
         }
     }
     if (lib_open) draw_library(c, outr, bl, hit);
@@ -1260,8 +1710,7 @@ static const char *quip(u64 key)
                                  "stockfish would be proud", "textbook", "clean", "this one slaps", "lock in",
                                  "magnus would play this", "certified banger", "ez clap", "no thoughts just this",
                                  "they're not ready", "chef's kiss", "play it fast, look confident", "calculated",
-                                 "your opponent is sweating", "built different", "say less", "this is so back",
-                                 "W move", "main character move", "go go go", "brilliant (probably)"};
+                                 "your opponent is sweating", "W move", "go go go", "brilliant (probably)"};
     static const char *bad[] = {"this is definitely good", "bold strategy", "trust the process", "chaos mode go",
                                 "what could go wrong", "its a gambit i promise", "they'll never expect this",
                                 "galaxy brain", "for the content", "sacrifice everything", "the engine said so (it didnt)",
@@ -1269,9 +1718,10 @@ static const char *quip(u64 key)
                                 "it's called strategy", "this is fine", "speedrunning a loss", "just vibes",
                                 "you asked for chaos", "chess is a social game anyway", "for science",
                                 "i saw it in a dream", "they'll be too confused", "sorry in advance", "yolo",
-                                "let him cook", "statistically a move", "zero thoughts", "your friend is gonna laugh"};
+                                "let him cook", "statistically a move", "your friend is gonna laugh"};
     const char **list = cfg.chaos >= 4 ? bad : good;
-    return list[(key * 2654435761u >> 7) % 30];
+    size_t n = cfg.chaos >= 4 ? sizeof(bad) / sizeof(*bad) : sizeof(good) / sizeof(*good);
+    return list[(key * 2654435761u >> 7) % n];
 }
 
 static const char *roast(int mine, int grade)
@@ -1292,7 +1742,7 @@ static const char *roast(int mine, int grade)
          "kinda mid from them", "look closer", "chance coming"},
         {"they messed up", "mistake from them, punish it", "they fumbled", "go get em", "they're slipping", "oops from them",
          "free chances", "they'll regret that"},
-        {"they blundered lol", "free piece incoming", "they hung something, go get it", "thank you for the gift",
+        {"they blundered", "free piece incoming", "they hung something, go get it", "thank you for the gift",
          "they're throwing", "huge blunder from them", "they're cooked", "christmas came early"}};
     return (mine ? me : them)[grade][rand() % 8];
 }
@@ -1304,7 +1754,7 @@ static void draw_sqnames(Canvas *c, Rect bl, int white_bottom)
         int r, col;
         sq_display(sq, white_bottom, &r, &col);
         char t[3] = {(char)('a' + (sq & 7)), (char)('1' + (sq >> 3)), 0};
-        double tw = text_width(t, 0) / c->scale;
+        double tw = text_lw(c, t, 0);
         Rect lb = {bl.x + (col + 1) * s - tw - 9, bl.y + r * s + 3, tw + 6, 17};
         draw_round_rect(c, lb, 4, faded(0x90101010));
         draw_text(c, lb.x + 3, lb.y, t, 0, faded(0xE6F5F5F5));
@@ -1339,9 +1789,338 @@ static int user_score(const Analysis *a, int user_to_move)
     return user_to_move ? sc : -sc;
 }
 
+static const char *openings[][2] = {
+    {"e2e4", "King's Pawn"},
+    {"d2d4", "Queen's Pawn"},
+    {"c2c4", "English Opening"},
+    {"g1f3", "Reti Opening"},
+    {"f2f4", "Bird's Opening"},
+    {"b2b3", "Nimzo-Larsen Attack"},
+    {"g2g3", "King's Fianchetto"},
+    {"b2b4", "Polish Opening"},
+    {"b1c3", "Van Geet Opening"},
+    {"g2g4", "Grob Opening"},
+    {"a2a3", "Anderssen's Opening"},
+    {"e2e4 e7e5", "Open Game"},
+    {"e2e4 c7c5", "Sicilian Defense"},
+    {"e2e4 e7e6", "French Defense"},
+    {"e2e4 c7c6", "Caro-Kann Defense"},
+    {"e2e4 d7d5", "Scandinavian Defense"},
+    {"e2e4 g8f6", "Alekhine's Defense"},
+    {"e2e4 d7d6", "Pirc Defense"},
+    {"e2e4 g7g6", "Modern Defense"},
+    {"e2e4 b8c6", "Nimzowitsch Defense"},
+    {"e2e4 b7b6", "Owen's Defense"},
+    {"e2e4 a7a6", "St. George Defense"},
+    {"e2e4 e7e5 g1f3", "King's Knight Opening"},
+    {"e2e4 e7e5 f2f4", "King's Gambit"},
+    {"e2e4 e7e5 b1c3", "Vienna Game"},
+    {"e2e4 e7e5 f1c4", "Bishop's Opening"},
+    {"e2e4 e7e5 d2d4", "Center Game"},
+    {"e2e4 e7e5 d1h5", "Wayward Queen Attack"},
+    {"e2e4 e7e5 e1e2", "Bongcloud lmao"},
+    {"e2e4 e7e5 g1f3 g8f6", "Petrov's Defense"},
+    {"e2e4 e7e5 g1f3 d7d6", "Philidor Defense"},
+    {"e2e4 e7e5 g1f3 f7f6", "Damiano Defense"},
+    {"e2e4 e7e5 g1f3 d7d5", "Elephant Gambit"},
+    {"e2e4 e7e5 g1f3 f7f5", "Latvian Gambit"},
+    {"e2e4 e7e5 g1f3 b8c6 f1b5", "Ruy Lopez"},
+    {"e2e4 e7e5 g1f3 b8c6 f1b5 a7a6", "Ruy Lopez, Morphy"},
+    {"e2e4 e7e5 g1f3 b8c6 f1b5 g8f6", "Ruy Lopez, Berlin"},
+    {"e2e4 e7e5 g1f3 b8c6 f1c4", "Italian Game"},
+    {"e2e4 e7e5 g1f3 b8c6 f1c4 f8c5", "Giuoco Piano"},
+    {"e2e4 e7e5 g1f3 b8c6 f1c4 f8c5 b2b4", "Evans Gambit"},
+    {"e2e4 e7e5 g1f3 b8c6 f1c4 g8f6", "Two Knights Defense"},
+    {"e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 f3g5", "Two Knights, Knight Attack"},
+    {"e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 f3g5 d7d5 e4d5 f6d5 g5f7", "Fried Liver Attack"},
+    {"e2e4 e7e5 g1f3 b8c6 d2d4", "Scotch Game"},
+    {"e2e4 e7e5 g1f3 b8c6 b1c3", "Three Knights"},
+    {"e2e4 e7e5 g1f3 b8c6 b1c3 g8f6", "Four Knights Game"},
+    {"e2e4 e7e5 f1c4 b8c6 d1h5 g8f6 h5f7", "Scholar's Mate"},
+    {"e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 a7a6", "Sicilian, Najdorf"},
+    {"e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 g7g6", "Sicilian, Dragon"},
+    {"e2e4 c7c5 b1c3", "Closed Sicilian"},
+    {"e2e4 c7c5 c2c3", "Sicilian, Alapin"},
+    {"e2e4 c7c5 d2d4 c5d4 c2c3", "Smith-Morra Gambit"},
+    {"e2e4 e7e6 d2d4 d7d5 e4e5", "French, Advance"},
+    {"e2e4 c7c6 d2d4 d7d5 e4e5", "Caro-Kann, Advance"},
+    {"d2d4 d7d5 c2c4", "Queen's Gambit"},
+    {"d2d4 d7d5 c2c4 e7e6", "Queen's Gambit Declined"},
+    {"d2d4 d7d5 c2c4 d5c4", "Queen's Gambit Accepted"},
+    {"d2d4 d7d5 c2c4 c7c6", "Slav Defense"},
+    {"d2d4 d7d5 c2c4 b8c6", "Chigorin Defense"},
+    {"d2d4 d7d5 c1f4", "London System"},
+    {"d2d4 g8f6 c1f4", "London System"},
+    {"d2d4 d7d5 g1f3 g8f6 c1f4", "London System"},
+    {"d2d4 d7d5 e2e4", "Blackmar-Diemer Gambit"},
+    {"d2d4 g8f6 c2c4 g7g6", "King's Indian Defense"},
+    {"d2d4 g8f6 c2c4 g7g6 b1c3 d7d5", "Grunfeld Defense"},
+    {"d2d4 g8f6 c2c4 e7e6 b1c3 f8b4", "Nimzo-Indian Defense"},
+    {"d2d4 g8f6 c2c4 e7e6 g1f3 b7b6", "Queen's Indian Defense"},
+    {"d2d4 g8f6 c2c4 c7c5", "Benoni Defense"},
+    {"d2d4 g8f6 c2c4 c7c5 d4d5 b7b5", "Benko Gambit"},
+    {"d2d4 g8f6 c2c4 e7e5", "Budapest Gambit"},
+    {"d2d4 g8f6 c1g5", "Trompowsky Attack"},
+    {"d2d4 f7f5", "Dutch Defense"},
+    {"d2d4 e7e5", "Englund Gambit"},
+    {"c2c4 e7e5", "English, Reversed Sicilian"},
+    {"f2f3 e7e5 g2g4 d8h4", "Fool's Mate"},
+};
+#define NOPEN ((int)(sizeof(openings) / sizeof(openings[0])))
+static u64 open_keys[NOPEN];
+static u64 start_key;
+static const char *open_name;
+
+static void init_openings(void)
+{
+    Pos p;
+    pos_startpos(&p);
+    start_key = p.key;
+    for (int i = 0; i < NOPEN; i++) {
+        pos_startpos(&p);
+        char buf[160], *save, *tok;
+        snprintf(buf, sizeof(buf), "%s", openings[i][0]);
+        for (tok = strtok_r(buf, " ", &save); tok; tok = strtok_r(NULL, " ", &save)) {
+            Move m = move_from_uci(&p, tok);
+            Undo u;
+            if (!m || !pos_make(&p, m, &u)) break;
+        }
+        open_keys[i] = tok ? 0 : p.key;
+    }
+}
+
+#define WMAX 160
+static float whist[WMAX];
+static int nwhist;
+static u64 whist_key;
+
+static int hplies, grades[2][5], acc_n[2], nsan, wins, losses, draws;
+static char sans[96][8];
+static Pos san_prev;
+static u64 san_key, counted_key;
+static double acc_sum[2];
+
+static double win_pct(int cp) { return 100 / (1 + exp(-0.00368208 * cp)); }
+
+static void helper_track(const Analysis *an, int have_an, int my_turn)
+{
+    static u64 last;
+    u64 k = tracker.pos.key;
+    if (k != last) {
+        last = k;
+        hplies++;
+        if (san_key && tracker.last_move && san_prev.key == san_key) {
+            Move ms[256];
+            Pos t = san_prev;
+            int nm = pos_gen_legal(&t, ms), ok = 0;
+            for (int q = 0; q < nm; q++) ok |= ms[q] == tracker.last_move;
+            if (ok) {
+                if (nsan == 96) memmove(sans, sans + 1, sizeof(sans[0]) * --nsan);
+                t = san_prev;
+                move_to_san(&t, tracker.last_move, sans[nsan++]);
+            }
+        }
+        san_prev = tracker.pos, san_key = k;
+        if (k == start_key) {
+            nsan = 0, counted_key = 0;
+            open_name = NULL, nwhist = 0, whist_key = 0, hplies = 0;
+            memset(grades, 0, sizeof(grades));
+            memset(acc_n, 0, sizeof(acc_n));
+            memset(acc_sum, 0, sizeof(acc_sum));
+        }
+        for (int i = 0; i < NOPEN; i++)
+            if (open_keys[i] == k) open_name = openings[i][1];
+    }
+    if (!have_an || an->depth < 6) return;
+    float w = an->mate ? (user_score(an, my_turn) > 0 ? 100 : 0) : win_pct(user_score(an, my_turn));
+    if (whist_key == k && nwhist) {
+        whist[nwhist - 1] = w;
+        return;
+    }
+    whist_key = k;
+    if (nwhist == WMAX) memmove(whist, whist + 1, sizeof(whist[0]) * --nwhist);
+    whist[nwhist++] = w;
+}
+
+static int material_diff(int color)
+{
+    static const int val[] = {1, 3, 3, 5, 9, 0};
+    int d = 0;
+    for (int sq = 0; sq < 64; sq++) {
+        int pc = tracker.pos.sq[sq];
+        if (pc != EMPTY) d += pc / 6 == color ? val[pc % 6] : -val[pc % 6];
+    }
+    return d;
+}
+
+static void missing(int color, char *out, size_t n)
+{
+    static const int start[] = {8, 2, 2, 2, 1};
+    static const int order[] = {QUEEN, ROOK, BISHOP, KNIGHT, PAWN};
+    int have[6] = {0};
+    for (int sq = 0; sq < 64; sq++)
+        if (tracker.pos.sq[sq] != EMPTY && tracker.pos.sq[sq] / 6 == color) have[tracker.pos.sq[sq] % 6]++;
+    out[0] = 0;
+    for (int k = 0; k < 5; k++) {
+        int ty = order[k], m = start[ty] - have[ty];
+        size_t l = strlen(out);
+        if (m == 1) snprintf(out + l, n - l, "%s%c", l ? " " : "", piece_letters[ty]);
+        if (m > 1) snprintf(out + l, n - l, "%s%d%c", l ? " " : "", m, piece_letters[ty]);
+    }
+}
+
+static const char *phase_name(void)
+{
+    static const int val[] = {0, 3, 3, 5, 9, 0};
+    int total = 0, queens = 0;
+    for (int sq = 0; sq < 64; sq++) {
+        int pc = tracker.pos.sq[sq];
+        if (pc == EMPTY) continue;
+        total += val[pc % 6];
+        queens += pc % 6 == QUEEN;
+    }
+    if (total <= 26 || (!queens && total <= 36)) return "Endgame";
+    if (hplies < 16 && total >= 56) return "Opening";
+    return "Middlegame";
+}
+
+static void helper_text(char *out, size_t n)
+{
+    out[0] = 0;
+    size_t l;
+    if (cfg.material) {
+        int d = material_diff(tracker.user_color);
+        if (d)
+            snprintf(out, n, "%s %d", d > 0 ? "up" : "down", abs(d));
+        else
+            snprintf(out, n, "even material");
+    }
+    if (cfg.taken) {
+        char took[32], lost[32];
+        missing(tracker.user_color ^ 1, took, sizeof(took));
+        missing(tracker.user_color, lost, sizeof(lost));
+        l = strlen(out);
+        if (*took && *lost)
+            snprintf(out + l, n - l, "%stook %s, lost %s", l ? "   " : "", took, lost);
+        else if (*took || *lost)
+            snprintf(out + l, n - l, "%s%s %s", l ? "   " : "", *took ? "took" : "lost", *took ? took : lost);
+    }
+    if (cfg.opening) {
+        l = strlen(out);
+        snprintf(out + l, n - l, "%s%s", l ? "   " : "", open_name && hplies <= 24 ? open_name : phase_name());
+    }
+    if (cfg.session && wins + losses + draws) {
+        l = strlen(out);
+        snprintf(out + l, n - l, "%sW%d L%d", l ? "   " : "", wins, losses);
+        if (draws) l = strlen(out), snprintf(out + l, n - l, " D%d", draws);
+    }
+}
+
+static void moves_text(char *out, size_t n, int last)
+{
+    out[0] = 0;
+    for (int i = nsan > last ? nsan - last : 0; i < nsan; i++) {
+        size_t l = strlen(out);
+        snprintf(out + l, n - l, "%s%s", l ? " " : "", sans[i]);
+    }
+}
+
+static void danger_text(char *out, size_t n, const Analysis *an, int have_an, int my_turn)
+{
+    out[0] = 0;
+    if (!cfg.danger) return;
+    int mate = have_an ? (my_turn ? an->mate : -an->mate) : 0;
+    if (mate < 0) {
+        snprintf(out, n, "they have mate in %d", -mate);
+        return;
+    }
+    int me = tracker.user_color;
+    if (!my_turn || pos_in_check(&tracker.pos, me)) return;
+    static const int val[] = {1, 3, 3, 5, 9, 0};
+    static Pos t;
+    t = tracker.pos;
+    t.side = me ^ 1;
+    Move ms[256];
+    int nm = pos_gen_legal(&t, ms), worst = -1;
+    for (int q = 0; q < nm; q++) {
+        int vic = tracker.pos.sq[M_TO(ms[q])], att = tracker.pos.sq[M_FROM(ms[q])];
+        if (vic == EMPTY || vic / 6 != me || vic % 6 == PAWN || vic % 6 == KING) continue;
+        int cheap = val[att % 6] < val[vic % 6], loose = !pos_is_attacked(&tracker.pos, M_TO(ms[q]), me);
+        if ((cheap || loose) && (worst < 0 || val[vic % 6] > val[worst])) worst = vic % 6;
+    }
+    static const char *nm6[] = {"pawn", "knight", "bishop", "rook", "queen", "king"};
+    if (worst >= 0) snprintf(out, n, "your %s is in danger", nm6[worst]);
+}
+
+static void game_report(char *out, size_t n)
+{
+    out[0] = 0;
+    if (!cfg.report || (!acc_n[0] && !acc_n[1])) return;
+    for (int s = 0; s < 2; s++) {
+        size_t l = strlen(out);
+        int bad = grades[s][3] + grades[s][4];
+        if (!acc_n[s]) continue;
+        snprintf(out + l, n - l, "%s%s %.0f%% acc, %d bad", l ? "   " : "", s ? "Them" : "You", acc_sum[s] / acc_n[s], bad);
+    }
+}
+
+static void draw_helper_board(Canvas *c, Rect bl, int bottom)
+{
+    double s = bl.w / 8;
+    int r, col;
+    if (cfg.lastmove && tracker.last_move) {
+        int sqs[2] = {M_FROM(tracker.last_move), M_TO(tracker.last_move)};
+        for (int k = 0; k < 2; k++) {
+            sq_display(sqs[k], bottom, &r, &col);
+            draw_frame(c, (Rect){bl.x + col * s + 1, bl.y + r * s + 1, s - 2, s - 2}, fmax(2, s * 0.045), faded(0xC0FFE066));
+        }
+    }
+    if (cfg.hanging) {
+        int me = tracker.user_color;
+        for (int sq = 0; sq < 64; sq++) {
+            int pc = tracker.pos.sq[sq];
+            if (pc == EMPTY || pc / 6 != me || pc % 6 == KING) continue;
+            if (!pos_is_attacked(&tracker.pos, sq, me ^ 1) || pos_is_attacked(&tracker.pos, sq, me)) continue;
+            sq_display(sq, bottom, &r, &col);
+            double in = s * 0.07;
+            draw_frame(c, (Rect){bl.x + col * s + in, bl.y + r * s + in, s - 2 * in, s - 2 * in}, fmax(2, s * 0.045), faded(0xD8FF8A1F));
+        }
+    }
+    if (cfg.checkwarn && pos_in_check(&tracker.pos, tracker.pos.side)) {
+        u64 kb = tracker.pos.bb[tracker.pos.side * 6 + KING];
+        if (kb) {
+            sq_display(__builtin_ctzll(kb), bottom, &r, &col);
+            Rect kr = {bl.x + col * s, bl.y + r * s, s, s};
+            for (int k = 0; k < 4; k++) {
+                double in = s * 0.03 * k;
+                draw_frame(c, (Rect){kr.x + in, kr.y + in, s - 2 * in, s - 2 * in}, s * 0.035, faded((uint32_t)(220 - 45 * k) << 24 | 0xFF3B3B));
+            }
+        }
+    }
+}
+
+static void draw_wgraph(Canvas *c, Rect p, Rect bl, Rect outr)
+{
+    if (!cfg.wgraph || nwhist < 2) return;
+    double h = 42;
+    Rect g = {p.x, p.y + p.h + 6, p.w, h};
+    int over = g.x < bl.x + bl.w && bl.x < g.x + g.w && g.y < bl.y + bl.h && bl.y < g.y + h;
+    if (over || g.y + h > outr.y + outr.h - 4) g.y = p.y - h - 6;
+    over = g.x < bl.x + bl.w && bl.x < g.x + g.w && g.y < bl.y + bl.h && bl.y < g.y + h;
+    if (over || g.y < outr.y + 4) return;
+    panel_bg(c, g, 10, TH->panel);
+    double x0 = g.x + 8, w = g.w - 16, y0 = g.y + 5, gh = h - 10;
+    draw_line(c, x0, y0 + gh / 2, x0 + w, y0 + gh / 2, 1, faded(0x60FFFFFF));
+    for (int k = 1; k < nwhist; k++) {
+        double xa = x0 + w * (k - 1) / (nwhist - 1), xb = x0 + w * k / (nwhist - 1);
+        double ya = y0 + gh * (1 - whist[k - 1] / 100), yb = y0 + gh * (1 - whist[k] / 100);
+        draw_line(c, xa, ya, xb, yb, 2, faded(whist[k] >= 50 ? 0xFF2BD957 : 0xFFFF4D4D));
+    }
+}
+
 static void rate_moves(const Analysis *an, int have_an, int my_turn)
 {
-    if (!cfg.rateme) return;
+    if (!cfg.rateme && !cfg.report) return;
     if (tracker.pos.key != rate_key) {
         rate_key = tracker.pos.key;
         rate_pending = 0;
@@ -1361,16 +2140,24 @@ static void rate_moves(const Analysis *an, int have_an, int my_turn)
     static const char *g[] = {"!", "ok", "?!", "?", "??"};
     static const uint32_t gc[] = {0xFF2BD957, 0xFF9AD95A, 0xFFFFC400, 0xFFFF8A1F, 0xFFFF3B3B};
     int k = d >= -30 ? 0 : d >= -80 ? 1 : d >= -160 ? 2 : d >= -300 ? 3 : 4;
+    double drop = rate_mine ? win_pct(rate_before) - win_pct(now) : win_pct(now) - win_pct(rate_before);
+    double acc = 103.1668 * exp(-0.04354 * fmax(0, drop)) - 3.1669;
+    grades[!rate_mine][k]++;
+    acc_sum[!rate_mine] += fmin(100, fmax(0, acc));
+    acc_n[!rate_mine]++;
+    rate_pending = 0;
+    if (!cfg.rateme) return;
     snprintf(badge, sizeof(badge), "%s", g[k]);
     badge_col = gc[k];
     badge_until = now_ms() + 5000;
     set_note(roast(rate_mine, k));
     if (verbose) fprintf(stderr, "%s move rated %s (%+d)\n", rate_mine ? "your" : "their", g[k], d);
-    rate_pending = 0;
 }
 
 static void redraw(void)
 {
+    track_anims();
+    bar_moving = 0;
     nhits = 0;
     ui_over_board = 0;
     for (int i = 0; i < ov->ncanvas; i++) {
@@ -1418,7 +2205,12 @@ static void redraw(void)
             if (i == 0) {
                 if (tracker.pos.key != seen_key) seen_key = tracker.pos.key, pos_since = now_ms();
                 rate_moves(&an, have_an, my_turn);
+                helper_track(&an, have_an, my_turn);
             }
+            draw_helper_board(c, bl, bottom);
+            char extra[96];
+            helper_text(extra, sizeof(extra));
+            int checked = cfg.checkwarn && pos_in_check(&tracker.pos, tracker.pos.side);
             char line1[256], line2[320], san[16] = "", sc[32] = "";
             if (have_an && an.best) {
                 Pos tmp = tracker.pos;
@@ -1428,18 +2220,39 @@ static void redraw(void)
             Move moves[256];
             Pos tmp = tracker.pos;
             int nlegal = pos_gen_legal(&tmp, moves);
+            if (!nlegal && i == 0 && counted_key != tracker.pos.key) {
+                counted_key = tracker.pos.key;
+                if (!pos_in_check(&tracker.pos, tracker.pos.side)) draws++;
+                else if (my_turn) losses++;
+                else wins++;
+            }
+            char alert[64] = "", mvs[96] = "";
+            if (cfg.mode == 1 && nlegal) {
+                danger_text(alert, sizeof(alert), &an, have_an, my_turn);
+                if (cfg.movelist) moves_text(mvs, sizeof(mvs), 8);
+            }
             if (!nlegal) {
-                snprintf(line1, sizeof(line1), "%s", pos_in_check(&tracker.pos, tracker.pos.side)
-                                                          ? (my_turn ? "Checkmate. You lost." : "Checkmate! You won.")
-                                                          : "Stalemate.");
+                char rep[160];
+                game_report(rep, sizeof(rep));
+                snprintf(line1, sizeof(line1), "%s%s%s", pos_in_check(&tracker.pos, tracker.pos.side)
+                                                              ? (my_turn ? "Checkmate. You lost." : "Checkmate! You won.")
+                                                              : "Stalemate.", *rep ? "   " : "", rep);
                 line2[0] = 0;
             } else if (cfg.mode == 1) {
                 char wbuf[48] = "";
                 if (have_an) {
                     int us = user_score(&an, my_turn);
-                    snprintf(wbuf, sizeof(wbuf), "   %.0f%% to win", 100 / (1 + exp(-0.00368208 * us)));
+                    snprintf(wbuf, sizeof(wbuf), "   %.0f%% to win", win_pct(us));
+                    if (nwhist >= 2 && whist_key == tracker.pos.key && fabs(whist[nwhist - 1] - whist[nwhist - 2]) >= 3) {
+                        size_t l = strlen(wbuf);
+                        snprintf(wbuf + l, sizeof(wbuf) - l, " (%+.0f)", whist[nwhist - 1] - whist[nwhist - 2]);
+                    }
                 }
-                snprintf(line1, sizeof(line1), "%s%s", my_turn ? "Your turn" : "Their turn", wbuf);
+                char clock[32] = "";
+                long secs = (now_ms() - pos_since) / 1000;
+                if (cfg.timer) snprintf(clock, sizeof(clock), " %ld:%02ld", secs / 60, secs % 60);
+                snprintf(line1, sizeof(line1), "%s%s%s%s%s%s", my_turn ? "Your turn" : "Their turn", clock,
+                         checked ? (my_turn ? "   You're in check!" : "   They're in check") : "", wbuf, *extra ? "   " : "", extra);
             } else if (my_turn) {
                 Move pick = have_an && an.best ? fun_pick(&an) : 0;
                 int waiting = now_ms() - pos_since < delay_secs[cfg.delay] * 1000L;
@@ -1447,7 +2260,10 @@ static void redraw(void)
                     char psan[16];
                     Pos t2 = tracker.pos;
                     move_to_san(&t2, pick, psan);
+                    static Move shown;
+                    if (pick != shown && i == 0) shown = pick, pick_t = now_ms();
                     uint32_t mc = pick_color(cfg.mcolor, TH->arrow);
+                    mc = (mc & 0xFFFFFF) | (uint32_t)((mc >> 24) * ease(pick_t, 220)) << 24;
                     static const char *names[] = {"Best move", "Close enough", "Chaos pick", "Coin says", "Random move",
                                                   "Worst move", "Blunder time", "Human pick"};
                     static const char *pnames[] = {"pawn", "knight", "bishop", "rook", "queen", "king"};
@@ -1496,12 +2312,22 @@ static void redraw(void)
                 double d = fmax(20, s8 * 0.32);
                 Rect bd = {bl.x + (col + 1) * s8 - d * 0.75, bl.y + r * s8 - d * 0.25, d, d};
                 draw_round_rect(c, bd, d / 2, badge_col);
-                double tw = text_width(badge, 0) / c->scale;
+                double tw = text_lw(c, badge, 0);
                 draw_text(c, bd.x + (d - tw) / 2, bd.y + (d - 16) / 2, badge, 0, 0xFFFFFFFF);
             }
             if (cfg.evalbar && have_an && nlegal) draw_evalbar(c, bl, &an, bottom, tracker.pos.side);
             snprintf(line2, sizeof(line2), "You: %s  |  %s d%d  |  %s", wb ? "White" : "Black",
                      engine_name, have_an ? an.depth : 0, now_ms() < note_until ? note : tracker.status);
+            if (*mvs || *alert) {
+                char tmp[320];
+                snprintf(tmp, sizeof(tmp), "%s%s%s%s%s", alert, *alert ? "  |  " : "", mvs, *mvs ? "  |  " : "", line2);
+                snprintf(line2, sizeof(line2), "%s", tmp);
+            }
+            if (cfg.mode == 0 && *extra && nlegal) {
+                size_t l = strlen(line2);
+                snprintf(line2 + l, sizeof(line2) - l, "  |  %s", extra);
+                for (char *q = line2 + l; (q = strstr(q, "   ")); q++) q[0] = ',', q[1] = ' ', memmove(q + 2, q + 3, strlen(q + 3) + 1);
+            }
             int t1big = cfg.size > 0, t1zoom = cfg.size == 2 ? 2 : 1, t2big = cfg.size == 2;
             double bs = cfg.size == 0 ? 22 : (cfg.size == 1 ? 26 : 34);
             Rect p, gb, mb, bx;
@@ -1509,15 +2335,15 @@ static void redraw(void)
             int side = (cfg.spot == 2 && bl.x - vw - 8 >= outr.x + 4) ||
                        (cfg.spot == 3 && bl.x + bl.w + 8 + vw <= outr.x + outr.w - 4);
             if (side) {
-                const char *ls[8];
-                int big[8], zoom[8], nl = 0;
-                uint32_t lc[8];
+                const char *ls[16];
+                int big[16], zoom[16], nl = 0;
+                uint32_t lc[16];
                 char movebuf[64], scbuf[48], theirbuf[64], st[3][128];
                 int plain = cfg.mode || cfg.chaos || cfg.hint || cfg.trash || now_ms() - pos_since < delay_secs[cfg.delay] * 1000L;
-                char parts[3][128];
-                if (plain && nlegal) {
+                char parts[8][128];
+                if (plain || !nlegal) {
                     const char *src = line1;
-                    for (int k = 0; k < 3 && *src; k++) {
+                    for (int k = 0; k < 8 && *src; k++) {
                         const char *cut = strstr(src, "   ");
                         size_t len = cut ? (size_t)(cut - src) : strlen(src);
                         snprintf(parts[k], sizeof(parts[k]), "%.*s", (int)(len < 127 ? len : 127), src);
@@ -1544,6 +2370,20 @@ static void redraw(void)
                 } else {
                     ls[nl] = line1, big[nl] = 0, zoom[nl] = 1, lc[nl++] = TH->title;
                 }
+                char exbuf[96];
+                if (cfg.mode == 0 && *extra && nlegal) {
+                    snprintf(exbuf, sizeof(exbuf), "%s", extra);
+                    for (char *q = exbuf; q && *q && nl < 9;) {
+                        char *cut = strstr(q, "   ");
+                        if (cut) *cut = 0;
+                        ls[nl] = q, big[nl] = 0, zoom[nl] = 1, lc[nl++] = TH->title_off;
+                        q = cut ? cut + 3 : NULL;
+                    }
+                }
+                if (*alert) ls[nl] = alert, big[nl] = 0, zoom[nl] = 1, lc[nl++] = 0xFFFF7A5A;
+                char few[48];
+                moves_text(few, sizeof(few), 4);
+                if (*mvs) ls[nl] = few, big[nl] = 0, zoom[nl] = 1, lc[nl++] = TH->title_off;
                 if (cfg.status) {
                     snprintf(st[0], sizeof(st[0]), "You: %s", wb ? "White" : "Black");
                     snprintf(st[1], sizeof(st[1]), "%s d%d", engine_name, have_an ? an.depth : 0);
@@ -1553,11 +2393,11 @@ static void redraw(void)
                 double h = bs + 16;
                 for (int k = 0; k < nl; k++) h += (big[k] ? 24 : 19) * zoom[k] + 2;
                 p = (Rect){cfg.spot == 2 ? bl.x - vw - 8 : bl.x + bl.w + 8, bl.y, vw, h};
-                draw_round_rect(c, p, 10, TH->panel);
+                panel_bg(c, p, 12, TH->panel);
                 double y = p.y + bs + 14;
                 for (int k = 0; k < nl; k++) {
                     set_text_zoom(zoom[k]);
-                    draw_text(c, p.x + 12, y, ls[k], big[k], lc[k]);
+                    draw_text(c, p.x + 12, y, big[k] || zoom[k] > 1 ? ls[k] : fit_text(c, ls[k], p.w - 24), big[k], lc[k]);
                     set_text_zoom(1);
                     y += (big[k] ? 24 : 19) * zoom[k] + 2;
                 }
@@ -1572,13 +2412,16 @@ static void redraw(void)
                     bs = ph - 10;
                 }
                 double y2 = cfg.size == 0 ? 26 : (cfg.size == 1 ? 34 : 54);
+                double room = outr.w - 8 - 28 - 3 * (bs + 4);
                 set_text_zoom(t1zoom);
+                cut_to(line1, room, t1big);
                 double w1 = text_width(line1, t1big);
                 set_text_zoom(1);
+                cut_to(line2, room, t2big);
                 double w = fmax(w1, text_width(line2, t2big)) + 28 + 3 * (bs + 4);
                 if (w < 300) w = 300;
                 p = panel_rect(&bl, w, ph, &outr);
-                draw_round_rect(c, p, 10, TH->panel);
+                panel_bg(c, p, 12, TH->panel);
                 set_text_zoom(t1zoom);
                 draw_text(c, p.x + 14, p.y + 6, line1, t1big, my_turn ? TH->title : TH->title_off);
                 set_text_zoom(1);
@@ -1588,6 +2431,7 @@ static void redraw(void)
                 mb = (Rect){p.x + p.w - 2 * (bs + 4) - 4, by, bs, bs};
                 bx = (Rect){p.x + p.w - (bs + 4) - 4, by, bs, bs};
             }
+            draw_wgraph(c, p, bl, outr);
             draw_gear(c, gb, settings_open);
             draw_dots(c, mb, menu_open);
             draw_close(c, bx);
@@ -2316,6 +3160,7 @@ static void handle_click(double x, double y)
             const Setting *st = &sets[hits[i].arg];
             if (st->names == onoff) {
                 *st->v = !*st->v;
+                tog_i = hits[i].arg, tog_t = now_ms();
                 if (st->v == &cfg.debug) debug_on = cfg.debug;
                 dd_open = -1;
                 save_cfg();
@@ -2327,6 +3172,50 @@ static void handle_click(double x, double y)
             }
             break;
         }
+        case ACT_TAB:
+            set_tab = hits[i].arg;
+            dd_open = -1;
+            break;
+        case ACT_THEME:
+            cfg.theme = hits[i].arg;
+            if (cfg.theme >= CUSTOM0) cslot = cfg.theme - CUSTOM0;
+            save_cfg();
+            break;
+        case ACT_CSLOT:
+            cslot = hits[i].arg;
+            cfg.theme = CUSTOM0 + cslot;
+            save_cfg();
+            break;
+        case ACT_CCOPY: {
+            Theme *t = &themes[CUSTOM0 + cslot];
+            const Theme *from = cfg.theme >= CUSTOM0 ? &themes[0] : TH;
+            for (int k = 0; k < NPARTS; k++) *part(t, k) = *part((Theme *)from, k);
+            cfg.theme = CUSTOM0 + cslot;
+            save_cfg();
+            break;
+        }
+        case ACT_CPART:
+            cpart = hits[i].arg;
+            break;
+        case ACT_CSWATCH: {
+            uint32_t *v = part(&themes[CUSTOM0 + cslot], cpart);
+            *v = (*v & 0xFF000000) | (swatch(hits[i].arg) & 0xFFFFFF);
+            cfg.theme = CUSTOM0 + cslot;
+            save_cfg();
+            break;
+        }
+        case ACT_RESET:
+            for (int k = 0; k < NSET; k++) {
+                if (tab_of(k) != set_tab || sets[k].v == &cfg.engine || sets[k].v == &cfg.library) continue;
+                *sets[k].v = *(int *)((char *)&cfg_default + ((char *)sets[k].v - (char *)&cfg));
+            }
+            debug_on = cfg.debug;
+            dd_open = -1;
+            analyzer_set_think_ms(think_secs[cfg.think] * 1000);
+            analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.lines + 1);
+            analyzer_set_elo(strength_elo[cfg.strength]);
+            save_cfg();
+            break;
         case ACT_LIB_OPEN:
             lib_open = 1, lib_tab = 0, lib_scroll = 0, lib_del = -1;
             menu_open = settings_open = 0;
@@ -2393,8 +3282,8 @@ static void handle_click(double x, double y)
             break;
         }
         case ACT_PICK: {
-            const Setting *st = &sets[hits[i].arg / 16];
-            *st->v = hits[i].arg % 16;
+            const Setting *st = &sets[hits[i].arg / 64];
+            *st->v = hits[i].arg % 64;
             dd_open = -1;
             if (st->v == &cfg.think) analyzer_set_think_ms(think_secs[cfg.think] * 1000);
             if (st->v == &cfg.lines || st->v == &cfg.threads || st->v == &cfg.hash)
@@ -2507,6 +3396,7 @@ int main(int argc, char **argv)
         }
     }
     engine_init();
+    init_openings();
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
     signal(SIGHUP, on_signal);
@@ -2526,6 +3416,7 @@ int main(int argc, char **argv)
     if (dst.st_mode & 022) chmod(data, 0700);
     snprintf(tpl_path, sizeof(tpl_path), "%s/pieces.bin", data);
     snprintf(cfg_path, sizeof(cfg_path), "%s/settings", data);
+    cfg_default = cfg;
     load_cfg();
     for (int i = 0; i < NTHEMES; i++) theme_names[i] = themes[i].name;
     snprintf(data_dir, sizeof(data_dir), "%s", data);
@@ -2562,6 +3453,14 @@ int main(int argc, char **argv)
         }
         int open_a = -1, open_b = -1;
         const char *so = getenv("OPEN_CHEASE_SETTINGS_OPEN"); // "100-200"
+        const char *af = getenv("OPEN_CHEASE_ANIM_AT");
+        if (af && af[0] == '0' && af[1] == '.') {
+            double v = 0, sc = 0.1;
+            for (const char *q = af + 2; *q >= '0' && *q <= '9'; q++, sc /= 10) v += (*q - '0') * sc;
+            anim_force = v;
+        }
+        const char *st = getenv("OPEN_CHEASE_SETTINGS_TAB");
+        if (st && *st >= '0' && *st < '0' + NTABS) set_tab = *st - '0';
         if (so) {
             open_a = open_b = 0;
             while (*so >= '0' && *so <= '9') open_a = open_a * 10 + *so++ - '0';
@@ -2642,14 +3541,15 @@ int main(int argc, char **argv)
         }
         double cx, cy;
         int rainbow = state == TRACKING && (cfg.mcolor == 10 || cfg.tcolor == 10 || cfg.gcolor == 10 || (lib_open && dl_pid > 0));
-        int wait = (int)(next - t);
+        int wait = (int)(next - t), busy = animating();
         if (rainbow && wait > 80) wait = 80; // rainbow fades instead of jumping
+        if (busy && wait > 15) wait = 15;
         int r = ov->wait_events(ov, wait, &cx, &cy);
         if (r < 0) break;
         if (r == 1) handle_click(cx, cy);
         else if (r == 2) handle_key(ov->key), redraw();
         else if (r == 3 && lib_open) lib_scroll += ov->key, redraw();
-        else if (rainbow) redraw();
+        else if (rainbow || busy) redraw();
         sync_keyboard();
     }
     state = SCANNING;

@@ -56,7 +56,7 @@ int main(int argc, char **argv)
     tracker_resync(&tr, r, &t);
     char fen[128];
     pos_to_fen(&tr.pos, fen);
-    printf("BOARD %.1f %.1f %.2f score %d\n", b.x, b.y, b.s, b.score);
+    printf("BOARD %.1f %.1f %.2f score %d soft %d\n", b.x, b.y, b.s, b.score, b.soft);
     printf("OBS ");
     for (int rr = 7; rr >= 0; rr--) {
         for (int ff = 0; ff < 8; ff++) putchar(".WB?"[r->obs[rr * 8 + ff]]);

@@ -35,7 +35,9 @@ FENS = [
  "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3",
  "r2q1rk1/ppp2ppp/2n1bn2/2bpp3/4P3/2PP1N2/PPBN1PPP/R1BQ1RK1 w - - 0 9",
 ]
-themes = ["lichess", "chesscom", "blue", "pink"]
+themes = os.environ.get("THEMES", "lichess,chesscom,blue,pink").split(",")
+textures = os.environ.get("TEXTURES", "none").split(",")
+tints = os.environ.get("TINTS", "").split(";") if os.environ.get("TINTS") else [""]
 total = det = obs_ok = fen_ok = 0
 pieces_ok = pieces_n = 0
 confusion = {}
@@ -53,14 +55,18 @@ for i in range(int(sys.argv[2]) if len(sys.argv) > 2 else 60):
     if black: args.append("--black")
     if hl: args += ["--hl", hl]
     if coords: args.append("--coords")
+    tx = random.choice(textures) if len(textures) > 1 else textures[0]; tn = random.choice(tints) if len(tints) > 1 else tints[0]
+    if tx != "none": args += ["--texture", tx, "--seed", str(i)]
+    if tn: args += ["--tint", tn]
     subprocess.run(args, check=True)
     out = subprocess.run([vtest, os.path.join(tmpdir, "t.ppm"), "black" if black else "white"], capture_output=True, text=True).stdout
     total += 1
-    desc = f"{th} sq{sq} at {x},{y} {'black' if black else 'white'} hl={hl} coords={coords} scale={scale} fen={fen.split()[0]}"
+    desc = f"{th}/{tx}{'/' + tn if tn else ''} sq{sq} at {x},{y} {'black' if black else 'white'} hl={hl} coords={coords} scale={scale} fen={fen.split()[0]}"
     if not out.startswith("BOARD"):
         fails.append("NOBOARD " + desc); continue
     bx, by, bs = map(float, out.split()[1:4])
-    if abs(bx - x) > 1.5 or abs(by - y) > 1.5 or abs(bs - sq) > 0.3:
+    gt = max(1.5, sq * 0.04) if tx != "none" else 1.5
+    if abs(bx - x) > gt or abs(by - y) > gt or abs(bs - sq) > (gt / 5 if tx != "none" else 0.3):
         fails.append(f"GEOM got {bx},{by},{bs} " + desc); continue
     det += 1
     got_fen = [l for l in out.splitlines() if l.startswith("FEN")][0].split()[1]

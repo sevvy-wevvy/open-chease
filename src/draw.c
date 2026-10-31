@@ -40,6 +40,31 @@ static inline void plot(Canvas *c, int x, int y, uint32_t argb, double cover)
 
 void canvas_clear(Canvas *c) { memset(c->px, 0, (size_t)c->w * c->h * 4); }
 
+void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double dy, double clip_h)
+{
+    int a = (int)(alpha * 256 + 0.5);
+    if (a <= 0) return;
+    if (a > 256) a = 256;
+    int ox = (int)lround((src->ox + dx - dst->ox) * dst->scale), oy = (int)lround((src->oy + dy - dst->oy) * dst->scale);
+    int h = src->h;
+    if (clip_h >= 0 && clip_h * src->scale < h) h = (int)(clip_h * src->scale);
+    for (int y = 0; y < h; y++) {
+        int ty = oy + y;
+        if (ty < 0 || ty >= dst->h) continue;
+        const uint32_t *row = src->px + (size_t)y * src->w;
+        uint32_t *out = dst->px + (size_t)ty * dst->w;
+        for (int x = 0; x < src->w; x++) {
+            uint32_t v = row[x];
+            int tx = ox + x;
+            if (!v || tx < 0 || tx >= dst->w) continue;
+            if (a < 256)
+                v = (((v >> 24) & 255) * a >> 8) << 24 | (((v >> 16) & 255) * a >> 8) << 16 | (((v >> 8) & 255) * a >> 8) << 8 |
+                    ((v & 255) * a >> 8);
+            blend(&out[tx], v);
+        }
+    }
+}
+
 static void to_px(const Canvas *c, double lx, double ly, double *px, double *py)
 {
     *px = (lx - c->ox) * c->scale;
@@ -175,6 +200,8 @@ double text_width(const char *s, int big)
     }
     return w * text_zoom;
 }
+
+double text_lw(const Canvas *c, const char *s, int big) { return text_width(s, big) * (c->scale >= 1.75 ? 2 : 1) / c->scale; }
 
 double draw_text(Canvas *c, double lx, double ly, const char *s, int big, uint32_t argb)
 {

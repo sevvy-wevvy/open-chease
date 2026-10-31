@@ -47,9 +47,24 @@ static int sample_ok(const Frame *f, double x, double y)
     return x >= 0 && y >= 0 && x < f->w && y < f->h;
 }
 
-static double score_board(const Frame *f, double bx, double by, double s, const uint8_t *light, const uint8_t *dark,
-                          int (*masked)(void *, int, int), void *mctx, int *outside_penalty)
+static void patch(const Frame *f, double cx, double cy, int r, uint8_t out[3])
 {
+    int sum[3] = {0, 0, 0}, n = 0, st = r > 3 ? r / 2 : 1;
+    for (int y = (int)cy - r; y <= (int)cy + r; y += st)
+        for (int x = (int)cx - r; x <= (int)cx + r; x += st) {
+            if (!sample_ok(f, x, y)) continue;
+            uint8_t px[3];
+            rgb(f, x, y, px);
+            for (int k = 0; k < 3; k++) sum[k] += px[k];
+            n++;
+        }
+    for (int k = 0; k < 3; k++) out[k] = (uint8_t)(n ? sum[k] / n : 0);
+}
+
+static double score_board(const Frame *f, double bx, double by, double s, const uint8_t *light, const uint8_t *dark,
+                          int (*masked)(void *, int, int), void *mctx, int *outside_penalty, int soft)
+{
+    int pr = (int)fmax(1, s * 0.035), sep = cdiff(light, dark);
     static const double pts[5][2] = {{0.17, 0.17}, {0.83, 0.17}, {0.17, 0.83}, {0.83, 0.83}, {0.5, 0.15}};
     int ok = 0;
     for (int r = 0; r < 8; r++)
@@ -66,6 +81,15 @@ static double score_board(const Frame *f, double bx, double by, double s, const 
                 if (masked && masked(mctx, (int)x, (int)y)) continue;
                 valid++;
                 uint8_t px[3];
+                if (soft) {
+                    patch(f, x, y, pr, px);
+                    int dw = cdiff(px, want), dot = cdiff(px, other);
+                    if (dw < dot && dw < sep * 0.6)
+                        good++;
+                    else if (dot < dw && dot < sep * 0.6)
+                        bad++;
+                    continue;
+                }
                 rgb(f, (int)x, (int)y, px);
                 if (cdiff(px, want) < 42)
                     good++;
@@ -88,12 +112,17 @@ static double score_board(const Frame *f, double bx, double by, double s, const 
                 else if (side == 1) r = 8, c = i;
                 else if (side == 2) r = i, c = -1;
                 else r = i, c = 8;
-                const uint8_t *want = (((r + c) & 1) ? dark : light);
+                const uint8_t *want = (((r + c) & 1) ? dark : light), *other = (((r + c) & 1) ? light : dark);
                 int good = 0;
                 for (int k = 0; k < 4; k++) {
                     double x = bx + (c + pts[k][0]) * s, y = by + (r + pts[k][1]) * s;
                     if (!sample_ok(f, x, y)) continue;
                     uint8_t px[3];
+                    if (soft) {
+                        patch(f, x, y, pr, px);
+                        if (cdiff(px, want) < cdiff(px, other) * 0.6 && cdiff(px, want) < sep * 0.4) good++;
+                        continue;
+                    }
                     rgb(f, (int)x, (int)y, px);
                     if (cdiff(px, want) < 30) good++;
                 }
@@ -278,16 +307,101 @@ static int find_chains(const Frame *f, Chain *chains, int maxc, const Rect *igno
     return nchains;
 }
 
-static int same_colors(const Chain *a, const Chain *b)
+static int find_chains_soft(const Frame *f, Chain *chains, int maxc, const Rect *ignore, int nignore)
 {
-    return (cdiff(a->a, b->a) < 40 && cdiff(a->b, b->b) < 40) || (cdiff(a->a, b->b) < 40 && cdiff(a->b, b->a) < 40);
+    int nchains = 0, W = f->w, step = f->h > 1500 ? 6 : 4;
+    int *pre = malloc(sizeof(int) * 3 * (W + 1)), *sm = malloc(sizeof(int) * 3 * W), *ed = malloc(sizeof(int) * W);
+    int *cut = malloc(sizeof(int) * (W + 2));
+    Run *runs = malloc(sizeof(Run) * (W + 1));
+    for (int y = 2; y < f->h - 2 && nchains < maxc; y += step) {
+        for (int k = 0; k < 3; k++) pre[k] = 0;
+        for (int x = 0; x < W; x++) {
+            int acc[3] = {0, 0, 0};
+            for (int dy = -2; dy <= 2; dy++) {
+                uint8_t px[3];
+                rgb(f, x, y + dy, px);
+                for (int k = 0; k < 3; k++) acc[k] += px[k];
+            }
+            for (int k = 0; k < 3; k++) pre[(x + 1) * 3 + k] = pre[x * 3 + k] + acc[k];
+        }
+        for (int x = 0; x < W; x++) {
+            int a = x - 2 < 0 ? 0 : x - 2, b = x + 3 > W ? W : x + 3;
+            for (int k = 0; k < 3; k++) sm[x * 3 + k] = (pre[b * 3 + k] - pre[a * 3 + k]) / (5 * (b - a));
+        }
+        for (int x = 0; x < W; x++) {
+            int a = x - 3 < 0 ? 0 : x - 3, b = x + 3 >= W ? W - 1 : x + 3;
+            ed[x] = abs(sm[b * 3] - sm[a * 3]) + abs(sm[b * 3 + 1] - sm[a * 3 + 1]) + abs(sm[b * 3 + 2] - sm[a * 3 + 2]);
+        }
+        int nc = 0;
+        cut[nc++] = 0;
+        for (int x = 3; x < W - 3; x++) {
+            if (ed[x] < 60) continue;
+            int peak = 1;
+            for (int d = -3; d <= 3 && peak; d++)
+                if (d && (ed[x + d] > ed[x] || (ed[x + d] == ed[x] && d < 0))) peak = 0;
+            if (peak && x - cut[nc - 1] >= 4) cut[nc++] = x;
+        }
+        cut[nc++] = W;
+        int nr = 0;
+        for (int i = 0; i + 1 < nc; i++) {
+            int a = cut[i], b = cut[i + 1], len = b - a;
+            runs[nr].start = a;
+            runs[nr].len = len;
+            int m0 = a + len / 5, m1 = b - len / 5, acc[3] = {0, 0, 0}, n = 0;
+            for (int x = m0; x < m1; x++, n++)
+                for (int k = 0; k < 3; k++) acc[k] += sm[x * 3 + k];
+            for (int k = 0; k < 3; k++) runs[nr].c[k] = (uint8_t)(n ? acc[k] / n : sm[a * 3 + k]);
+            nr++;
+        }
+        for (int i = 0; i < nr; i++) {
+            Run *r0 = &runs[i];
+            if (r0->len < MIN_SQ) continue;
+            int n = 1, last = i;
+            double L = r0->len;
+            for (int j = i + 1; j < nr; j++) {
+                Run *prev = &runs[last], *cur = &runs[j];
+                if (fabs(cur->len - L) > L * 0.1 + 4) break;
+                int c1 = cdiff(cur->c, prev->c);
+                if (c1 < 45) break;
+                if (n >= 2 && cdiff(cur->c, runs[last - 1].c) > fmax(40, c1 * 0.45)) break;
+                n++;
+                last = j;
+                if (n > 8) break;
+            }
+            if (n >= 3) {
+                double pitch = (double)(runs[last].start - r0->start) / (n - 1);
+                if (pitch >= MIN_SQ && !in_ignore(ignore, nignore, r0->start, y)) {
+                    Chain *ch = &chains[nchains++];
+                    ch->y = y;
+                    ch->x0 = r0->start;
+                    ch->n = n;
+                    ch->pitch = pitch;
+                    memcpy(ch->a, r0->c, 3);
+                    memcpy(ch->b, runs[i + 1].c, 3);
+                    if (nchains >= maxc) break;
+                }
+                i = last - 1;
+            }
+        }
+    }
+    free(pre);
+    free(sm);
+    free(ed);
+    free(cut);
+    free(runs);
+    return nchains;
 }
 
-int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignore, int (*masked)(void *, int, int),
-                      void *mctx)
+static int same_colors(const Chain *a, const Chain *b, int tol)
+{
+    return (cdiff(a->a, b->a) < tol && cdiff(a->b, b->b) < tol) || (cdiff(a->a, b->b) < tol && cdiff(a->b, b->a) < tol);
+}
+
+static int find_board(const Frame *f, Board *out, const Rect *ignore, int nignore, int (*masked)(void *, int, int),
+                      void *mctx, int soft)
 {
     Chain *chains = malloc(sizeof(Chain) * MAX_CHAINS);
-    int nc = find_chains(f, chains, MAX_CHAINS, ignore, nignore);
+    int nc = soft ? find_chains_soft(f, chains, MAX_CHAINS, ignore, nignore) : find_chains(f, chains, MAX_CHAINS, ignore, nignore);
     int used[64] = {0};
     Board best = {0};
     double best_score = 0;
@@ -306,7 +420,7 @@ int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
             for (int j = 0; j < nc; j++) {
                 if (fabs(chains[j].pitch - chains[i].pitch) > chains[i].pitch * 0.05) continue;
                 if (abs(chains[j].y - chains[i].y) > chains[i].pitch * 8) continue;
-                if (!same_colors(&chains[i], &chains[j])) continue;
+                if (!same_colors(&chains[i], &chains[j], soft ? 70 : 40)) continue;
                 double dist = abs(chains[j].x0 - chains[i].x0);
                 double ph = dist - floor(dist / chains[i].pitch) * chains[i].pitch;
                 if (ph > 4 && ph < chains[i].pitch - 4) continue;
@@ -337,7 +451,7 @@ int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
             for (double by = ch->y - 8 * s + 1; by <= ch->y; by += coarse) {
                 if (by < -s * 0.5 || by + 8 * s > f->h + s * 0.5) continue;
                 int pen = 0;
-                double sc = score_board(f, bx, by, s, light, dark, masked, mctx, &pen) - pen;
+                double sc = score_board(f, bx, by, s, light, dark, masked, mctx, &pen, soft) - pen;
                 if (sc > lo_score) {
                     lo_score = sc;
                     cand.x = bx;
@@ -350,15 +464,16 @@ int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
         double by0 = cand.y;
         for (double by = by0 - coarse; by <= by0 + coarse; by += 1) {
             int pen = 0;
-            double sc = score_board(f, cand.x, by, s, light, dark, masked, mctx, &pen) - pen;
+            double sc = score_board(f, cand.x, by, s, light, dark, masked, mctx, &pen, soft) - pen;
             if (sc > lo_score) lo_score = sc, cand.y = by;
         }
         memcpy(cand.light, light, 3);
         memcpy(cand.dark, dark, 3);
+        cand.soft = soft;
         refine(f, &cand);
         refine(f, &cand);
         int pen = 0;
-        double sc = score_board(f, cand.x, cand.y, cand.s, light, dark, masked, mctx, &pen) - pen;
+        double sc = score_board(f, cand.x, cand.y, cand.s, light, dark, masked, mctx, &pen, soft) - pen;
         if (sc > best_score) {
             best_score = sc;
             best = cand;
@@ -376,9 +491,46 @@ int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
     return 0;
 }
 
+static int textured(const Frame *f, const Board *b)
+{
+    static const double pts[4][2] = {{0.12, 0.12}, {0.88, 0.12}, {0.12, 0.88}, {0.88, 0.88}};
+    int h[766] = {0}, n = 0;
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++)
+            for (int k = 0; k < 4; k++) {
+                double x = b->x + (c + pts[k][0]) * b->s, y = b->y + (r + pts[k][1]) * b->s;
+                if (!sample_ok(f, x, y)) continue;
+                uint8_t px[3];
+                rgb(f, (int)x, (int)y, px);
+                h[cdiff(px, ((r + c) & 1) ? b->dark : b->light)]++;
+                n++;
+            }
+    int acc = 0, v = 0;
+    while (v < 765 && (acc += h[v]) <= n / 2) v++;
+    return v > 10;
+}
+
+int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignore, int (*masked)(void *, int, int),
+                      void *mctx)
+{
+    static int misses;
+    if (find_board(f, out, ignore, nignore, masked, mctx, 0)) {
+        out->soft = textured(f, out);
+        misses = 0;
+        return 1;
+    }
+    int sc = out->score;
+    if (misses++ % 3 == 0 && find_board(f, out, ignore, nignore, masked, mctx, 1)) {
+        misses = 0;
+        return 1;
+    }
+    if (sc > out->score) out->score = sc;
+    return 0;
+}
+
 int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), void *mctx)
 {
-    double sc = score_board(f, b->x, b->y, b->s, b->light, b->dark, masked, mctx, NULL);
+    double sc = score_board(f, b->x, b->y, b->s, b->light, b->dark, masked, mctx, NULL, b->soft);
     b->score = (int)sc;
     if (sc >= 46) return 1;
     static const double pts[4][2] = {{0.12, 0.12}, {0.88, 0.12}, {0.12, 0.88}, {0.88, 0.88}};
@@ -428,8 +580,10 @@ int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), voi
     return ok >= 52;
 }
 
+static int soft_colors;
+
 static double piece_fill_lum(const Frame *f, double x0, double y0, double s, const uint8_t *bg, const uint8_t *base,
-                             int (*masked)(void *, int, int), void *mctx)
+                             int (*masked)(void *, int, int), void *mctx, int thr)
 {
     int step = s > 90 ? 2 : 1;
     int a = (int)(x0 + s * 0.05), b = (int)(y0 + s * 0.05);
@@ -448,14 +602,15 @@ static double piece_fill_lum(const Frame *f, double x0, double y0, double s, con
             int fg = 0;
             if (sample_ok(f, x, y)) {
                 rgb(f, x, y, px);
-                fg = cdiff(px, bg) > 60 && cdiff(px, base) > 30;
+                fg = cdiff(px, bg) > thr && cdiff(px, base) > thr / 2;
                 if (masked && masked(mctx, x, y)) fg = 0;
             }
             m[(j + 1) * W + i + 1] = fg ? 1 : 0;
             int mx = px[0] > px[1] ? (px[0] > px[2] ? px[0] : px[2]) : (px[1] > px[2] ? px[1] : px[2]);
             int mn = px[0] < px[1] ? (px[0] < px[2] ? px[0] : px[2]) : (px[1] < px[2] ? px[1] : px[2]);
             int reddish = px[0] - px[1] > 15 && px[0] - px[2] > 15; // check glow makes the king look black
-            lm[(j + 1) * W + i + 1] = (mx - mn > 30 || reddish) ? 128 : (uint8_t)lum(px);
+            int glow = reddish && px[1] < px[0] * 0.55;
+            lm[(j + 1) * W + i + 1] = (soft_colors ? glow : (mx - mn > 30 || reddish)) ? 128 : (uint8_t)lum(px);
         }
     int sp = 0;
     stack[sp++] = 0;
@@ -500,7 +655,42 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
     memset(out, 0, sizeof(*out));
     double s = b->s;
     float lums[64];
-    int occ[64];
+    int occ[64], board_nz = 0;
+    if (b->soft) {
+        int per[64], np = 0, pr = (int)fmax(1, s * 0.025);
+        for (int r = 0; r < 8; r++)
+            for (int c = 0; c < 8; c++) {
+                uint8_t smp[16][3], med[3];
+                int dev[16], nd = 0;
+                for (int k = 0; k < 16; k++) {
+                    double t = 0.14 + 0.72 * (k % 8) / 7.0, x = b->x + (c + (k < 8 ? t : 0.14)) * s, y = b->y + (r + (k < 8 ? 0.14 : t)) * s;
+                    if (!sample_ok(f, x, y)) continue;
+                    patch(f, x, y, pr, smp[nd++]);
+                }
+                if (nd < 8) continue;
+                for (int ch = 0; ch < 3; ch++) {
+                    int h[256] = {0}, acc = 0, v = 0;
+                    for (int k = 0; k < nd; k++) h[smp[k][ch]]++;
+                    while (v < 255 && (acc += h[v]) <= nd / 2) v++;
+                    med[ch] = (uint8_t)v;
+                }
+                for (int k = 0; k < nd; k++) dev[k] = cdiff(smp[k], med);
+                for (int a2 = 1; a2 < nd; a2++)
+                    for (int b2 = a2; b2 > 0 && dev[b2 - 1] > dev[b2]; b2--) {
+                        int t = dev[b2];
+                        dev[b2] = dev[b2 - 1];
+                        dev[b2 - 1] = t;
+                    }
+                per[np++] = dev[nd / 2];
+            }
+        for (int a2 = 1; a2 < np; a2++)
+            for (int b2 = a2; b2 > 0 && per[b2 - 1] > per[b2]; b2--) {
+                int t = per[b2];
+                per[b2] = per[b2 - 1];
+                per[b2 - 1] = t;
+            }
+        if (np) board_nz = per[np / 2];
+    }
     for (int r = 0; r < 8; r++)
         for (int c = 0; c < 8; c++) {
             int sq = display_to_sq(r, c, white_bottom);
@@ -514,7 +704,10 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                     double x = x0 + pts[q][0] * s, y = y0 + pts[q][1] * s;
                     if (!sample_ok(f, x, y)) continue;
                     if (masked && masked(mctx, (int)x, (int)y)) continue;
-                    rgb(f, (int)x, (int)y, ring[nring]);
+                    if (b->soft)
+                        patch(f, x, y, (int)fmax(1, s * 0.025), ring[nring]);
+                    else
+                        rgb(f, (int)x, (int)y, ring[nring]);
                     nring++;
                 }
             }
@@ -530,15 +723,33 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                         continue;
                     }
                     if (masked && masked(mctx, (int)x, (int)y)) continue;
-                    rgb(f, (int)x, (int)y, cc[k]);
+                    if (b->soft && ((c == 0 && k == 0) || (r == 7 && k == 3))) continue;
+                    if (b->soft)
+                        patch(f, x, y, (int)fmax(1, s * 0.02), cc[k]);
+                    else
+                        rgb(f, (int)x, (int)y, cc[k]);
                     valid[k] = 1;
                 }
-#define SAME(a, b) (valid[a] && valid[b] && cdiff(cc[a], cc[b]) < 40)
-#define DIFF(a, b) (valid[a] && valid[b] && cdiff(cc[a], cc[b]) >= 40)
+                int ct = b->soft ? (int)fmax(70, cdiff(b->light, b->dark) * 0.45) : 40;
+#define SAME(a, b) (valid[a] && valid[b] && cdiff(cc[a], cc[b]) < ct)
+#define DIFF(a, b) (valid[a] && valid[b] && cdiff(cc[a], cc[b]) >= ct)
                 int hid = outside;
-                if (SAME(0, 1) && SAME(2, 3) && DIFF(0, 2)) hid = 1;
-                if (SAME(0, 2) && SAME(1, 3) && DIFF(0, 1)) hid = 1;
-                if (SAME(0, 1) && SAME(0, 2) && SAME(0, 3) && cdiff(cc[0], base) > 170) hid = 1; // promotion picker
+                if (b->soft) {
+                    int sep = cdiff(b->light, b->dark), off[4];
+                    for (int k = 0; k < 4; k++) {
+                        off[k] = 0;
+                        if (!valid[k]) continue;
+                        int dl = cdiff(cc[k], b->light), dd = cdiff(cc[k], b->dark);
+                        off[k] = (dl < dd ? dl : dd) > fmax(sep * 0.6, 110);
+                    }
+                    if ((off[0] && off[1] && !off[2] && !off[3] && SAME(0, 1)) || (off[2] && off[3] && !off[0] && !off[1] && SAME(2, 3)) ||
+                        (off[0] && off[2] && !off[1] && !off[3] && SAME(0, 2)) || (off[1] && off[3] && !off[0] && !off[2] && SAME(1, 3)))
+                        hid = 1;
+                } else {
+                    if (SAME(0, 1) && SAME(2, 3) && DIFF(0, 2)) hid = 1;
+                    if (SAME(0, 2) && SAME(1, 3) && DIFF(0, 1)) hid = 1;
+                }
+                if (SAME(0, 1) && SAME(0, 2) && SAME(0, 3) && cdiff(cc[0], base) > (b->soft ? fmax(170, cdiff(b->light, b->dark) * 0.75) : 170)) hid = 1; // promotion picker
 #undef SAME
 #undef DIFF
                 out->hidden[sq] = (uint8_t)hid;
@@ -555,7 +766,27 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             int nbase = 0;
             for (int i = 0; i < nring; i++) nbase += cdiff(ring[i], base) < 30;
             if (bestn < nring / 4 || nbase * 8 >= nring) memcpy(bg, base, 3);
-            out->highlighted[sq] = cdiff(bg, base) > 45;
+            int fthr = 60, sthr = 40;
+            if (b->soft && nring) {
+                for (int k = 0; k < 3; k++) {
+                    int h[256] = {0}, acc = 0, v = 0;
+                    for (int i = 0; i < nring; i++) h[ring[i][k]]++;
+                    while (v < 255 && (acc += h[v]) <= nring / 2) v++;
+                    bg[k] = (uint8_t)v;
+                }
+                int dev[64], nd = 0;
+                for (int i = 0; i < nring; i++) dev[nd++] = cdiff(ring[i], bg);
+                for (int a2 = 1; a2 < nd; a2++)
+                    for (int b2 = a2; b2 > 0 && dev[b2 - 1] > dev[b2]; b2--) {
+                        int t = dev[b2];
+                        dev[b2] = dev[b2 - 1];
+                        dev[b2 - 1] = t;
+                    }
+                int nz = dev[nd * 2 / 5] > board_nz ? dev[nd * 2 / 5] : board_nz;
+                fthr = (int)fmax(60, nz * 2.2);
+                sthr = (int)fmax(40, nz * 1.6);
+            }
+            out->highlighted[sq] = cdiff(bg, base) > (b->soft ? 70 : 45);
             int fg = 0, valid = 0, covered = 0;
             uint8_t cell_lum[FEAT_N * FEAT_N];
             for (int gy = 0; gy < FEAT_N; gy++)
@@ -565,9 +796,12 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                     float v = 0;
                     if (sample_ok(f, x, y) && !(masked && masked(mctx, (int)x, (int)y))) {
                         uint8_t px[3];
-                        rgb(f, (int)x, (int)y, px);
+                        if (b->soft)
+                            patch(f, x, y, (int)fmax(1, s * 0.012), px);
+                        else
+                            rgb(f, (int)x, (int)y, px);
                         valid++;
-                        if (cdiff(px, bg) > 60 && cdiff(px, b->light) > 40 && cdiff(px, b->dark) > 40) {
+                        if (cdiff(px, bg) > fthr && cdiff(px, b->light) > sthr && cdiff(px, b->dark) > sthr) {
                             fg++;
                             v = 1;
                             cell_lum[gy * FEAT_N + gx] = (uint8_t)lum(px);
@@ -599,7 +833,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             for (int v = 0; v < 256; v++) lsum += (long)v * hist[v];
             out->lum[sq] = nh ? (float)lsum / nh : 0;
             if (out->occ_frac[sq] > 0.075f) {
-                double fl = piece_fill_lum(f, x0, y0, s, bg, base, masked, mctx);
+                double fl = piece_fill_lum(f, x0, y0, s, bg, base, masked, mctx, fthr);
                 if (fl >= 0) out->lum[sq] = (float)fl;
             }
             occ[sq] = out->occ_frac[sq] > 0.075f;
@@ -644,7 +878,15 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             double score = gap * bal * pull;
             if (score > best) best = score, thr = mid;
         }
-        if (vals[n - 1] - vals[0] < 25) thr = vals[0] > 110 ? 0 : 255;
+        if (vals[n - 1] - vals[0] < 25) {
+            if (!soft_colors && n >= 4 && color_thr <= 0) {
+                soft_colors = 1;
+                vision_read(f, b, white_bottom, color_thr, out, masked, mctx);
+                soft_colors = 0;
+                return;
+            }
+            thr = vals[0] > 110 ? 0 : 255;
+        }
     }
     if (thr > 0 && thr < 255) {
         if (thr < 45) thr = 45;
