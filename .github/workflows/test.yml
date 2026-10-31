@@ -1,0 +1,198 @@
+name: test
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  BRANCH: ${{ github.ref_name }}
+  RAW: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-mingw-w64-x86-64 librsvg2-2 libcairo2 fish zsh python3-pil
+          pip3 install --break-system-packages chess
+      - name: build
+        run: |
+          ./build.sh out-linux
+          ./build.sh win out-win
+          objdump -T out-linux/open-chease | grep -E 'GLIBC_2\.3[5-9]' && exit 1 || true
+      - name: perft
+        run: E=out-linux/open-chease-engine tests/perft.sh
+      - name: vision
+        run: |
+          tests/fetch_pieces.sh cburnett staunty alpha maestro merida
+          python3 tests/run_vision.py 9 40 2>&1 | grep "^total" | tee vision.txt
+          grep -q "total 40  board-geometry 40  colors/occupancy 36  full-pieces 36" vision.txt
+      - name: sims
+        run: |
+          mkdir -p rec
+          cat > /tmp/rec.sh <<'EOF'
+          #!/bin/bash
+          d=$(basename "$2")
+          mkdir -p "$GITHUB_WORKSPACE/rec/$d"
+          cp "$2"/*.ppm "$GITHUB_WORKSPACE/rec/$d/"
+          echo "$4" > "$GITHUB_WORKSPACE/rec/$d/team"
+          "$GITHUB_WORKSPACE/out-linux/open-chease" "$@" | tee "$GITHUB_WORKSPACE/rec/$d/linux.out"
+          EOF
+          chmod +x /tmp/rec.sh
+          python3 tests/track_sim.py --games 3 --seed 11 --bin /tmp/rec.sh | tail -4
+          python3 tests/track_sim.py --games 10 --seed 21 --bin out-linux/open-chease 2>&1 | grep "^moves right" | tee sim.txt
+          grep -q "moves right 1119/1124" sim.txt
+          tar czf rec.tgz rec
+          python3 tools/make_board.py "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" board.ppm --theme chesscom --sq 72 --x 200 --y 60 --W 1000 --H 700 --pieces tests/pieces/cburnett
+          python3 -c "from PIL import Image; Image.open('board.ppm').save('board.png')"
+      - name: engine downloads
+        run: |
+          export OPEN_CHEASE_DATA=$PWD/dl-test
+          mkdir -p dl-test && chmod 700 dl-test && cp engines.txt engines-cpu.txt dl-test/
+          for e in "Sirius 9" "Inanis 1.6" "Arasan 26.1" "Stockfish 16"; do OPEN_CHEASE_GET="$e" timeout 600 out-linux/open-chease; done
+          OPEN_CHEASE_GET="Inanis 1.6" OPEN_CHEASE_GET_DEL=1 timeout 600 out-linux/open-chease
+          test ! -e dl-test/engines/inanis-1.6 && test ! -e dl-test/engines/inanis-1.6.files && test -e dl-test/engines/arasan-26.1 && echo "delete only took inanis"
+      - name: one liner
+        run: |
+          u="$RAW/get.sh"
+          curl -fsSL "$u" | OPEN_CHEASE_BRANCH=$BRANCH OPEN_CHEASE_DATA=/tmp/oc-b bash -s -- --fetch-only
+          fish -c "curl -fsSL $u | env OPEN_CHEASE_BRANCH=$BRANCH OPEN_CHEASE_DATA=/tmp/oc-f bash -s -- --fetch-only"
+          zsh -c "curl -fsSL $u | OPEN_CHEASE_BRANCH=$BRANCH OPEN_CHEASE_DATA=/tmp/oc-z bash -s -- --fetch-only"
+          for d in /tmp/oc-b /tmp/oc-f /tmp/oc-z; do test -x $d/app/run.sh && test -x $d/stockfish/stockfish && echo "$d ok"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: for-others
+          path: |
+            out-win
+            rec.tgz
+            board.png
+
+  windows:
+    needs: linux
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: for-others
+      - name: perft
+        run: E=out-win/open-chease-engine.exe bash tests/perft.sh
+      - name: replays match linux
+        run: |
+          tar xzf rec.tgz
+          bad=0
+          for d in rec/*/; do
+            OPEN_CHEASE_DATA="$d/data" out-win/open-chease.exe --replay "$d" --team "$(cat $d/team)" > "$d/win.out"
+            if cmp -s "$d/linux.out" "$d/win.out"; then echo "same: $d"; else echo "DIFFERENT: $d"; diff "$d/linux.out" "$d/win.out" | head; bad=1; fi
+          done
+          exit $bad
+      - name: engine downloads
+        run: |
+          export OPEN_CHEASE_DATA="$(cygpath -w "$PWD/dl-test")"
+          mkdir -p dl-test && cp engines-win.txt engines-cpu-win.txt dl-test/
+          for e in "Sirius 9" "Inanis 1.6" "Arasan 26.1" "Stockfish 19"; do OPEN_CHEASE_GET="$e" timeout 600 out-win/open-chease.exe; done
+          find dl-test/engines -maxdepth 2 | head -30
+          OPEN_CHEASE_GET="Inanis 1.6" OPEN_CHEASE_GET_DEL=1 timeout 600 out-win/open-chease.exe
+          test ! -e dl-test/engines/inanis-1.6 && test -e dl-test/engines/arasan-26.1 && echo "delete only took inanis"
+      - name: get.ps1
+        shell: pwsh
+        run: |
+          $env:OPEN_CHEASE_BRANCH = $env:BRANCH
+          $env:OPEN_CHEASE_DATA = "$env:RUNNER_TEMP\oc-flags"
+          & ([scriptblock]::Create((Get-Content get.ps1 -Raw))) -FetchOnly
+          if (-not (Test-Path "$env:OPEN_CHEASE_DATA\app\bin\open-chease.exe")) { throw 'no app' }
+          if (-not (Test-Path "$env:OPEN_CHEASE_DATA\stockfish\stockfish.exe")) { throw 'no stockfish' }
+          'flags ok'
+      - name: live on the desktop
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $f = New-Object Windows.Forms.Form
+          $f.FormBorderStyle = 'None'; $f.StartPosition = 'Manual'; $f.Location = New-Object Drawing.Point(0, 0)
+          $img = [Drawing.Image]::FromFile("$PWD\board.png")
+          $f.Size = $img.Size; $f.BackgroundImage = $img; $f.TopMost = $true
+          $f.Show(); [Windows.Forms.Application]::DoEvents()
+          $env:OPEN_CHEASE_BRANCH = $env:BRANCH
+          $env:OPEN_CHEASE_DATA = "$env:RUNNER_TEMP\oc-iex"
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\dump" | Out-Null
+          $env:OPEN_CHEASE_DUMP = "$env:RUNNER_TEMP\dump"
+          $cmd = "irm $env:RAW/get.ps1 | iex"
+          $p = Start-Process powershell -ArgumentList '-NoProfile', '-Command', $cmd -PassThru -RedirectStandardError "$env:RUNNER_TEMP\err.txt" -RedirectStandardOutput "$env:RUNNER_TEMP\out.txt"
+          for ($i = 0; $i -lt 120; $i++) { Start-Sleep -Milliseconds 500; [Windows.Forms.Application]::DoEvents() }
+          $sz = [Windows.Forms.Screen]::PrimaryScreen.Bounds.Size
+          $b = New-Object Drawing.Bitmap $sz.Width, $sz.Height
+          [Drawing.Graphics]::FromImage($b).CopyFromScreen(0, 0, 0, 0, $b.Size)
+          $b.Save("$env:RUNNER_TEMP\dump\iex.png")
+          $running = Get-Process open-chease -ErrorAction SilentlyContinue
+          $running | Stop-Process -Force
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Get-Content "$env:RUNNER_TEMP\out.txt", "$env:RUNNER_TEMP\err.txt"
+          if (-not $running) { throw 'the irm | iex install never started it' }
+          $exe = "$env:OPEN_CHEASE_DATA\app\bin\open-chease.exe"
+          $q = Start-Process $exe -ArgumentList '-v', '--team', 'white' -PassThru -RedirectStandardError "$env:RUNNER_TEMP\err2.txt" -RedirectStandardOutput "$env:RUNNER_TEMP\out2.txt"
+          for ($i = 0; $i -lt 60; $i++) { Start-Sleep -Milliseconds 500; [Windows.Forms.Application]::DoEvents() }
+          [Drawing.Graphics]::FromImage($b).CopyFromScreen(0, 0, 0, 0, $b.Size)
+          $b.Save("$env:RUNNER_TEMP\dump\tracking.png")
+          Stop-Process -Id $q.Id -Force -ErrorAction SilentlyContinue
+          Get-Content "$env:RUNNER_TEMP\err2.txt"
+          if (-not (Select-String -Path "$env:RUNNER_TEMP\err2.txt" -Pattern 'board found' -Quiet)) { throw 'never found the board' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-screen
+          path: ${{ runner.temp }}/dump
+
+  mac:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            engines: engines-mac-arm.txt
+            get: '"Mess" "Lynx 1.11" "Stockfish 19"'
+          - os: macos-15-intel
+            engines: engines-mac-x86.txt
+            get: '"Carp 3" "Stockfish 16"'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: for-others
+      - name: build
+        run: ./build.sh out-mac
+      - name: perft
+        run: E=out-mac/open-chease-engine tests/perft.sh
+      - name: replays match linux
+        run: |
+          tar xzf rec.tgz
+          bad=0
+          for d in rec/*/; do
+            OPEN_CHEASE_DATA="$d/data" out-mac/open-chease --replay "$d" --team "$(cat $d/team)" > "$d/mac.out"
+            if cmp -s "$d/linux.out" "$d/mac.out"; then echo "same: $d"; else echo "DIFFERENT: $d"; diff "$d/linux.out" "$d/mac.out" | head; bad=1; fi
+          done
+          exit $bad
+      - name: engine downloads
+        run: |
+          export OPEN_CHEASE_DATA=$PWD/dl-test
+          mkdir -p dl-test && chmod 700 dl-test && cp ${{ matrix.engines }} dl-test/
+          for e in ${{ matrix.get }}; do OPEN_CHEASE_GET="$e" out-mac/open-chease; done
+          OPEN_CHEASE_GET="Stockfish 16" OPEN_CHEASE_GET_DEL=1 out-mac/open-chease || OPEN_CHEASE_GET="Stockfish 19" OPEN_CHEASE_GET_DEL=1 out-mac/open-chease
+      - name: start it (ci has no screen recording permission)
+        run: |
+          OPEN_CHEASE_DATA=/tmp/oc-run perl -e 'alarm 30; exec @ARGV' out-mac/open-chease -v 2>&1 | tee run.txt || true
+          grep -q "screen recording\|couldnt start\|open-chease is running" run.txt
+      - name: one liner
+        run: |
+          u="$RAW/get.sh"
+          zsh -c "curl -fsSL $u | OPEN_CHEASE_BRANCH=$BRANCH OPEN_CHEASE_DATA=/tmp/oc-z bash -s -- --fetch-only"
+          test -x /tmp/oc-z/app/run.sh && test -x /tmp/oc-z/stockfish/stockfish
+          OPEN_CHEASE_DATA=/tmp/oc-z perl -e 'alarm 120; exec @ARGV' /tmp/oc-z/app/run.sh -v 2>&1 | tail -5 || true
+          test -x /tmp/oc-z/build/open-chease && echo "run.sh built it"

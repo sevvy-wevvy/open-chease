@@ -82,6 +82,10 @@ Backend *backend_gnome(void); // mutter has no screencopy or layer shell, pairs 
 Overlay *overlay_x11(void);
 Backend *backend_x11(void);
 // test hooks, plays back dumped .ppm frames instead of the screen
+Backend *backend_win(void);
+Overlay *overlay_win(void);
+Backend *backend_mac(void);
+Overlay *overlay_mac(void);
 Backend *backend_replay(const char *dir);
 Overlay *overlay_replay(void);
 int replay_frame(void);

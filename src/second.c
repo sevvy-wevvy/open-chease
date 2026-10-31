@@ -1,16 +1,12 @@
 #include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include "app.h"
+#include "plat.h"
 
 typedef struct {
     pthread_mutex_t mu;
@@ -21,7 +17,7 @@ typedef struct {
     int have_want;
     u64 asked; // so a late answer for an old position gets dropped
     Opinion res;
-    pid_t pid;
+    proc_t pid;
     int out, in, has_elo;
     char buf[8192];
     size_t nbuf;
@@ -64,10 +60,9 @@ static int get_line(Slot *s, char *line, size_t n, int ms)
             return 1;
         }
         if (s->nbuf >= sizeof(s->buf) - 1) s->nbuf = 0; // 8k with no newline, just throw it out
-        struct pollfd p = {s->in, POLLIN, 0};
-        int r = poll(&p, 1, ms);
+        int r = fd_wait(s->in, ms);
         if (r == 0) return 0;
-        if (r < 0) return errno == EINTR ? 0 : -1;
+        if (r < 0) return -1;
         ssize_t got = read(s->in, s->buf + s->nbuf, sizeof(s->buf) - 1 - s->nbuf);
         if (got <= 0) return -1;
         s->nbuf += (size_t)got;
@@ -78,8 +73,8 @@ static void stop_engine(Slot *s)
 {
     if (s->pid > 0) {
         put(s, "quit\n");
-        kill(-s->pid, SIGKILL); // whole group, some engines are shell wrappers
-        waitpid(s->pid, NULL, 0);
+        proc_kill(s->pid);
+        proc_reap(s->pid);
     }
     if (s->out >= 0) close(s->out);
     if (s->in >= 0) close(s->in);
@@ -113,39 +108,11 @@ static int wait_for(Slot *s, const char *token, int ms)
 
 static int start_engine(Slot *s, const char *path)
 {
-    int to[2], from[2];
-    if (pipe(to)) return 0;
-    if (pipe(from)) {
-        close(to[0]), close(to[1]);
-        return 0;
-    }
-    for (int k = 0; k < 2; k++) fcntl(to[k], F_SETFD, FD_CLOEXEC), fcntl(from[k], F_SETFD, FD_CLOEXEC); // main engine forks too, it mustnt hold our pipes open
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(to[0]), close(to[1]), close(from[0]), close(from[1]);
-        return 0;
-    }
-    if (pid == 0) {
-        setpgid(0, 0);
-        dup2(to[0], 0);
-        dup2(from[1], 1);
-        int devnull = open("/dev/null", O_WRONLY);
-        if (devnull >= 0) dup2(devnull, 2); // keep its spam out of our terminal
-        char real[4096], dir[4096];
-        if (realpath(path, real)) {
-            snprintf(dir, sizeof(dir), "%s", real);
-            char *slash = strrchr(dir, '/');
-            if (slash && slash != dir) *slash = 0, (void)!chdir(dir);
-            path = real;
-        }
-        execl(path, path, (char *)NULL);
-        _exit(127);
-    }
-    setpgid(pid, pid);
-    close(to[0]);
-    close(from[1]);
-    signal(SIGPIPE, SIG_IGN);
-    s->pid = pid, s->out = to[1], s->in = from[0], s->nbuf = 0, s->has_elo = 0, s->name[0] = 0;
+    proc_t pid;
+    int to, from;
+    if (!proc_start(path, 1, &pid, &to, &from)) return 0; // quiet, keep its spam out of our terminal
+    no_sigpipe();
+    s->pid = pid, s->out = to, s->in = from, s->nbuf = 0, s->has_elo = 0, s->name[0] = 0;
     put(s, "uci\n");
     if (!wait_for(s, "uciok", 5000)) {
         stop_engine(s);
@@ -157,7 +124,8 @@ static int start_engine(Slot *s, const char *path)
         return 0;
     }
     if (!*s->name) {
-        const char *b = strrchr(path, '/');
+        const char *b = strrchr(path, '/'), *bs = strrchr(path, '\\');
+        if (bs > b) b = bs;
         const char *nm = b ? b + 1 : path;
         size_t l = strlen(nm);
         if (l > 47) l = 47;
@@ -330,6 +298,6 @@ int second_get(int k, Opinion *o)
 void second_quit(void)
 {
     for (int k = 0; k < 2; k++)
-        if (slots[k].pid > 0) kill(-slots[k].pid, SIGKILL); // no waitpid, were exiting anyway
+        proc_kill(slots[k].pid); // no reaping, were exiting anyway
 
 }

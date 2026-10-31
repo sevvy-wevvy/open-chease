@@ -7,13 +7,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
-#include <fcntl.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "app.h"
+#include "plat.h"
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 enum { SCANNING, ASKING, TRACKING };
 
@@ -26,7 +29,7 @@ enum {
     ACT_WHITE = 1, ACT_BLACK, ACT_CLOSE, ACT_STOP, ACT_FLIP, ACT_MENU, ACT_DEBUG, ACT_FIX, ACT_RESTART, ACT_UPDATE,
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
-    ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT
+    ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND
 };
 
 typedef struct {
@@ -148,9 +151,10 @@ static struct {
     int taken, timer, report, hanging;
     int movelist, danger, session;
     int threats, hints, level, second;
+    int hcolor, hstyle;
 // positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
-         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0},
+         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0},
   cfg_default; // copied before load_cfg, the reset button goes back to this
 
 static const char *theme_names[NTHEMES];
@@ -169,11 +173,14 @@ static const uint32_t color_vals[] = {0, 0xC8FFC400, 0xC82BD957, 0xC83D9BFF, 0xC
 static const char *strength_names[] = {"Full", "2400", "2000", "1700", "1400"};
 static const int strength_elo[] = {0, 2400, 2000, 1700, 1400};
 static const char *chaos_names[] = {"Best move", "Close enough", "Random top 3", "Coin flip", "Random move", "Worst move",
-                                    "Blunders only", "Human-like"};
+                                    "Blunders only", "Human 800", "Human 1200", "Human 1600", "Human 2000", "Human 2400"};
 static const char *hint_names[] = {"Whole move", "Just the piece", "Just where"};
 static const char *delay_names[] = {"Right away", "After 3 sec", "After 10 sec"};
 static const int delay_secs[] = {0, 3, 10};
-static const char *mode_names[] = {"Cheats", "Helper"};
+static const char *mode_names[] = {"Cheats", "Helper", "Both"};
+static const char *hang_names[] = {"Off", "Mine", "Theirs", "Both"};
+static const char *hstyle_names[] = {"Outline", "Corners", "Brackets", "Dashed", "Underline"};
+static const int hstyle_mark[] = {1, 3, 9, 10, 13}; // only ones that stay off the piece, a filled square hides it from the vision
 
 typedef struct {
     char name[32], url[512], kind[8], tags[48], about[96];
@@ -185,7 +192,66 @@ static LibEngine lib[MAX_LIB];
 static int nlib;
 static const char *lib_names[MAX_LIB];
 static char lib_labels[MAX_LIB][48];
-static pid_t lib_pid;
+static intptr_t lib_pid;
+#ifdef _WIN32
+static const char builtin_library[] = // for when engines-win.txt on github cant be reached
+    "Stockfish 19|https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-windows-x86-64-universal.zip#stockfish-windows-x86-64-universal.exe|zip|77.7|1||the strongest one out there\n"
+    "Stockfish 16|https://github.com/official-stockfish/Stockfish/releases/download/sf_16/stockfish-windows-x86-64.zip#stockfish/stockfish-windows-x86-64.exe|zip|33.3|1|old|from 2023, smaller download\n"
+    "Reckless 0.9|https://github.com/codedeliveryservice/Reckless/releases/download/v0.9.0/reckless-windows-generic.exe|bin|61.6|1|vcrt|one of the very top engines right now, rust\n"
+    "Pawnocchio 2|https://github.com/JonathanHallstrom/pawnocchio/releases/download/v2.0.1/pawnocchio-2.0.1-windows-x86_64.exe|bin|67.2|1||crazy strong. its written in zig which almost nobody does for chess\n"
+    "Arasan 26.1|https://github.com/jdart1/arasan-chess/releases/download/v26.1/arasan26.1.zip#arasanx-64.exe|zip|28.5|1||been around since the 90s and somehow keeps getting better\n"
+    "PlentyChess 8|https://github.com/Yoshie2000/PlentyChess/releases/download/b-v8.0.0/PlentyChess-8.0.0-windows-generic.exe|bin|52.6|1||one of the best right behind stockfish\n"
+    "Viridithas 20|https://github.com/cosmobobak/viridithas/releases/download/v20.0.0/viridithas-20-win-x86-64-v3.exe|bin|53.9|1|cpu|one of the strongest rust engines\n"
+    "Stormphrax 8|https://github.com/Ciekce/Stormphrax/releases/download/v8.0.0/stormphrax-8.0.0-avx2-bmi2.exe|bin|54.4|1|cpu|top tier\n"
+    "Koivisto 9|https://github.com/Luecx/Koivisto/releases/download/v9.0/Koivisto_9.0-windows-sse2-pgo.exe|bin|15.0|1||really strong and runs on old cpus\n"
+    "Fairy-Stockfish 14|https://github.com/fairy-stockfish/Fairy-Stockfish/releases/download/fairy_sf_14/fairy-stockfish_x86-64.exe|bin|1.7|1|variants,small|stockfish that also knows a ton of chess variants\n"
+    "Halogen 16|https://github.com/KierenP/Halogen/releases/download/v16/Halogen-16.0.0-windows-x86_64-legacy.exe|bin|21.3|2||runs on any cpu\n"
+    "Tarnished 6|https://github.com/Bobingstern/Tarnished/releases/download/v6.0/tarnished-6.0-eternal_x86-64-avx2.exe|bin|44.2|2|cpu|newer engine thats already really good\n"
+    "Willow 4|https://github.com/Adam-Kulju/Willow/releases/download/4.0.0.1/willow-v2-windows.exe|bin|4.8|2|small|same dev as patricia but plays it straight\n"
+    "Patricia 3|https://github.com/Adam-Kulju/Patricia/releases/download/5.1/patricia_v2.exe|bin|5.1|2|fun,small|the most aggressive engine around, loves throwing pieces at your king\n"
+    "Princhess|https://github.com/princesslana/princhess/releases/download/0.22.0/princhess.exe|bin|45.8|2|fun|thinks like alphazero (mcts), plays weird human looking moves\n"
+    "Akimbo 1|https://github.com/jw1912/akimbo/releases/download/v1.0.0/akimbo-1.0.0.exe|bin|6.3|2|small,vcrt|small and way stronger than it looks\n"
+    "Carp 3|https://github.com/dede1751/carp/releases/download/v3.0.1/carp-v3.0.1-win-x86_64-V1.exe|bin|2.7|2|small|tiny download for how good it is\n"
+    "Sirius 9|https://github.com/mcthouacbb/Sirius/releases/download/v9.0/sirius-9.0-windows-x86-64-v1.exe|bin|0.5|2|small|the whole thing is 0.2 MB\n"
+    "Counter 5.5|https://github.com/ChizhovVadim/CounterGo/releases/download/v1.55.0/counter-5.5-windows-amd64.exe|bin|4.2|3|small|also go\n"
+    "4ku 5.1|https://github.com/kz04px/4ku/releases/download/v5.1/4ku-5.1-popcnt.exe|bin|3.0|3|fun|started life as a 4 KB engine\n"
+    "ice4|https://github.com/MinusKelvin/ice4/releases/download/v6.1/ice4.exe|bin|12.7|4|fun,small|from a 4 KB engine contest, tiny\n"
+    "Mess|https://github.com/raklaptudirm/mess/releases/download/v0.3.0/mess-windows-amd64.exe|bin|5.2|4|fun,small|a lot weaker, good for chaos games\n"
+    "Berserk 14|https://github.com/jhonnold/berserk/releases/download/14/berserk-14-x86-64.exe|bin|25.3|1||the new berserk, one of the very best and windows only\n"
+    "Obsidian 16|https://github.com/gab8192/Obsidian/releases/download/v16.0/Obsidian160-avx2.exe|bin|30.7|1|cpu|right up there with stockfish, wants avx2\n";
+#elif defined(__APPLE__) && defined(__aarch64__)
+static const char builtin_library[] =
+    "Stockfish 19|https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-macos-universal.tar.gz#stockfish/stockfish-macos-universal|tgz|78.5|1||the strongest one out there\n"
+    "Stockfish 18|https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-macos-m1-apple-silicon.tar#stockfish/stockfish-macos-m1-apple-silicon|tar|110.0|1|old|last years stockfish, you wont notice a difference\n"
+    "Stockfish 17.1|https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-macos-m1-apple-silicon.tar#stockfish/stockfish-macos-m1-apple-silicon|tar|77.0|1|old|older stockfish\n"
+    "Reckless 0.9|https://github.com/codedeliveryservice/Reckless/releases/download/v0.9.0/reckless-macos|bin|62.3|1||one of the very top engines right now, rust\n"
+    "Pawnocchio 2|https://github.com/JonathanHallstrom/pawnocchio/releases/download/v2.0.1/pawnocchio-2.0.1-macos-aarch64-apple_m1|bin|66.9|1||crazy strong. its written in zig which almost nobody does for chess\n"
+    "PlentyChess 8|https://github.com/Yoshie2000/PlentyChess/releases/download/b-v8.0.0/PlentyChess-8.0.0-macos-neon|bin|51.4|1||one of the best right behind stockfish\n"
+    "Viridithas 20|https://github.com/cosmobobak/viridithas/releases/download/v20.0.0/viridithas-20-macos-aarch64|bin|54.3|1||one of the strongest rust engines\n"
+    "Stormphrax 8|https://github.com/Ciekce/Stormphrax/releases/download/v8.0.0/stormphrax-8.0.0-apple-m1|bin|54.4|1||top tier\n"
+    "Halogen 16|https://github.com/KierenP/Halogen/releases/download/v16/Halogen-16.0.0-macos-arm64-neon-dotprod|bin|18.8|2||solid c++ engine thats been around for years\n"
+    "Avalanche 5|https://github.com/SnowballSH/Avalanche/releases/download/v5.0.0/Avalanche-5.0.0-aarch64-macos|bin|25.0|2||zig again\n"
+    "Velvet 8|https://github.com/mhonert/velvet-chess/releases/download/v8.1.1/velvet-v8.1.1-macOS-apple-silicon|bin|49.3|2||rust engine\n"
+    "Lynx 1.11|https://github.com/lynx-chess/Lynx/releases/download/v1.11.0/Lynx-1.11.0-osx-arm64.zip#Lynx.Cli|zip|12.6|3||written in c#, surprisingly good\n"
+    "StockDory 0.3|https://github.com/TheBlackPlague/StockDory/releases/download/0.3/StockDory-Koi-0.3-macos-latest-apple-m1|bin|1.2|4|small|small, beatable if youre decent\n"
+    "Mess|https://github.com/raklaptudirm/mess/releases/download/v0.3.0/mess-darwin-arm64|bin|5.1|4|fun,small|a lot weaker, good for chaos games\n";
+#elif defined(__APPLE__)
+static const char builtin_library[] =
+    "Stockfish 19|https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-macos-universal.tar.gz#stockfish/stockfish-macos-universal|tgz|78.5|1||the strongest one out there\n"
+    "Stockfish 18|https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-macos-x86-64.tar#stockfish/stockfish-macos-x86-64|tar|109.2|1|old|last years stockfish, you wont notice a difference\n"
+    "Stockfish 17.1|https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-macos-x86-64.tar#stockfish/stockfish-macos-x86-64|tar|76.5|1|old|older stockfish\n"
+    "Stockfish 16|https://github.com/official-stockfish/Stockfish/releases/download/sf_16/stockfish-macos-x86-64.tar#stockfish/stockfish-macos-x86-64|tar|39.8|1|old|from 2023, smaller download\n"
+    "Pawnocchio 2|https://github.com/JonathanHallstrom/pawnocchio/releases/download/v2.0.1/pawnocchio-2.0.1-macos-x86_64|bin|66.8|1||crazy strong. its written in zig which almost nobody does for chess\n"
+    "Halogen 16|https://github.com/KierenP/Halogen/releases/download/v16/Halogen-16.0.0-macos-x86_64-legacy|bin|18.7|2||runs on any cpu\n"
+    "Avalanche 5|https://github.com/SnowballSH/Avalanche/releases/download/v5.0.0/Avalanche-5.0.0-x86_64-macos-v3|bin|25.1|2|cpu|zig again, wants a newer cpu\n"
+    "Velvet 8|https://github.com/mhonert/velvet-chess/releases/download/v8.1.1/velvet-v8.1.1-macOS-x86_64-nopopcnt|bin|49.0|2||rust engine, works on really old cpus\n"
+    "Carp 3|https://github.com/dede1751/carp/releases/download/v3.0.1/carp-v3.0.1-darwin-x86_64-V1|bin|2.8|2|small|tiny download for how good it is\n"
+    "Zahak 10|https://github.com/amanjpro/zahak/releases/download/10.0/zahak-darwin-amd64-10.0-avx|bin|5.4|3|small|go engine\n"
+    "Lynx 1.11|https://github.com/lynx-chess/Lynx/releases/download/v1.11.0/Lynx-1.11.0-osx-x64.zip#Lynx.Cli|zip|13.4|3||written in c#, surprisingly good\n"
+    "Nalwald 19|https://github.com/tsoj/Nalwald/releases/download/19/Nalwald-19-macos-amd64|bin|12.0|3||written in nim\n"
+    "Mess|https://github.com/raklaptudirm/mess/releases/download/v0.3.0/mess-darwin-amd64|bin|5.1|4|fun,small|a lot weaker, good for chaos games\n"
+    "Blunder 8.5|https://github.com/deanmchris/blunder/releases/download/v8.5.5/blunder-8.5.5.zip#macOS/blunder-8.5.5-default|zip|14.8|4|fun|plays better than the name says\n";
+#else
 static const char builtin_library[] = // for when engines.txt on github cant be reached
     "Stockfish 19|https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-linux-x86-64-universal.tar.gz|tgz|77.6|1||the strongest one out there\n"
     "Stockfish 16|https://github.com/official-stockfish/Stockfish/releases/download/sf_16/stockfish-ubuntu-x86-64.tar|tar|39.7|1|old|from 2023, smaller download\n"
@@ -209,6 +275,7 @@ static const char builtin_library[] = // for when engines.txt on github cant be 
     "4ku 5.1|https://github.com/kz04px/4ku/releases/download/v5.1/4ku-5.1-popcnt|bin|10.4|3|fun|started life as a 4 KB engine\n"
     "ice4|https://github.com/MinusKelvin/ice4/releases/download/v6.1/ice4-ob|bin|0.5|4|fun,small|from a 4 KB engine contest, tiny\n"
     "Mess|https://github.com/raklaptudirm/mess/releases/download/v0.3.0/mess-linux-amd64|bin|5.1|4|fun,small|a lot weaker, good for chaos games\n";
+#endif
 static const char *theirs_names[] = {"Off", "Text", "On board", "Both"};
 static const char *think_names[] = {"2 sec", "5 sec", "8 sec", "15 sec", "30 sec"};
 static const int think_secs[] = {2, 5, 8, 15, 30};
@@ -254,8 +321,8 @@ static Setting sets[] = {
     {"Eval bar", "evalbar", &cfg.evalbar, 3, evalbar_names, NULL},
     {"Square names", "sqnames", &cfg.sqnames, 2, onoff, NULL},
     {"Show what it sees", "debug", &cfg.debug, 2, onoff, NULL},
-    {"Mode", "mode", &cfg.mode, 2, mode_names, "Fun"},
-    {"Move picker", "chaos", &cfg.chaos, 8, chaos_names, NULL},
+    {"Mode", "mode", &cfg.mode, 3, mode_names, "Fun"},
+    {"Move picker", "picker", &cfg.chaos, 12, chaos_names, NULL},
     {"Strength", "strength", &cfg.strength, 5, strength_names, NULL},
     {"Trash talk", "trash", &cfg.trash, 2, onoff, NULL},
     {"Rate my moves", "rateme", &cfg.rateme, 2, onoff, NULL},
@@ -292,7 +359,9 @@ static Setting sets[] = {
     {"Game report", "report", &cfg.report, 2, onoff, NULL},
     {"Last move", "lastmove", &cfg.lastmove, 2, onoff, NULL},
     {"Check warning", "checkwarn", &cfg.checkwarn, 2, onoff, NULL},
-    {"Hanging pieces", "hanging", &cfg.hanging, 2, onoff, NULL},
+    {"Hanging pieces", "hanging", &cfg.hanging, 4, hang_names, NULL},
+    {"Hanging color", "hcolor", &cfg.hcolor, 11, color_names, NULL},
+    {"Hanging look", "hstyle", &cfg.hstyle, 5, hstyle_names, NULL},
     {"Move list", "movelist", &cfg.movelist, 2, onoff, NULL},
     {"Danger alerts", "danger", &cfg.danger, 2, onoff, NULL},
     {"Session score", "session", &cfg.session, 2, onoff, NULL},
@@ -303,7 +372,7 @@ static Setting sets[] = {
 #define NSET ((int)(sizeof(sets) / sizeof(sets[0])))
 static int dd_open = -1;
 static void check_download(void);
-static pid_t dl_pid;
+static intptr_t dl_pid;
 static int dl_index = -1, lib_reload;
 static char dl_out[1200], dl_name[32];
 static char data_dir[1024];
@@ -336,6 +405,10 @@ static void load_cfg(void)
             snprintf(saved_engine, sizeof(saved_engine), "%s", sp + 1);
             saved_engine[strcspn(saved_engine, "\n")] = 0;
             have_saved_engine = 1;
+            continue;
+        }
+        if (!strcmp(k, "chaos")) { // old name, 7 was the one human mode back then
+            cfg.chaos = v == 7 ? 9 : v < 7 ? v : 0;
             continue;
         }
         if (!strcmp(k, "secondpath")) {
@@ -571,8 +644,13 @@ static Rect panel_rect(const Rect *bl, double w, double h, const Rect *outr)
 
 static uint32_t pick_color(int idx, uint32_t fallback);
 
+static long hush_until; // stuck with squares hidden under our own drawings, so draw nothing on the board for a moment
+
+static int hushed(void) { return now_ms() < hush_until; }
+
 static void draw_grid(Canvas *c, Rect bl, int style)
 {
+    if (hushed()) return;
     double s = bl.w / 8, w = fmax(1.6, s * 0.035);
     uint32_t col = faded(cfg.gcolor ? (pick_color(cfg.gcolor, 0) | 0xE6000000) : TH->grid);
     if (style == 1)
@@ -597,6 +675,7 @@ static double len2(double x, double y) { return sqrt(x * x + y * y); }
 
 static void mark_square(Canvas *c, Rect r, int style, uint32_t col)
 {
+    if (hushed()) return;
     double s = r.w;
     switch (style) {
     case 1:
@@ -684,6 +763,7 @@ static void mark_square(Canvas *c, Rect r, int style, uint32_t col)
 static void draw_move(Canvas *c, Rect bl, Move m, int white_bottom, uint32_t col, int arrow, double tk, int from_style,
                       int to_style, const char *label)
 {
+    if (hushed()) return;
     double s = bl.w / 8;
     int r0, c0, r1, c1;
     sq_display(M_FROM(m), white_bottom, &r0, &c0);
@@ -824,7 +904,7 @@ static void draw_evalbar(Canvas *c, Rect bl, const Analysis *a, int white_bottom
 
 static const char *piece_letters = "PNBRQK";
 
-static int ui_over_board, learned_here, want_rescan;
+static int ui_over_board, learned_here, want_rescan, rescan_hush;
 static int lib_open, lib_tab, lib_filter, lib_scroll, lib_del = -1;
 static char lib_query[24];
 
@@ -1090,10 +1170,10 @@ static void draw_library(Canvas *dst, Rect outr, Rect bl, int hit)
             LibEngine *e = &lib[i];
             char out[1200], info[160];
             lib_out_path(i, out, sizeof(out));
-            int got = access(out, X_OK) == 0, using = got && engine_index(out) == cfg.engine && cfg.engine;
+            int got = is_exec(out), using = got && engine_index(out) == cfg.engine && cfg.engine;
             int getting = dl_pid > 0 && dl_index == i;
             draw_text(c, row.x + 10, row.y + 5, e->name, 0, TH->title);
-            snprintf(info, sizeof(info), "%s  -  %.1f MB%s%s%s", tiers[e->tier], e->mb, strstr(e->tags, "cpu") ? "  -  needs a newer cpu" : "",
+            snprintf(info, sizeof(info), "%s  -  %.1f MB%s%s%s", tiers[e->tier], e->mb, strstr(e->tags, "cpu") ? "  -  needs a newer cpu" : strstr(e->tags, "vcrt") ? "  -  needs the vc++ runtime" : "",
                      strstr(e->tags, "variants") ? "  -  variants" : "", strstr(e->tags, "old") ? "  -  older version" : "");
             draw_text(c, row.x + 10, row.y + 22, fit_text(c, info, row.w - 110), 0, TH->sub);
             draw_text(c, row.x + 10, row.y + 38, fit_text(c, e->about, row.w - 110), 0, TH->item_fg);
@@ -1116,6 +1196,12 @@ static void draw_library(Canvas *dst, Rect outr, Rect bl, int hit)
             int using = i == cfg.engine;
             draw_button(c, b1, using ? "Using" : "Use", using ? TH->title : TH->btn, using ? 0xFF181818 : TH->btn_fg);
             if (hit && !using) add_hit_arg(b1, ACT_LIB_USE, i);
+            if (!using && i < 24) { // second_names only has room for 24
+                int on = cfg.second == i + 1;
+                Rect b3 = {b1.x - 74, b1.y, 66, 26};
+                draw_button(c, b3, on ? "2nd on" : "2nd", on ? 0xFF1FB8B8 : TH->btn, on ? 0xFF181818 : TH->btn_fg);
+                if (hit) add_hit_arg(b3, ACT_LIB_SECOND, i);
+            }
             if (mine(i)) {
                 Rect b2 = {b1.x, b1.y + 26, 84, 22};
                 int sure = lib_del == i; // two clicks to delete
@@ -1221,7 +1307,7 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     const char *items[10] = {"Helper mode", debug_on ? "Hide what it sees" : "Show what it sees",
                              fix_mode ? "Done fixing" : "Fix pieces", tracker.pos.side == WHITE ? "Its black's turn" : "Its white's turn",
                              "Rescan board", "Engines", "Switch team", "Restart", "Update", "Quit"};
-    const char *hint[10] = {cfg.mode ? "on, moves are hidden" : "hides the moves", "tags on every square",
+    const char *hint[10] = {cfg.mode == 1 ? "on, moves are hidden" : cfg.mode == 2 ? "moves + helper stuff" : "hides the moves", "tags on every square",
                             "click one, pick whats there", "", "if it got lost", "get, pick or delete them", "", "",
                             "pulls the newest version", ""};
     int acts[10] = {ACT_MODE, ACT_DEBUG, ACT_FIX, ACT_TURN, ACT_RESCAN, ACT_LIB_OPEN, ACT_FLIP, ACT_RESTART, ACT_UPDATE, ACT_QUIT};
@@ -1462,8 +1548,8 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             Rect box = {row.x + row.w - 126, row.y + 3, 120, row.h - 6};
             draw_round_rect(c, box, 5, dd_open == i ? TH->title : TH->btn);
             uint32_t fg = dd_open == i ? 0xFF181818 : TH->btn_fg;
-            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.theme) {
-                uint32_t sw = st->v == &cfg.theme ? TH->panel : pick_color(*st->v, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : 0xC8FF4D4D);
+            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.theme) {
+                uint32_t sw = st->v == &cfg.theme ? TH->panel : pick_color(*st->v, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : st->v == &cfg.hcolor ? 0xD8FF8A1F : 0xC8FF4D4D);
                 draw_round_rect(c, (Rect){box.x - 18, box.y + 4, 12, 12}, 6, sw | 0xFF000000);
             }
             draw_text(c, box.x + 8, box.y + 1,
@@ -1511,8 +1597,8 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         for (int k = 0; k < st->n; k++) {
             Rect it = {l.x + 3, l.y + 3 + k * ih, l.w - 6, ih - 2};
             if (k == *st->v) draw_round_rect(c, it, 5, TH->btn);
-            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.theme) {
-                uint32_t sw = (st->v == &cfg.theme ? themes[k].panel : pick_color(k, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : 0xC8FF4D4D)) | 0xFF000000;
+            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.theme) {
+                uint32_t sw = (st->v == &cfg.theme ? themes[k].panel : pick_color(k, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : st->v == &cfg.hcolor ? 0xD8FF8A1F : 0xC8FF4D4D)) | 0xFF000000;
                 draw_round_rect(c, (Rect){it.x + 6, it.y + 5, 12, 12}, 6, sw);
                 draw_text(c, it.x + 24, it.y + 3, st->names[k], 0, TH->item_fg);
             } else {
@@ -1702,25 +1788,30 @@ static Move fun_pick(const Analysis *an)
             for (int i = 0; i < n; i++)
                 if (sc[i] == worst) pool[np++] = ms[i];
         break;
-    case 7: { // what a decent human would play
+    case 7: case 8: case 9: case 10: case 11: {
+        static const double temp[] = {150, 95, 60, 38, 22}, cut[] = {350, 220, 130, 80, 50}, eng[] = {1, 1, 1.6, 3, 6};
+        int lv = cfg.chaos - 7;
         double w[256], total = 0;
         int us = p.side, them = us ^ 1, early = p.fullmove < 12;
         int last_to = tracker.last_move ? (int)M_TO(tracker.last_move) : -1;
         for (int i = 0; i < n; i++) {
             w[i] = 0;
-            if (sc[i] < best - 120) continue; // over a pawn worse, nobody decent plays that
+            if (sc[i] < best - cut[lv]) continue; // past this even a player that rated wouldnt go there
             int from = M_FROM(ms[i]), to = M_TO(ms[i]), ty = p.sq[from] % 6, cap = p.sq[to] != EMPTY;
-            double x = exp((sc[i] - best) / 60.0); // every 0.6 worse is e times less likely
+            double x = exp((sc[i] - best) / temp[lv]); // weaker = flatter, so worse moves still come up
+            if (ms[i] == an->best) x *= eng[lv]; // strong players find the engine move way more often
+            for (int k = 0; k < 2; k++)
+                if (an->alt[k] && ms[i] == an->alt[k]) x *= 1 + (eng[lv] - 1) / 2;
             if (cap) x *= to == last_to ? 2.5 : 1.6; // people always look at recaptures first
             if (M_FLAG(ms[i]) == FL_CASTLE) x *= 1.8;
             if (pos_is_attacked(&p, from, them) && ty != PAWN) x *= 1.5; // moving the piece thats being hit
             if (early && (ty == KNIGHT || ty == BISHOP) && (from >> 3) == (us == WHITE ? 0 : 7)) x *= 1.4;
-            if (early && ty == QUEEN) x *= 0.6; // everyone gets told not to bring the queen out early
+            if (early && ty == QUEEN) x *= lv < 2 ? 1.3 : 0.6; // beginners love an early queen, everyone else got told not to
             if (ty == KING && M_FLAG(ms[i]) != FL_CASTLE && !early && p.fullmove < 40) x *= 0.5;
-            if (ty == PAWN && !cap && ((to & 7) == 0 || (to & 7) == 7)) x *= 0.7; // a and h pawn pushes look random
+            if (ty == PAWN && !cap && ((to & 7) == 0 || (to & 7) == 7)) x *= lv < 2 ? 1.2 : 0.7; // a and h pawn pushes
             Undo u;
             pos_make(&p, ms[i], &u);
-            if (pos_in_check(&p, p.side)) x *= 1.4; // checks get looked at
+            if (pos_in_check(&p, p.side)) x *= lv < 2 ? 2.2 : 1.4; // checks get looked at, low rated players cant resist one
             pos_unmake(&p, &u);
             w[i] = x, total += x;
         }
@@ -1786,6 +1877,7 @@ static const char *roast(int mine, int grade)
 
 static void draw_sqnames(Canvas *c, Rect bl, int white_bottom)
 {
+    if (hushed()) return;
     double s = bl.w / 8;
     for (int sq = 0; sq < 64; sq++) {
         int r, col;
@@ -1800,6 +1892,7 @@ static void draw_sqnames(Canvas *c, Rect bl, int white_bottom)
 
 static void draw_confetti(Canvas *c, Rect bl)
 {
+    if (hushed()) return;
     static const uint32_t cols[] = {0xFFFF4D4D, 0xFFFFC400, 0xFF2BD957, 0xFF3D9BFF, 0xFFFF5FC8, 0xFFA86BFF};
     unsigned seed = (unsigned)(now_ms() / 300); // no particles to keep track of, it just reshuffles every 300ms
     for (int i = 0; i < 120; i++) {
@@ -2178,11 +2271,8 @@ static u64 hint_key;
 static void engine_bin(char *out, size_t n)
 {
     char exe[4096];
-    ssize_t l = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-    exe[l > 0 ? l : 0] = 0;
-    char *slash = strrchr(exe, '/');
-    if (slash) *slash = 0;
-    snprintf(out, n, "%.1000s/open-chease-engine", exe); // mine as a uci exe, it sits next to us in bin/
+    exe_dir(exe, sizeof(exe));
+    snprintf(out, n, "%.1000s/open-chease-engine" EXE, exe); // mine as a uci exe, it sits next to us in bin/
 }
 
 static void keep_second(void)
@@ -2197,7 +2287,7 @@ static void sync_seconds(int my_turn)
     char p0[1100] = "", p1[1100] = "";
     if (cfg.second == 1) engine_bin(p0, sizeof(p0));
     else if (cfg.second > 1 && cfg.second - 1 < nengines) snprintf(p0, sizeof(p0), "%s", engine_paths[cfg.second - 1]);
-    if (cfg.mode == 1 && cfg.level) {
+    if (cfg.mode && cfg.level) {
         if (cfg.engine > 0) snprintf(p1, sizeof(p1), "%s", engine_paths[cfg.engine]);
         else engine_bin(p1, sizeof(p1));
     }
@@ -2229,6 +2319,7 @@ static void game_report(char *out, size_t n)
 
 static void draw_helper_board(Canvas *c, Rect bl, int bottom)
 {
+    if (hushed()) return;
     double s = bl.w / 8;
     int r, col;
     if (cfg.lastmove && tracker.last_move) {
@@ -2240,13 +2331,15 @@ static void draw_helper_board(Canvas *c, Rect bl, int bottom)
     }
     if (cfg.hanging) {
         int me = tracker.user_color;
+        uint32_t hc = faded(pick_color(cfg.hcolor, 0xD8FF8A1F) | 0xD8000000);
         for (int sq = 0; sq < 64; sq++) {
             int pc = tracker.pos.sq[sq];
-            if (pc == EMPTY || pc / 6 != me || pc % 6 == KING) continue;
-            if (!pos_is_attacked(&tracker.pos, sq, me ^ 1) || pos_is_attacked(&tracker.pos, sq, me)) continue;
+            if (pc == EMPTY || pc % 6 == KING) continue;
+            int mine = pc / 6 == me;
+            if ((mine && !(cfg.hanging & 1)) || (!mine && !(cfg.hanging & 2))) continue; // 1 mine, 2 theirs, 3 both
+            if (!pos_is_attacked(&tracker.pos, sq, pc / 6 ^ 1) || pos_is_attacked(&tracker.pos, sq, pc / 6)) continue;
             sq_display(sq, bottom, &r, &col);
-            double in = s * 0.07;
-            draw_frame(c, (Rect){bl.x + col * s + in, bl.y + r * s + in, s - 2 * in, s - 2 * in}, fmax(2, s * 0.045), faded(0xD8FF8A1F));
+            mark_square(c, (Rect){bl.x + col * s, bl.y + r * s, s, s}, hstyle_mark[cfg.hstyle], hc);
         }
     }
     if (cfg.checkwarn && pos_in_check(&tracker.pos, tracker.pos.side)) {
@@ -2373,7 +2466,7 @@ static void redraw(void)
                 rate_moves(&an, have_an, my_turn);
                 helper_track(&an, have_an, my_turn);
                 sync_seconds(my_turn);
-                if (cfg.mode == 1 && cfg.threats) find_threat();
+                if (cfg.mode && cfg.threats) find_threat();
             }
             draw_helper_board(c, bl, bottom);
             char extra[96];
@@ -2400,7 +2493,7 @@ static void redraw(void)
             Opinion o0, o1;
             int have0 = second_get(0, &o0) && o0.key == tracker.pos.key && o0.best;
             int have1 = second_get(1, &o1) && o1.key == tracker.pos.key && o1.best;
-            if (cfg.mode == 1 && nlegal) {
+            if (cfg.mode && nlegal) {
                 danger_text(alert, sizeof(alert), &an, have_an, my_turn);
                 if (cfg.movelist) moves_text(mvs, sizeof(mvs), 8);
                 if (my_turn && cfg.threats && threat_mv) {
@@ -2423,7 +2516,7 @@ static void redraw(void)
                         snprintf(tips[ntips], 100, "hint: %s", hs);
                     tipc[ntips++] = TH->title;
                     draw_move(c, bl, an.best, bottom, hc, hint_lv == 3 ? (cfg.arrow ? cfg.arrow : 1) : 0, arrow_tk(cfg.thick),
-                              5, hint_lv >= 2 ? 4 : 0, NULL);
+                              1, hint_lv >= 2 ? 3 : 0, NULL); // outline + corners, a ring or dot in the middle hides the piece from the vision
                 }
                 if (my_turn && cfg.level && have1) {
                     char ls2[16];
@@ -2432,9 +2525,10 @@ static void redraw(void)
                     snprintf(tips[ntips], 100, "a %s would play %s", level_names[cfg.level], ls2);
                     tipc[ntips++] = TH->title_off;
                 }
-                if (ntips < 3 && have0 && have_an && an.best && an.depth >= 10 && o0.best != an.best && (my_turn || cfg.theirtoo))
+                if (cfg.mode == 1 && ntips < 3 && have0 && have_an && an.best && an.depth >= 10 && o0.best != an.best && (my_turn || cfg.theirtoo))
                     snprintf(tips[ntips], 100, "the engines dont agree on this one"), tipc[ntips++] = TH->title_off;
-            } else if (nlegal && have0 && have_an && an.best && (my_turn || cfg.theirtoo)) {
+            }
+            if (cfg.mode != 1 && ntips < 3 && nlegal && have0 && have_an && an.best && (my_turn || cfg.theirtoo)) {
                 char ss[16], osc[24] = "";
                 Pos t2 = tracker.pos;
                 move_to_san(&t2, o0.best, ss);
@@ -2484,7 +2578,8 @@ static void redraw(void)
                     uint32_t mc = pick_color(cfg.mcolor, TH->arrow);
                     mc = (mc & 0xFFFFFF) | (uint32_t)((mc >> 24) * ease(pick_t, 220)) << 24;
                     static const char *names[] = {"Best move", "Close enough", "Chaos pick", "Coin says", "Random move",
-                                                  "Worst move", "Blunder time", "Human pick"};
+                                                  "Worst move", "Blunder time", "Human 800", "Human 1200", "Human 1600",
+                                                  "Human 2000", "Human 2400"};
                     static const char *pnames[] = {"pawn", "knight", "bishop", "rook", "queen", "king"};
                     if (cfg.hint == 1) {
                         draw_move(c, bl, pick, bottom, mc, 0, 1, cfg.from ? cfg.from : 5, 0, NULL);
@@ -2524,7 +2619,7 @@ static void redraw(void)
             }
             if (!nlegal && cfg.confetti && pos_in_check(&tracker.pos, tracker.pos.side) && !my_turn) draw_confetti(c, bl);
             if (cfg.sqnames) draw_sqnames(c, bl, bottom);
-            if (now_ms() < badge_until && rate_move) {
+            if (now_ms() < badge_until && rate_move && !hushed()) {
                 int r, col;
                 double s8 = bl.w / 8;
                 sq_display(M_TO(rate_move), bottom, &r, &col);
@@ -2547,7 +2642,7 @@ static void redraw(void)
                 snprintf(tmp, sizeof(tmp), "%s  |  %s", tips[k], line2);
                 snprintf(line2, sizeof(line2), "%s", tmp);
             }
-            if (cfg.mode == 0 && *extra && nlegal) {
+            if (cfg.mode != 1 && *extra && nlegal) {
                 size_t l = strlen(line2);
                 snprintf(line2 + l, sizeof(line2) - l, "  |  %s", extra);
                 for (char *q = line2 + l; (q = strstr(q, "   ")); q++) q[0] = ',', q[1] = ' ', memmove(q + 2, q + 3, strlen(q + 3) + 1);
@@ -2564,7 +2659,7 @@ static void redraw(void)
                 int big[32], zoom[32], nl = 0;
                 uint32_t lc[32];
                 char movebuf[64], scbuf[48], theirbuf[64], st[3][128];
-                int plain = cfg.mode || cfg.chaos || cfg.hint || cfg.trash || now_ms() - pos_since < delay_secs[cfg.delay] * 1000L;
+                int plain = cfg.mode == 1 || cfg.chaos || cfg.hint || cfg.trash || now_ms() - pos_since < delay_secs[cfg.delay] * 1000L;
                 char parts[8][128];
                 if (plain || !nlegal) {
                     const char *src = line1;
@@ -2596,7 +2691,7 @@ static void redraw(void)
                     ls[nl] = line1, big[nl] = 0, zoom[nl] = 1, lc[nl++] = TH->title;
                 }
                 char exbuf[96];
-                if (cfg.mode == 0 && *extra && nlegal) {
+                if (cfg.mode != 1 && *extra && nlegal) {
                     snprintf(exbuf, sizeof(exbuf), "%s", extra);
                     for (char *q = exbuf; q && *q && nl < 9;) {
                         char *cut = strstr(q, "   ");
@@ -2746,7 +2841,7 @@ static void profile_save(const Board *b)
 {
     char dir[1100], path[1200];
     snprintf(dir, sizeof(dir), "%s/pieces", data_dir);
-    mkdir(dir, 0700);
+    make_dir(dir);
     snprintf(path, sizeof(path), "%s/%02x%02x%02x-%02x%02x%02x.bin", dir, b->light[0], b->light[1], b->light[2], b->dark[0],
              b->dark[1], b->dark[2]);
     templates_save(&tpl, path);
@@ -2792,8 +2887,17 @@ static void read_and_track(int first)
         if (!r->nhidden) {
             tracker_resync(&tracker, r, &tpl);
             snprintf(tracker.status, sizeof(tracker.status), "rescanned");
-        } else
+            want_rescan = 0;
+        } else if (!rescan_hush || hushed()) { // maybe its just our own arrows in the way, clear them and look again
+            if (!rescan_hush) rescan_hush = 1, hush_until = now_ms() + 1500;
+            snprintf(tracker.status, sizeof(tracker.status), "rescanning...");
+            free(r);
+            return;
+        } else {
             snprintf(tracker.status, sizeof(tracker.status), "cant rescan, board is covered");
+            want_rescan = 0;
+        }
+        rescan_hush = 0;
         first = -1;
     }
     if (first == 2) { // back from a pause
@@ -2832,6 +2936,11 @@ static void read_and_track(int first)
         }
     } else {
         tracker_update(&tracker, r, &tpl);
+        static long last_hush;
+        if (r->nhidden && tracker.mismatch_ticks >= 4 && now_ms() - last_hush > 8000) { // stuck, maybe behind our own marks
+            last_hush = now_ms();
+            hush_until = last_hush + 1500;
+        }
     }
     Pos sp;
     pos_startpos(&sp);
@@ -2927,8 +3036,29 @@ static void scan_log(int grabbed, const int *scores)
     fprintf(stderr, " (needs 52)\n");
 }
 
+static u64 frame_print(const Frame *f) // sparse sample, an unchanged screen doesnt need another look
+{
+    u64 h = 1469598103934665603ULL;
+    for (int y = 3; y < f->h; y += 23)
+        for (int x = 5; x < f->w; x += 29) {
+            const uint8_t *p = f->px + (size_t)y * f->stride + (size_t)x * 4;
+            h = (h ^ (p[0] | (u64)p[1] << 8 | (u64)p[2] << 16)) * 1099511628211ULL;
+        }
+    return h ^ (u64)f->w << 40 ^ (u64)f->h;
+}
+
+static int overlay_empty(void)
+{
+    for (int i = 0; i < ov->ncanvas; i++) {
+        Canvas *c = ov->canvas(ov, i);
+        if (c && c->dx1 > c->dx0) return 0;
+    }
+    return 1;
+}
+
 static void lose_board(void)
 {
+    want_rescan = rescan_hush = 0;
     if (verbose) fprintf(stderr, "board lost\n");
     if (state == TRACKING) { // scrolling or a quick tab switch shouldnt throw the game away
         saved_tracker = tracker;
@@ -2939,6 +3069,9 @@ static void lose_board(void)
     }
     state = SCANNING;
 }
+
+static u64 prints[MAX_OUTPUTS];
+static int seen[MAX_OUTPUTS];
 
 static void tick(void)
 {
@@ -2951,7 +3084,8 @@ static void tick(void)
     dump_frame();
     log_analysis();
     if (state == SCANNING) {
-        int scores[MAX_OUTPUTS] = {0};
+        static int scores[MAX_OUTPUTS];
+        int quiet = overlay_empty(); // nothing of ours on screen, so skip asking about every pixel
         for (int i = 0; i < cap->nout; i++) refresh_ignores(i);
         for (int i = 0; i < cap->nout; i++) {
             Output *o = &cap->out[i];
@@ -2960,10 +3094,13 @@ static void tick(void)
             int nig = 0;
             for (int k = 0; k < 16; k++)
                 if (ignores[k].active && ignores[k].out == i) ig[nig++] = ignores[k].frame_rect;
+            u64 fp = frame_print(&o->frame) ^ (u64)nig * 0x9E3779B97F4A7C15ULL;
+            if (fp == prints[i] && seen[i] >= 4) continue;
             MaskCtx mc = {o};
             Board b = {0};
-            int hit = vision_find_board(&o->frame, &b, ig, nig, masked_cb, &mc);
+            int hit = vision_find_board(&o->frame, &b, ig, nig, quiet ? NULL : masked_cb, &mc);
             scores[i] = b.score;
+            if (!hit) seen[i] = fp == prints[i] ? seen[i] + 1 : 1, prints[i] = fp; // 4 in a row, so the slow blurred pass had a go at it too
             if (hit && !is_ignored(i, &b)) {
                 b.out = i;
                 if (fabs(b.s - board.s) > 1 || b.out != board.out || !colors_close(b.light, board.light)) { // not the board we had, pieces get relearned
@@ -2993,8 +3130,11 @@ static void tick(void)
             }
         }
         if (state == SCANNING) scan_log(1, scores);
+        else memset(prints, 0, sizeof(prints)), memset(seen, 0, sizeof(seen));
         return;
     }
+    memset(prints, 0, sizeof(prints));
+    memset(seen, 0, sizeof(seen));
     Output *o = &cap->out[board.out];
     static int was_paused, no_frame;
     if (!o->have_frame) {
@@ -3019,7 +3159,7 @@ static void tick(void)
     miss_ticks = 0;
     if (state == ASKING) return;
     read_and_track(want_rescan ? 3 : was_paused ? 2 : 0);
-    was_paused = want_rescan = 0;
+    was_paused = 0;
 }
 
 static void set_note(const char *msg)
@@ -3061,7 +3201,7 @@ static int same_file(const char *a, const char *b)
 {
     char ra[4096], rb[4096];
     if (!*a || !*b) return !*a && !*b;
-    if (!realpath(a, ra) || !realpath(b, rb)) return !strcmp(a, b);
+    if (!full_path(a, ra) || !full_path(b, rb)) return !strcmp(a, b);
     return !strcmp(ra, rb);
 }
 
@@ -3086,11 +3226,17 @@ static int in_path(const char *name, char *out, size_t n)
 {
     const char *pth = getenv("PATH");
     char buf[4096];
-    snprintf(buf, sizeof(buf), "%s:/usr/games", pth ? pth : "/usr/bin"); // debian/ubuntu put stockfish in /usr/games
+#ifdef _WIN32
+    snprintf(buf, sizeof(buf), "%s", pth ? pth : "");
+    const char *sep = ";";
+#else
+    snprintf(buf, sizeof(buf), "%s:/usr/games:/opt/homebrew/bin:/usr/local/bin", pth ? pth : "/usr/bin"); // debian puts stockfish in /usr/games, brew in the other two
+    const char *sep = ":";
+#endif
     char *sv;
-    for (char *d = strtok_r(buf, ":", &sv); d; d = strtok_r(NULL, ":", &sv)) {
-        snprintf(out, n, "%s/%s", d, name);
-        if (access(out, X_OK) == 0) return 1;
+    for (char *d = strtok_r(buf, sep, &sv); d; d = strtok_r(NULL, sep, &sv)) {
+        snprintf(out, n, "%s/%s" EXE, d, name);
+        if (is_exec(out)) return 1;
     }
     return 0;
 }
@@ -3111,26 +3257,17 @@ static void scan_engines(const char *extra)
         while ((e = readdir(d)) && !sf) { // first stockfish in there wins
             char f[4096];
             snprintf(f, sizeof(f), "%s/%s", p, e->d_name);
-            if (!strncmp(e->d_name, "stockfish", 9) && access(f, X_OK) == 0) add_engine("Stockfish", f), sf = 1;
+            if (!strncmp(e->d_name, "stockfish", 9) && is_exec(f)) add_engine("Stockfish", f), sf = 1;
         }
         closedir(d);
     }
     if (!sf && in_path("stockfish", p, sizeof(p))) add_engine("Stockfish", p), sf = 1;
     snprintf(p, sizeof(p), "%s/engines", data_dir); // drop any uci engine in here and it shows up
-    mkdir(p, 0700);
-    d = opendir(p);
-    if (d) {
-        struct dirent *e;
-        while ((e = readdir(d))) {
-            char f[4096];
-            snprintf(f, sizeof(f), "%s/%s", p, e->d_name);
-            struct stat st;
-            if (e->d_name[0] != '.' && !stat(f, &st) && S_ISREG(st.st_mode) && access(f, X_OK) == 0) add_engine(e->d_name, f);
-        }
-        closedir(d);
-    }
-    if (extra && *extra && access(extra, X_OK) == 0) {
-        const char *b = strrchr(extra, '/');
+    make_dir(p);
+    engine_list(p, add_engine);
+    if (extra && *extra && is_exec(extra)) {
+        const char *b = strrchr(extra, '/'), *b2 = strrchr(extra, '\\');
+        if (b2 > b) b = b2;
         add_engine(b ? b + 1 : extra, extra);
     }
     int ns = nengines < 24 ? nengines : 24; // second_names has 25 slots and "Off" is one
@@ -3198,11 +3335,12 @@ static void lib_out_path(int i, char *out, size_t n)
 {
     char slug[40];
     lib_slug(lib[i].name, slug, sizeof(slug));
-    snprintf(out, n, "%s/engines/%s", data_dir, slug);
+    engine_path_for(data_dir, slug, out, n);
 }
 
 static char lc0_bin[1024];
 
+#ifdef __linux__
 static int nvidia_gpu(void)
 {
     if (access("/proc/driver/nvidia/version", R_OK)) return 0;
@@ -3231,15 +3369,19 @@ static int find_lc0(char *out, size_t n)
     for (int i = 0; i < 3; i++) {
         if (strchr(spots[i], '%') && !home) continue;
         snprintf(out, n, spots[i], home);
-        if (access(out, X_OK) == 0) return 1;
+        if (is_exec(out)) return 1;
     }
     return 0;
 }
+#else
+static int nvidia_gpu(void) { return 0; } // lc0 gets its own entries on the other systems
+static int find_lc0(char *out, size_t n) { return 0; }
+#endif
 
 static void load_library(void)
 {
     char path[1100], *text = NULL;
-    snprintf(path, sizeof(path), "%s/engines.txt", data_dir);
+    snprintf(path, sizeof(path), "%s/" LIB_LIST, data_dir);
     FILE *f = fopen(path, "r");
     if (f) {
         text = calloc(1, 65536);
@@ -3281,7 +3423,7 @@ static void load_library(void)
         e->about[strcspn(e->about, "\r")] = 0;
         char out[1200];
         lib_out_path(nlib, out, sizeof(out));
-        snprintf(lib_labels[nlib], sizeof(lib_labels[0]), "%s%s", e->name, access(out, X_OK) == 0 ? " (got it)" : "");
+        snprintf(lib_labels[nlib], sizeof(lib_labels[0]), "%s%s", e->name, is_exec(out) ? " (got it)" : "");
         lib_names[nlib] = lib_labels[nlib];
         nlib++;
     }
@@ -3299,7 +3441,7 @@ static void load_library(void)
         e->tier = 1;
         char out[1200];
         lib_out_path(nlib, out, sizeof(out));
-        snprintf(lib_labels[nlib], sizeof(lib_labels[0]), "%s%s", e->name, access(out, X_OK) == 0 ? " (got it)" : "");
+        snprintf(lib_labels[nlib], sizeof(lib_labels[0]), "%s%s", e->name, is_exec(out) ? " (got it)" : "");
         lib_names[nlib] = lib_labels[nlib];
         nlib++;
     }
@@ -3310,59 +3452,44 @@ static void load_library(void)
 
 static void fetch_library(void)
 {
-    lib_pid = fork();
-    if (lib_pid == 0) {
-        for (int fd = 3; fd < 1024; fd++) close(fd); // dont hand the wayland socket and engine pipes to curl
-        setenv("D", data_dir, 1);
-        // the grep for | is so a captive portal page or a 404 cant replace a good list
-        execl("/bin/sh", "sh", "-c",
-              "for n in engines.txt engines-cpu.txt; do u=https://raw.githubusercontent.com/sevvy-wevvy/open-chease/main/$n; "
-              "(curl -fsL --max-time 15 \"$u\" -o \"$D/$n.new\" || wget -q -T 15 -O \"$D/$n.new\" \"$u\") "
-              "&& grep -q '|' \"$D/$n.new\" && mv \"$D/$n.new\" \"$D/$n\"; rm -f \"$D/$n.new\"; done",
-              (char *)NULL);
-        _exit(127);
-    }
-    if (lib_pid < 0) lib_pid = 0;
+    lib_pid = lists_start(data_dir, LIB_LIST, CPU_LIST);
 }
 
+#if defined(__x86_64__) || defined(__i386__)
+#include <cpuid.h>
 static int cpu_level(int *zen12)
 {
     static int lvl = -1, zen;
     if (lvl >= 0) return *zen12 = zen, lvl;
-    lvl = 0;
-    FILE *f = fopen("/proc/cpuinfo", "r");
-    char line[4096];
-    int amd = 0, fam = 0, flags = 0;
-    while (f && fgets(line, sizeof(line), f)) {
-        if (!strncmp(line, "vendor_id", 9) && strstr(line, "AuthenticAMD")) amd = 1;
-        if (!strncmp(line, "cpu family", 10)) {
-            char *c = strchr(line, ':');
-            fam = 0;
-            for (c = c ? c + 1 : line; *c == ' '; c++) {}
-            while (c && *c >= '0' && *c <= '9') fam = fam * 10 + *c++ - '0';
-        }
-        if (!strncmp(line, "flags", 5) && !flags) {
-            flags = 1;
-            line[strcspn(line, "\n")] = ' '; // so HAS() finds the last flag too
-#define HAS(x) (strstr(line, " " x " ") != NULL)
-            if (HAS("sse4_2") && HAS("popcnt")) lvl = 1;
-            if (lvl && HAS("avx2")) lvl = 2;
-            if (lvl == 2 && HAS("bmi2")) lvl = 3;
-            if (lvl == 3 && HAS("avx512f") && HAS("avx512bw") && HAS("avx512vl") && HAS("avx512dq")) lvl = 4;
-#undef HAS
-        }
+    lvl = zen = 0;
+    unsigned a, b, c, d, v[3], b7 = 0, c7 = 0, xcr = 0;
+    if (!__get_cpuid(0, &a, &v[0], &v[2], &v[1]) || !__get_cpuid(1, &a, &b, &c, &d)) return *zen12 = 0, 0;
+    unsigned fam = (a >> 8) & 15;
+    if (fam == 15) fam += (a >> 20) & 255;
+    if (c & (1u << 27)) { // osxsave, otherwise xgetbv faults
+        unsigned hi;
+        __asm__ volatile("xgetbv" : "=a"(xcr), "=d"(hi) : "c"(0));
     }
-    if (f) fclose(f);
-    zen = amd && fam == 23; // family 17h = zen 1 and 2, pext/pdep are microcoded there and really slow
+    __get_cpuid_count(7, 0, &a, &b7, &c7, &d);
+    int ymm = (xcr & 6) == 6, zmm = (xcr & 0xe6) == 0xe6; // the os has to save the wide registers too
+    if ((c & (1u << 20)) && (c & (1u << 23))) lvl = 1;
+    if (lvl && ymm && (b7 & (1u << 5))) lvl = 2;
+    if (lvl == 2 && (b7 & (1u << 8))) lvl = 3;
+    if (lvl == 3 && zmm && (b7 & (1u << 16)) && (b7 & (1u << 17)) && (b7 & (1u << 30)) && (b7 & (1u << 31))) lvl = 4;
+    zen = v[0] == 0x68747541 && fam == 0x17; // "Auth"enticAMD, family 17h = zen 1 and 2, pext/pdep are microcoded there and really slow
     return *zen12 = zen, lvl;
 }
+#else
+static int cpu_level(int *zen12) { return *zen12 = 0, 0; }
+#endif
 
 static const char *cpu_build(const char *name, char *url, size_t n)
 {
     static const char *levels[] = {"v2", "avx2", "bmi2", "avx512"};
     int zen12, have = cpu_level(&zen12), best = 0;
     char path[1100], line[1200];
-    snprintf(path, sizeof(path), "%s/engines-cpu.txt", data_dir);
+    if (!*CPU_LIST) return NULL;
+    snprintf(path, sizeof(path), "%s/" CPU_LIST, data_dir);
     FILE *f = fopen(path, "r");
     if (!f) return NULL;
     size_t nl = strlen(name);
@@ -3405,44 +3532,19 @@ static void start_download(int i)
         else if (ul > 4 && !strncmp(url + ul - 4, ".tar", 4)) snprintf(kind, sizeof(kind), "tar");
         else if (ul > 4 && !strncmp(url + ul - 4, ".zip", 4)) snprintf(kind, sizeof(kind), "zip");
     }
-    dl_pid = fork();
-    if (dl_pid == 0) {
-        for (int fd = 3; fd < 1024; fd++) close(fd);
-        char *pick = strchr(url, '#');
-        if (pick) *pick++ = 0;
-        setenv("U", url, 1);
-        setenv("K", kind, 1);
-        setenv("P", pick ? pick : "", 1); // matched on the end of the path, releases nest it in a versioned folder
-        setenv("O", out, 1);
-        setenv("D", data_dir, 1);
-        // lc0 needs --weights and a backend, engines cant get args so it gets a wrapper
-        if (!strcmp(kind, "lc0")) {
-            if (strpbrk(lc0_bin, "'\\") || strpbrk(out, "'\\")) _exit(1); // these end up inside single quotes in that script
-            setenv("L", lc0_bin, 1);
-            execl("/bin/sh", "sh", "-c",
-                  "set -e; mkdir -p \"$O.files\"; cd \"$O.files\"; "
-                  "if command -v curl >/dev/null; then curl -fsL \"$U\" -o net.tmp; else wget -qO net.tmp \"$U\"; fi; "
-                  "mv net.tmp net.pb.gz; printf '#!/bin/sh\\nexec '\\''%s'\\'' --backend=cuda-auto --weights='\\''%s'\\'' \"$@\"\\n' "
-                  "\"$L\" \"$O.files/net.pb.gz\" > \"$O.tmp\"; chmod +x \"$O.tmp\"; mv \"$O.tmp\" \"$O\"",
-                  (char *)NULL);
-            _exit(127);
-        }
-        // biggest elf that matches wins, the rest of the archive (nets etc) stays next to it in .files
-        execl("/bin/sh", "sh", "-c",
-              "set -e; mkdir -p \"$D/engines\"; t=$(mktemp -d \"$D/dl.XXXXXX\"); trap 'rm -rf \"$t\"' EXIT; cd \"$t\"; "
-              "if command -v curl >/dev/null; then curl -fsL \"$U\" -o got; else wget -qO got \"$U\"; fi; "
-              "case \"$K\" in tgz) tar xzf got; rm got;; tar) tar xf got; rm got;; zip) unzip -q got 2>/dev/null || python3 -m zipfile -e got .; rm got;; esac; "
-              "if [ \"$K\" = bin ]; then chmod +x got; rm -rf \"$O.files\"; mv got \"$O\"; exit 0; fi; "
-              "b=$(find . -type f -printf '%s %p\\n' | sort -rn | while read -r n f; do "
-              "[ \"$(head -c4 \"$f\" | od -An -tx1 | tr -d ' \\n')\" = 7f454c46 ] || continue; "
-              "case \"$f\" in *\"$P\") echo \"$f\"; break;; esac; done); "
-              "[ -n \"$b\" ]; chmod +x \"$b\"; rm -rf \"$O.files\" \"$O\"; mkdir \"$O.files\"; cp -R . \"$O.files/\"; "
-              "ln -s \"$O.files/${b#./}\" \"$O\"",
-              (char *)NULL);
-        _exit(127);
-    }
-    if (dl_pid < 0) {
-        dl_pid = 0;
+    DlJob j;
+    memset(&j, 0, sizeof(j));
+    char *pick = strchr(url, '#');
+    if (pick) *pick++ = 0;
+    snprintf(j.url, sizeof(j.url), "%s", url);
+    snprintf(j.kind, sizeof(j.kind), "%s", kind);
+    snprintf(j.pick, sizeof(j.pick), "%s", pick ? pick : ""); // matched on the end of the path, releases nest it in a versioned folder
+    snprintf(j.out, sizeof(j.out), "%s", out);
+    lib_slug(lib[i].name, j.slug, sizeof(j.slug));
+    snprintf(j.data, sizeof(j.data), "%s", data_dir);
+    snprintf(j.helper, sizeof(j.helper), "%s", lc0_bin);
+    dl_pid = dl_start(&j);
+    if (!dl_pid) {
         set_note("couldnt start the download");
         return;
     }
@@ -3468,17 +3570,19 @@ static void choose_engine(int idx)
 
 static void check_download(void)
 {
-    int st;
-    if (lib_pid > 0 && waitpid(lib_pid, &st, WNOHANG) == lib_pid) lib_pid = 0, lib_reload = 1;
-    if (lib_reload && dl_pid <= 0) lib_reload = 0, load_library(); // not mid download, the indexes would shift
-    if (dl_pid <= 0 || waitpid(dl_pid, &st, WNOHANG) != dl_pid) return;
+    int ok;
+    if (lib_pid && job_done(lib_pid, &ok)) lib_pid = 0, lib_reload = 1;
+    if (lib_reload && !dl_pid) lib_reload = 0, load_library(); // not mid download, the indexes would shift
+    if (!dl_pid || !job_done(dl_pid, &ok)) return;
     dl_pid = 0;
-    if (!WIFEXITED(st) || WEXITSTATUS(st)) {
+    if (!ok) {
         set_note("download failed, check your internet");
         return;
     }
-    scan_engines(NULL);
     load_library();
+    for (int i = 0; i < nlib; i++)
+        if (!strcmp(lib[i].name, dl_name)) lib_out_path(i, dl_out, sizeof(dl_out)); // windows only knows which exe it is after unpacking
+    scan_engines(NULL);
     int k = engine_index(dl_out);
     if (!k) {
         set_note("too many engines, delete some first");
@@ -3498,36 +3602,10 @@ static void relaunch(void)
     redraw();
     analyzer_stop();
     second_quit();
-    if (dl_pid > 0) kill(dl_pid, SIGKILL), waitpid(dl_pid, NULL, 0);
-    if (lib_pid > 0) kill(lib_pid, SIGKILL), waitpid(lib_pid, NULL, 0);
+    job_kill(dl_pid);
+    job_kill(lib_pid);
     usleep(150000); // let the overlay clear and the engines die before we exec
-    for (int fd = 3; fd < 1024; fd++) close(fd);
-    const char *home = getenv("OPEN_CHEASE_HOME"); // run.sh rebuilds if needed, so go back through it
-    char path[1024];
-    if (home) {
-        snprintf(path, sizeof(path), "%s/run.sh", home);
-        if (access(path, X_OK) == 0) {
-            g_argv[0] = path;
-            execv(path, g_argv);
-        }
-    }
-    execv("/proc/self/exe", g_argv);
-    _exit(1);
-}
-
-static int run_quiet(char *const argv[]) // no shell, so quotes in paths cant break anything
-{
-    pid_t pid = fork();
-    if (pid == 0) {
-        int nul = open("/dev/null", O_WRONLY);
-        if (nul >= 0) dup2(nul, 1), dup2(nul, 2);
-        for (int fd = 3; fd < 1024; fd++) close(fd);
-        execvp(argv[0], argv);
-        _exit(127);
-    }
-    int st;
-    if (pid < 0 || waitpid(pid, &st, 0) != pid) return -1;
-    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+    relaunch_self(g_argv, getenv("OPEN_CHEASE_HOME"));
 }
 
 static void update_and_relaunch(void)
@@ -3538,15 +3616,35 @@ static void update_and_relaunch(void)
         return;
     }
     char getsh[1100];
+#ifdef _WIN32
+    // windows wont let anyone replace an exe thats running, so the script waits for us to quit, updates, then starts us again
+    snprintf(getsh, sizeof(getsh), "%s\\%s", home, strcmp(mode, "git") ? "get.ps1" : "run.ps1");
+    char *ps[40] = {"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", getsh, "-Update"};
+    int np = 7;
+    for (int i = 1; g_argv[i] && np < 39; i++) ps[np++] = g_argv[i];
+    ps[np] = NULL;
+    if (spawn_detached(ps)) {
+        set_note("couldnt start the updater");
+        return;
+    }
+    state = SCANNING;
+    redraw();
+    analyzer_stop();
+    second_quit();
+    fflush(stdout);
+    fflush(stderr);
+    _exit(0);
+#else
     snprintf(getsh, sizeof(getsh), "%s/get.sh", home);
     char *git[] = {"git", "-C", (char *)home, "pull", "--ff-only", NULL};
     char *get[] = {"bash", getsh, "--update", "--fetch-only", NULL};
     set_note("updating...");
     redraw();
-    if (run_quiet(!strcmp(mode, "git") ? git : get) == 0)
+    if (run_wait(!strcmp(mode, "git") ? git : get) == 0)
         relaunch();
     else
         set_note("update failed, check your internet");
+#endif
 }
 
 static void handle_key(int ch)
@@ -3632,10 +3730,10 @@ static void handle_click(double x, double y)
             if (hint_lv < 3) hint_lv++;
             break;
         case ACT_MODE:
-            cfg.mode ^= 1;
+            cfg.mode = (cfg.mode + 1) % 3;
             save_cfg();
             menu_open = 0;
-            set_note(cfg.mode ? "helper mode, no more moves" : "cheat mode, moves are back");
+            set_note(cfg.mode == 1 ? "helper mode, no more moves" : cfg.mode == 2 ? "both, moves and the helper stuff" : "cheat mode, moves are back");
             break;
         case ACT_TAB:
             set_tab = hits[i].arg;
@@ -3720,6 +3818,12 @@ static void handle_click(double x, double y)
             } else
                 choose_engine(hits[i].arg);
             break;
+        case ACT_LIB_SECOND:
+            cfg.second = cfg.second == hits[i].arg + 1 ? 0 : hits[i].arg + 1;
+            keep_second();
+            save_cfg();
+            set_note(cfg.second ? "second opinion on, it shows what that one thinks too" : "second opinion off");
+            break;
         case ACT_LIB_DEL: {
             int k = hits[i].arg;
             if (lib_del != k) { // first click arms it, second one deletes
@@ -3731,14 +3835,9 @@ static void handle_click(double x, double y)
             char gone[32];
             snprintf(gone, sizeof(gone), "%s", engine_labels[k]);
             if (k == cfg.engine) choose_engine(0);
-            unlink(engine_paths[k]);
-            char dir[1100];
-            snprintf(dir, sizeof(dir), "%s.files", engine_paths[k]);
-            struct stat ds;
-            if (!lstat(dir, &ds) && S_ISDIR(ds.st_mode)) {
-                char *argv[] = {"rm", "-rf", dir, NULL};
-                run_quiet(argv);
-            }
+            second_quit(); // windows cant delete an exe thats still running, the slots start again on their own
+            usleep(400000);
+            engine_remove(data_dir, engine_paths[k]);
             scan_engines(NULL);
             load_library();
             cfg.engine = engine_index(saved_engine);
@@ -3750,8 +3849,7 @@ static void handle_click(double x, double y)
         case ACT_LIB_FOLDER: {
             char dir[1100];
             snprintf(dir, sizeof(dir), "%s/engines", data_dir);
-            char *argv[] = {"xdg-open", dir, NULL};
-            if (run_quiet(argv)) set_note("couldnt open the folder");
+            if (open_folder(dir)) set_note("couldnt open the folder");
             break;
         }
         case ACT_PICK: {
@@ -3767,7 +3865,7 @@ static void handle_click(double x, double y)
             if (st->v == &cfg.library && nlib) {
                 char out[1200];
                 lib_out_path(cfg.library, out, sizeof(out));
-                if (access(out, X_OK) == 0) {
+                if (is_exec(out)) {
                     scan_engines(NULL);
                     choose_engine(engine_index(out));
                 } else
@@ -3801,7 +3899,7 @@ static void handle_click(double x, double y)
             break;
         case ACT_RESCAN:
             menu_open = 0;
-            want_rescan = 1;
+            want_rescan = 1, rescan_hush = 0;
             set_note("rescanning the board");
             break;
         case ACT_RESTART:
@@ -3840,6 +3938,10 @@ static void usage(void)
 int main(int argc, char **argv)
 {
     g_argv = argv;
+#ifdef _WIN32
+    _setmode(_fileno(stdout), _O_BINARY); // plain \n like everywhere else, the tests compare output byte for byte
+    setvbuf(stderr, NULL, _IONBF, 0); // windows buffers it when its a file, a killed run would lose the -v log
+#endif
     const char *engine = getenv("OPEN_CHEASE_ENGINE");
     int engine_cli = 0;
     dump_dir = getenv("OPEN_CHEASE_DUMP");
@@ -3871,35 +3973,57 @@ int main(int argc, char **argv)
     }
     engine_init();
     init_openings();
-    signal(SIGINT, on_signal);
-    signal(SIGTERM, on_signal);
-    signal(SIGHUP, on_signal);
+    quit_signals(on_signal);
 
     const char *data = getenv("OPEN_CHEASE_DATA");
     char dbuf[512];
     if (!data) {
-        snprintf(dbuf, sizeof(dbuf), "/tmp/open-chease-%d", (int)getuid());
+        default_data(dbuf, sizeof(dbuf));
         data = dbuf;
     }
-    mkdir(data, 0700);
-    struct stat dst;
-    if (lstat(data, &dst) || !S_ISDIR(dst.st_mode) || dst.st_uid != getuid()) { // someone else could plant an engine in there
+    if (!data_dir_ok(data)) {
         fprintf(stderr, "%s isnt a folder you own, delete it or point OPEN_CHEASE_DATA somewhere else\n", data);
         return 1;
     }
-    if (dst.st_mode & 022) chmod(data, 0700); // ours but group/world writable, same problem
     snprintf(tpl_path, sizeof(tpl_path), "%s/pieces.bin", data);
     snprintf(cfg_path, sizeof(cfg_path), "%s/settings", data);
     cfg_default = cfg; // before load_cfg, reset needs the shipped values
     load_cfg();
     for (int i = 0; i < NTHEMES; i++) theme_names[i] = themes[i].name;
     char real_data[4096];
-    const char *dd = realpath(data, real_data) && strlen(real_data) < sizeof(data_dir) ? real_data : data;
+    const char *dd = full_path(data, real_data) && strlen(real_data) < sizeof(data_dir) ? real_data : data;
     snprintf(data_dir, sizeof(data_dir), "%.1023s", dd);
     load_library();
     scan_engines(engine);
     if (!replay_dir) fetch_library(); // tests stay offline
-    if (!engine_cli && have_saved_engine && (!*saved_engine || access(saved_engine, X_OK) == 0))
+    const char *want = getenv("OPEN_CHEASE_GET"); // test hook: download one engine from the library, start it, exit
+    if (want) {
+        int i = 0;
+        while (i < nlib && strcmp(lib[i].name, want)) i++;
+        if (i == nlib) {
+            fprintf(stderr, "no engine called %s in the list\n", want);
+            _exit(2);
+        }
+        start_download(i);
+        for (int t = 0; dl_pid && t < 6000; t++) usleep(100000), check_download();
+        Analysis an;
+        analyzer_get(&an);
+        printf("%s: %s, engine %s\n", want, note, cfg.engine ? an.engine : "not running");
+        int ok = cfg.engine > 0;
+        if (ok && getenv("OPEN_CHEASE_GET_DEL")) { // and delete it again while its running, like the library does
+            char path[1024];
+            snprintf(path, sizeof(path), "%s", engine_paths[cfg.engine]);
+            choose_engine(0);
+            second_quit();
+            usleep(400000);
+            engine_remove(data_dir, path);
+            ok = !is_exec(path);
+            printf("%s: %s\n", want, ok ? "deleted" : "still there after delete");
+        }
+        fflush(stdout);
+        _exit(ok ? 0 : 1);
+    }
+    if (!engine_cli && have_saved_engine && (!*saved_engine || is_exec(saved_engine)))
         engine = *saved_engine ? saved_engine : NULL;
     cfg.engine = engine_index(engine);
     analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.lines + 1);
@@ -3909,10 +4033,6 @@ int main(int argc, char **argv)
     templates_builtin(&tpl);
     if (templates_load(&tpl, tpl_path) && verbose) fprintf(stderr, "loaded learned piece set\n");
 
-    const char *desk = getenv("XDG_CURRENT_DESKTOP");
-    int gnome = desk && strstr(desk, "GNOME");
-    const char *stype = getenv("XDG_SESSION_TYPE");
-    int x11_session = (stype && !strcmp(stype, "x11")) || (!getenv("WAYLAND_DISPLAY") && getenv("DISPLAY"));
     if (replay_dir) {
         cap = backend_replay(replay_dir);
         ov = overlay_replay();
@@ -3965,6 +4085,24 @@ int main(int argc, char **argv)
         fflush(stderr);
         _exit(0); // plain exit locks every FILE and the engine reader is stuck in fgets on one
     }
+#if defined(_WIN32) || defined(__APPLE__)
+    if (force) fprintf(stderr, "--backend only does something on linux, ignoring it\n");
+#ifdef _WIN32
+    cap = backend_win();
+    ov = overlay_win();
+#else
+    cap = backend_mac();
+    ov = overlay_mac();
+#endif
+    if (!cap->init(cap) || !ov->init(ov, cap)) {
+        fprintf(stderr, "couldnt start the screen grab or the overlay\n");
+        return 1;
+    }
+#else
+    const char *desk = getenv("XDG_CURRENT_DESKTOP");
+    int gnome = desk && strstr(desk, "GNOME");
+    const char *stype = getenv("XDG_SESSION_TYPE");
+    int x11_session = (stype && !strcmp(stype, "x11")) || (!getenv("WAYLAND_DISPLAY") && getenv("DISPLAY"));
     if (force ? !strcmp(force, "x11") : x11_session) {
         cap = backend_x11();
         ov = overlay_x11();
@@ -3999,6 +4137,7 @@ int main(int argc, char **argv)
                         "try --backend if yours is one of those\n");
         return 1;
     }
+#endif
     analyzer_set_think_ms(think_secs[cfg.think] * 1000);
     analyzer_start(engine);
     Analysis a;
@@ -4013,11 +4152,16 @@ int main(int argc, char **argv)
         if (t >= next) {
             tick();
             redraw();
-            next = t + 1000 / rate_hz[cfg.rate];
+            static long scan_since;
+            if (state != SCANNING) scan_since = 0;
+            else if (!scan_since) scan_since = t;
+            int gap = 1000 / rate_hz[cfg.rate];
+            if (scan_since && t - scan_since > 30000 && gap < 1000) gap = 1000; // nothing for 30s, look once a second
+            next = t + gap;
             continue;
         }
         double cx, cy;
-        int rainbow = state == TRACKING && (cfg.mcolor == 10 || cfg.tcolor == 10 || cfg.gcolor == 10 || (lib_open && dl_pid > 0));
+        int rainbow = state == TRACKING && (cfg.mcolor == 10 || cfg.tcolor == 10 || cfg.gcolor == 10 || (cfg.hanging && cfg.hcolor == 10) || (lib_open && dl_pid > 0));
         int wait = (int)(next - t), busy = animating();
         if (rainbow && wait > 80) wait = 80; // rainbow fades instead of jumping
         if (busy && wait > 15) wait = 15; // ~60fps while something slides

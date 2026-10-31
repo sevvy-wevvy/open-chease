@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
+# curl -fsSL https://raw.githubusercontent.com/sevvy-wevvy/open-chease/dev/get.sh | bash
 set -euo pipefail
 
+main() { # so a half downloaded script doesnt run half way
 repo="sevvy-wevvy/open-chease"
-branch="main"
-data="${OPEN_CHEASE_DATA:-${TMPDIR:-/tmp}/open-chease-$(id -u)}"
+branch="${OPEN_CHEASE_BRANCH:-dev}"
+if [ "$(uname -s)" = Darwin ]; then
+  data="${OPEN_CHEASE_DATA:-$HOME/Library/Application Support/open-chease}" # macs clean out $TMPDIR after a few days
+else
+  data="${OPEN_CHEASE_DATA:-${TMPDIR:-/tmp}/open-chease-$(id -u)}"
+fi
+data="${data%/}"
 app="$data/app"
 sf_dir="$data/stockfish"
-sf_url="https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-linux-x86-64-universal.tar.gz"
+os="$(uname -s)"
 
 update=0
 fetch_only=0
@@ -21,10 +28,14 @@ for a in "$@"; do
   esac
 done
 
-if [ "$(uname -s)" != "Linux" ]; then
-  echo "open-chease only works on linux sorry" >&2
-  exit 1
-fi
+case "$os" in
+  Linux) sf_url="https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-linux-x86-64-universal.tar.gz" ;;
+  Darwin) sf_url="https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-macos-universal.tar.gz" ;; # one file for intel and apple silicon
+  *)
+    echo "this script is for linux and mac, on windows run this in powershell:" >&2
+    echo "  irm https://raw.githubusercontent.com/$repo/$branch/get.ps1 | iex" >&2
+    exit 1 ;;
+esac
 
 mkdir -p "$data"
 trap 'rm -rf "${tmp:-}"' EXIT # a failed download or tar shouldnt leave junk behind
@@ -34,6 +45,7 @@ if [ -L "$data" ] || [ ! -O "$data" ]; then # someone else made it first, dont r
 fi
 chmod 700 "$data"
 export OPEN_CHEASE_DATA="$data"
+export OPEN_CHEASE_BRANCH="$branch" # the app reads its engine lists from the same branch
 
 dl() {
   if command -v curl >/dev/null 2>&1; then
@@ -44,6 +56,10 @@ dl() {
     echo "you need curl or wget for this" >&2
     return 1
   fi
+}
+
+tmo() { # mac has no timeout command
+  if command -v timeout >/dev/null 2>&1; then timeout "$@"; else perl -e 'alarm shift; exec @ARGV' "$@"; fi
 }
 
 if [ ! -x "$app/run.sh" ] || [ "$update" = 1 ]; then
@@ -60,14 +76,15 @@ if [ ! -x "$app/run.sh" ] || [ "$update" = 1 ]; then
   rm -rf "$app"
   mv "$tmp/app" "$app"
   rm -rf "$tmp"
+  rm -rf "$data/build" # makes run.sh rebuild from the new source when theres no prebuilt for this pc
 fi
 
-if [ "$want_sf" = 1 ] && [ "$(uname -m)" = "x86_64" ] && ! ls "$sf_dir"/stockfish* >/dev/null 2>&1; then
+if [ "$want_sf" = 1 ] && { [ "$os" = Darwin ] || [ "$(uname -m)" = "x86_64" ]; } && ! ls "$sf_dir"/stockfish* >/dev/null 2>&1; then
   echo "grabbing stockfish too (about 80 MB, only happens the first time)..."
   tmp="$(mktemp -d "$data/sf.XXXXXX")"
   if dl "$sf_url" "$tmp/sf.tar.gz" && tar xzf "$tmp/sf.tar.gz" -C "$tmp"; then
     found="$(find "$tmp" -type f -name 'stockfish-*' -perm -u+x | head -1)"
-    if [ -n "$found" ] && printf 'uci\nquit\n' | timeout 10 "$found" 2>/dev/null | grep -q uciok; then
+    if [ -n "$found" ] && printf 'uci\nquit\n' | tmo 10 "$found" 2>/dev/null | grep -q uciok; then
       mkdir -p "$sf_dir"
       mv "$found" "$sf_dir/stockfish"
     else
@@ -81,3 +98,6 @@ fi
 
 [ "$fetch_only" = 1 ] && exit 0
 exec "$app/run.sh" ${pass[@]+"${pass[@]}"}
+}
+
+main "$@"
