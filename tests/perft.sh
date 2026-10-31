@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-e=bin/open-chease-engine
+e="${E:-bin/open-chease-engine}" # E=path to check another build
 fail=0
 check() {
   got=$("$e" perft "$1" "$2" | cut -d' ' -f1)

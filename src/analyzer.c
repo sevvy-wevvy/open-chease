@@ -1,17 +1,14 @@
 #include <errno.h>
-#include <fcntl.h>
 #include <time.h>
-#include <poll.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include "app.h"
+#include "plat.h"
 
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static int think_ms = 8000;
@@ -32,7 +29,7 @@ static char id_name[48];
 static void uci_send(const char *s);
 static FILE *uci_in;
 static int uci_out_fd = -1;
-static pid_t uci_pid;
+static proc_t uci_pid;
 static int uci_searching, uci_stop_sent;
 static Pos search_pos;
 
@@ -134,7 +131,7 @@ static void send_opts(void) { send_opts_fd(uci_out_fd); }
 
 static void send_opts_fd(int fd)
 {
-    long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    long cpus = cpu_count();
     int threads = opt_threads ? opt_threads : (cpus > 2 ? (int)(cpus / 2) : 1); // leave half for the game
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "setoption name Threads value %d\nsetoption name Hash value %d\nsetoption name MultiPV value %d\n",
@@ -293,8 +290,7 @@ static int read_until(int fd, const char *token, int ms) // raw reads, a hung en
     char buf[4096];
     size_t n = 0;
     for (;;) {
-        struct pollfd p = {fd, POLLIN, 0};
-        if (poll(&p, 1, ms) <= 0) return 0;
+        if (fd_wait(fd, ms) <= 0) return 0;
         if (n > sizeof(buf) - 256) { // keep a tail incase the token got split between reads
             memmove(buf, buf + n - 64, 64);
             n = 64;
@@ -308,57 +304,30 @@ static int read_until(int fd, const char *token, int ms) // raw reads, a hung en
     }
 }
 
-static int start_uci(const char *path, pid_t *pidp, int *outp, FILE **inp)
+static int start_uci(const char *path, proc_t *pidp, int *outp, FILE **inp)
 {
-    int to_child[2], from_child[2];
-    if (pipe(to_child)) return 0;
-    if (pipe(from_child)) {
-        close(to_child[0]), close(to_child[1]);
-        return 0;
-    }
-    for (int k = 0; k < 2; k++) fcntl(to_child[k], F_SETFD, FD_CLOEXEC), fcntl(from_child[k], F_SETFD, FD_CLOEXEC); // or the second engines inherit them and we never see eof
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(to_child[0]), close(to_child[1]), close(from_child[0]), close(from_child[1]);
-        return 0;
-    }
-    if (pid == 0) {
-        setpgid(0, 0); // ctrl+z / ctrl+c shouldnt hit the engine
-        dup2(to_child[0], 0);
-        dup2(from_child[1], 1);
-        char real[4096], dir[4096];
-        // run it from its own folder, engines look for their nnue next to them
-        if (realpath(path, real)) {
-            snprintf(dir, sizeof(dir), "%s", real);
-            char *slash = strrchr(dir, '/');
-            if (slash && slash != dir) *slash = 0, (void)!chdir(dir);
-            path = real;
-        }
-        execl(path, path, (char *)NULL);
-        _exit(127);
-    }
-    setpgid(pid, pid); // both sides, dont know who runs first
-    close(to_child[0]);
-    close(from_child[1]);
-    signal(SIGPIPE, SIG_IGN); // a dead engine would kill us on the next write
+    proc_t pid;
+    int to_child, from_child;
+    if (!proc_start(path, 0, &pid, &to_child, &from_child)) return 0;
+    no_sigpipe();
     id_name[0] = 0;
-    send_fd(to_child[1], "uci\n");
-    int ok = read_until(from_child[0], "uciok", 5000);
+    send_fd(to_child, "uci\n");
+    int ok = read_until(from_child, "uciok", 5000);
     if (ok) {
         pthread_mutex_lock(&mu);
-        send_opts_fd(to_child[1]);
+        send_opts_fd(to_child);
         pthread_mutex_unlock(&mu);
-        send_fd(to_child[1], "isready\n");
-        ok = read_until(from_child[0], "readyok", 10000); // net loading
+        send_fd(to_child, "isready\n");
+        ok = read_until(from_child, "readyok", 10000); // net loading
     }
-    FILE *in = ok ? fdopen(from_child[0], "r") : NULL;
+    FILE *in = ok ? fdopen(from_child, "r") : NULL;
     if (!in) {
-        kill(-pid, SIGKILL), kill(pid, SIGKILL);
-        waitpid(pid, NULL, 0);
-        close(from_child[0]), close(to_child[1]);
+        proc_kill(pid);
+        proc_reap(pid);
+        close(from_child), close(to_child);
         return 0;
     }
-    *pidp = pid, *outp = to_child[1], *inp = in;
+    *pidp = pid, *outp = to_child, *inp = in;
     return 1;
 }
 
@@ -369,7 +338,8 @@ static void name_from_path(const char *path)
         snprintf(cur.engine_base, sizeof(cur.engine_base), "%s", id_name);
         return;
     }
-    const char *base = strrchr(path, '/');
+    const char *base = strrchr(path, '/'), *bs = strrchr(path, '\\');
+    if (bs > base) base = bs;
     snprintf(cur.engine, sizeof(cur.engine), "%.47s", base ? base + 1 : path);
     char *dash = strchr(cur.engine, '-');
     if (dash && !strncmp(cur.engine, "stockfish", 9)) *dash = 0; // stockfish-ubuntu-x86-64-avx2 is way too long
@@ -402,14 +372,14 @@ static void *uci_watch(void *arg) // owns the outside engine: start it, read it,
         unsigned g = gen;
         pthread_mutex_unlock(&mu);
 
-        pid_t pid = 0;
+        proc_t pid = 0;
         int ofd = -1;
         FILE *in = NULL;
         int ok = start_uci(path, &pid, &ofd, &in);
         pthread_mutex_lock(&mu);
         if (g != gen) { // got switched while it was starting
             pthread_mutex_unlock(&mu);
-            if (ok) kill(-pid, SIGKILL), waitpid(pid, NULL, 0), fclose(in), close(ofd);
+            if (ok) proc_kill(pid), proc_reap(pid), fclose(in), close(ofd);
             continue;
         }
         if (!ok) {
@@ -446,8 +416,8 @@ static void *uci_watch(void *arg) // owns the outside engine: start it, read it,
         pthread_mutex_unlock(&mu);
         fclose(in);
         close(ofd);
-        kill(-pid, SIGKILL), kill(pid, SIGKILL); // wrapper scripts too, and it may still be alive if only the pipe broke
-        waitpid(pid, NULL, 0);
+        proc_kill(pid); // it may still be alive if only the pipe broke
+        proc_reap(pid);
         if (died) {
             char fen[128];
             pos_to_fen(&last, fen);
@@ -473,12 +443,12 @@ int analyzer_switch(const char *engine_path)
     atomic_store(&stop_flag, 1);
     gen++;
     unsigned g = gen;
-    pid_t old = uci_pid;
-    if (!engine_path || !*engine_path || access(engine_path, X_OK) != 0) {
+    proc_t old = uci_pid;
+    if (!engine_path || !*engine_path || !is_exec(engine_path)) {
         want_path[0] = 0;
         use_builtin();
         pthread_mutex_unlock(&mu);
-        if (old > 0) kill(-old, SIGKILL), kill(old, SIGKILL);
+        proc_kill(old);
         return 0;
     }
     snprintf(want_path, sizeof(want_path), "%s", engine_path);
@@ -490,7 +460,7 @@ int analyzer_switch(const char *engine_path)
     }
     pthread_cond_signal(&wcv);
     pthread_mutex_unlock(&mu);
-    if (old > 0) kill(-old, SIGKILL), kill(old, SIGKILL); // uci_watch gets eof and picks up the new path
+    proc_kill(old); // uci_watch gets eof and picks up the new path
     struct timespec until;
     clock_gettime(CLOCK_REALTIME, &until);
     until.tv_sec += 20; // 5s uciok + 10s readyok and some slack

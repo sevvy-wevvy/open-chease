@@ -1,0 +1,21 @@
+# macos engines you can grab in open-chease (Settings > Engine > Get engines (Browse))
+# name|url|type|size in MB|tier|tags|about
+# type: bin = the url is the engine, tgz/tar/zip = archive with the engine inside, add #name to the url to pick which file inside
+# tier is rough, 1 = insane (3500+), 2 = really strong (3200+), 3 = strong (2800+), 4 = beatable-ish
+# tags: old, small, fun, variants, cpu (needs a newer cpu, avx2 or so)
+# all of these are apple silicon (arm64) builds, Stockfish 19 is a universal binary
+# if github cant be reached open-chease uses a smaller copy built into it
+Stockfish 19|https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-macos-universal.tar.gz#stockfish/stockfish-macos-universal|tgz|78.5|1||the strongest one out there
+Stockfish 18|https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-macos-m1-apple-silicon.tar#stockfish/stockfish-macos-m1-apple-silicon|tar|110.0|1|old|last years stockfish, you wont notice a difference
+Stockfish 17.1|https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-macos-m1-apple-silicon.tar#stockfish/stockfish-macos-m1-apple-silicon|tar|77.0|1|old|older stockfish
+Reckless 0.9|https://github.com/codedeliveryservice/Reckless/releases/download/v0.9.0/reckless-macos|bin|62.3|1||one of the very top engines right now, rust
+Pawnocchio 2|https://github.com/JonathanHallstrom/pawnocchio/releases/download/v2.0.1/pawnocchio-2.0.1-macos-aarch64-apple_m1|bin|66.9|1||crazy strong. its written in zig which almost nobody does for chess
+PlentyChess 8|https://github.com/Yoshie2000/PlentyChess/releases/download/b-v8.0.0/PlentyChess-8.0.0-macos-neon|bin|51.4|1||one of the best right behind stockfish
+Viridithas 20|https://github.com/cosmobobak/viridithas/releases/download/v20.0.0/viridithas-20-macos-aarch64|bin|54.3|1||one of the strongest rust engines
+Stormphrax 8|https://github.com/Ciekce/Stormphrax/releases/download/v8.0.0/stormphrax-8.0.0-apple-m1|bin|54.4|1||top tier
+Halogen 16|https://github.com/KierenP/Halogen/releases/download/v16/Halogen-16.0.0-macos-arm64-neon-dotprod|bin|18.8|2||solid c++ engine thats been around for years
+Avalanche 5|https://github.com/SnowballSH/Avalanche/releases/download/v5.0.0/Avalanche-5.0.0-aarch64-macos|bin|25.0|2||zig again
+Velvet 8|https://github.com/mhonert/velvet-chess/releases/download/v8.1.1/velvet-v8.1.1-macOS-apple-silicon|bin|49.3|2||rust engine
+Lynx 1.11|https://github.com/lynx-chess/Lynx/releases/download/v1.11.0/Lynx-1.11.0-osx-arm64.zip#Lynx.Cli|zip|12.6|3||written in c#, surprisingly good
+StockDory 0.3|https://github.com/TheBlackPlague/StockDory/releases/download/0.3/StockDory-Koi-0.3-macos-latest-apple-m1|bin|1.2|4|small|small, beatable if youre decent
+Mess|https://github.com/raklaptudirm/mess/releases/download/v0.3.0/mess-darwin-arm64|bin|5.1|4|fun,small|a lot weaker, good for chaos games

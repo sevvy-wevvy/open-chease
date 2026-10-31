@@ -651,6 +651,7 @@ static void wl_commit(Overlay *ov, const Rect *hits, int nhits)
         if (!o->configured || !o->canvas_px) continue;
         ShmBuf *b = NULL;
         int x0, y0, x1, y1, dmg = canvas_damage(&o->canvas, &x0, &y0, &x1, &y1), bi = 0;
+        if (!dmg && !o->draw[0].buf && !o->draw[1].buf) continue; // nothing drawn here yet, dont hold 2 screens of buffers
         // both buffers need it, the other one is a frame behind
         for (int k = 0; k < 2 && dmg; k++) {
             int *q = o->pend[k];

@@ -481,13 +481,17 @@ static void verify_promo(Tracker *t, const BoardRead *r, const Templates *tpl)
     }
 }
 
+// our own overlay reads as unknown, and the last games check ring sits right on the start squares
 static int is_start_obs(const uint8_t *obs, int rotated)
 {
+    int seen = 0;
     for (int i = 0; i < 64; i++) {
-        int want = i < 16 ? OBS_WHITE : (i >= 48 ? OBS_BLACK : OBS_EMPTY);
-        if (obs[rotated ? 63 - i : i] != want) return 0;
+        int want = i < 16 ? OBS_WHITE : (i >= 48 ? OBS_BLACK : OBS_EMPTY), got = obs[rotated ? 63 - i : i];
+        if (got == OBS_UNKNOWN) continue;
+        if (got != want) return 0;
+        seen++;
     }
-    return 1;
+    return seen >= 52;
 }
 
 static float board_fit(const Templates *t, const BoardRead *r)
@@ -559,11 +563,10 @@ static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *ou
         sc[sq][KING] = -1;
     }
     for (int c = 0; c < 2; c++) {
-        int want = c == WHITE ? OBS_WHITE : OBS_BLACK, ksq = -1, n = 0;
+        int want = c == WHITE ? OBS_WHITE : OBS_BLACK, ksq = -1;
         float kbest = -2;
         for (int sq = 0; sq < 64; sq++) {
             if (r->obs[sq] != want) continue;
-            n++;
             float ks[6];
             type_scores(use, r, sq, ks);
             float alt = 0;

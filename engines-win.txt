@@ -1,0 +1,60 @@
+# windows engines you can grab in open-chease (Settings > Engine > Get engines (Browse))
+# name|url|type|size in MB|tier|tags|about
+# type: bin = the url is the engine (.exe), tgz/tar/zip = archive with the engine inside, add #name to the url to pick which file inside
+# tier is rough, 1 = insane (3500+), 2 = really strong (3200+), 3 = strong (2800+), 4 = beatable-ish
+# tags: old, small, fun, variants, cpu (needs a newer cpu, avx2 or so), vcrt (needs the microsoft vc++ 2015-2022 runtime)
+# all of these are windows x86-64 builds, faster ones for newer cpus are in engines-cpu-win.txt
+# if github cant be reached open-chease uses a smaller copy built into it
+Stockfish 19|https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-windows-x86-64-universal.zip#stockfish-windows-x86-64-universal.exe|zip|77.7|1||the strongest one out there
+Stockfish 18|https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-windows-x86-64.zip#stockfish/stockfish-windows-x86-64.exe|zip|73.4|1|old|last years stockfish, you wont notice a difference
+Stockfish 17.1|https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-windows-x86-64.zip#stockfish/stockfish-windows-x86-64.exe|zip|62.4|1|old|older stockfish
+Stockfish 16|https://github.com/official-stockfish/Stockfish/releases/download/sf_16/stockfish-windows-x86-64.zip#stockfish/stockfish-windows-x86-64.exe|zip|33.3|1|old|from 2023, smaller download
+Reckless 0.9|https://github.com/codedeliveryservice/Reckless/releases/download/v0.9.0/reckless-windows-generic.exe|bin|61.6|1|vcrt|one of the very top engines right now, rust
+Pawnocchio 2|https://github.com/JonathanHallstrom/pawnocchio/releases/download/v2.0.1/pawnocchio-2.0.1-windows-x86_64.exe|bin|67.2|1||crazy strong. its written in zig which almost nobody does for chess
+Quanticade 3|https://github.com/Quanticade/Quanticade/releases/download/Cronus-3.0/Quanticade-Windows-clang-x86-64-bmi2.exe|bin|59.9|1|cpu|up there with the best, wants a cpu with bmi2
+Arasan 26.1|https://github.com/jdart1/arasan-chess/releases/download/v26.1/arasan26.1.zip#arasanx-64.exe|zip|28.5|1||been around since the 90s and somehow keeps getting better
+PlentyChess 8|https://github.com/Yoshie2000/PlentyChess/releases/download/b-v8.0.0/PlentyChess-8.0.0-windows-generic.exe|bin|52.6|1||one of the best right behind stockfish
+Viridithas 20|https://github.com/cosmobobak/viridithas/releases/download/v20.0.0/viridithas-20-win-x86-64-v3.exe|bin|53.9|1|cpu|one of the strongest rust engines
+Stormphrax 8|https://github.com/Ciekce/Stormphrax/releases/download/v8.0.0/stormphrax-8.0.0-avx2-bmi2.exe|bin|54.4|1|cpu|top tier
+Koivisto 9|https://github.com/Luecx/Koivisto/releases/download/v9.0/Koivisto_9.0-windows-sse2-pgo.exe|bin|15.0|1||really strong and runs on old cpus
+Fairy-Stockfish 14|https://github.com/fairy-stockfish/Fairy-Stockfish/releases/download/fairy_sf_14/fairy-stockfish_x86-64.exe|bin|1.7|1|variants,small|stockfish that also knows a ton of chess variants
+Halogen 16|https://github.com/KierenP/Halogen/releases/download/v16/Halogen-16.0.0-windows-x86_64-legacy.exe|bin|21.3|2||runs on any cpu
+Renegade 1.3|https://github.com/pkrisz99/Renegade/releases/download/v1.3.1/Renegade_1.3.1_windows_x86-64-bmi2.exe|bin|33.8|2|cpu|solid all rounder
+Tarnished 6|https://github.com/Bobingstern/Tarnished/releases/download/v6.0/tarnished-6.0-eternal_x86-64-avx2.exe|bin|44.2|2|cpu|newer engine thats already really good
+Willow 4|https://github.com/Adam-Kulju/Willow/releases/download/4.0.0.1/willow-v2-windows.exe|bin|4.8|2|small|same dev as patricia but plays it straight
+Yukari 2025|https://github.com/yukarichess/yukari/releases/download/2025.11.1/yukari_2025_111_64_ja_sse3_nopop.exe|bin|12.9|2|small,vcrt|
+Berserk 4.1|https://github.com/jhonnold/berserk/releases/download/4.1.0/berserk-4.1.0-x64.exe|bin|0.3|2|old,small|old berserk, the new ones are windows only
+Avalanche 5|https://github.com/SnowballSH/Avalanche/releases/download/v5.0.0/Avalanche-5.0.0-x86_64-windows-v3.exe|bin|25.4|2|cpu|zig again, wants a newer cpu
+Velvet 8|https://github.com/mhonert/velvet-chess/releases/download/v8.1.1/velvet-v8.1.1-x86_64-nopopcnt.exe|bin|48.9|2||rust engine, works on really old cpus
+Black Marlin|https://github.com/jnlt3/blackmarlin/releases/download/9.0/blackmarlin-windows-x86-64.exe|bin|29.2|2|vcrt|
+Horsie 1.1|https://github.com/liamt19/Horsie/releases/download/v1.1/horsie-1_1-v2.exe|bin|22.2|2||
+Starzix 6.1|https://github.com/zzzzz151/Starzix/releases/download/6.1/Starzix-6.1-avx2.exe|bin|17.8|2|cpu|pretty quick
+Patricia 3|https://github.com/Adam-Kulju/Patricia/releases/download/5.1/patricia_v2.exe|bin|5.1|2|fun,small|the most aggressive engine around, loves throwing pieces at your king
+Princhess|https://github.com/princesslana/princhess/releases/download/0.22.0/princhess.exe|bin|45.8|2|fun|thinks like alphazero (mcts), plays weird human looking moves
+Akimbo 1|https://github.com/jw1912/akimbo/releases/download/v1.0.0/akimbo-1.0.0.exe|bin|6.3|2|small,vcrt|small and way stronger than it looks
+Carp 3|https://github.com/dede1751/carp/releases/download/v3.0.1/carp-v3.0.1-win-x86_64-V1.exe|bin|2.7|2|small|tiny download for how good it is
+Sirius 9|https://github.com/mcthouacbb/Sirius/releases/download/v9.0/sirius-9.0-windows-x86-64-v1.exe|bin|0.5|2|small|the whole thing is 0.2 MB
+Zahak 10|https://github.com/amanjpro/zahak/releases/download/10.0/zahak-windows-amd64-10.0-avx.exe|bin|7.5|3|small|go engine
+Counter 5.5|https://github.com/ChizhovVadim/CounterGo/releases/download/v1.55.0/counter-5.5-windows-amd64.exe|bin|4.2|3|small|also go
+Minic 3.06|https://github.com/tryingsomestuff/Minic/releases/download/3.06/minic_3.06_mingw_x64_core2.exe|bin|2.1|3|old,small|older minic
+Integral 3|https://github.com/aronpetko/integral/releases/download/v3/integral_x86_64_popcnt.exe|bin|3.3|3|old,small|early version, the new ones are windows only
+Lynx 1.11|https://github.com/lynx-chess/Lynx/releases/download/v1.11.0/Lynx-1.11.0-win-x64.zip#Lynx.Cli.exe|zip|11.9|3||written in c#, surprisingly good
+Frozenight 6|https://github.com/MinusKelvin/frozenight/releases/download/v6.0.0/frozenight-6.0.0-windows-x86-64.exe|bin|2.0|3|small|small rust engine from the ice4 guy
+Tantabus 2|https://github.com/analog-hors/tantabus/releases/download/v2.0.0/tantabus-windows-2019-x86-64.exe|bin|1.5|3|small,vcrt|rust, older but holds up
+Nalwald 19|https://github.com/tsoj/Nalwald/releases/download/19/Nalwald-19-windows-amd64.exe|bin|12.5|3||written in nim
+Chess-dot-cpp|https://github.com/GediminasMasaitis/chess-dot-cpp/releases/download/4.10/chessdotcpp-popcnt.exe|bin|21.3|3||plain c++ engine
+4ku 5.1|https://github.com/kz04px/4ku/releases/download/v5.1/4ku-5.1-popcnt.exe|bin|3.0|3|fun|started life as a 4 KB engine
+StockDory 0.3|https://github.com/TheBlackPlague/StockDory/releases/download/0.3/StockDory-Koi-0.3-windows-latest-x86-64.exe|bin|1.1|4|small,vcrt|small, beatable if youre decent
+ice4|https://github.com/MinusKelvin/ice4/releases/download/v6.1/ice4.exe|bin|12.7|4|fun,small|from a 4 KB engine contest, tiny
+Mess|https://github.com/raklaptudirm/mess/releases/download/v0.3.0/mess-windows-amd64.exe|bin|5.2|4|fun,small|a lot weaker, good for chaos games
+Inanis 1.6|https://github.com/Tearth/Inanis/releases/download/v1.6.0/inanis_1.6.0_windows_64bit_x86-64.zip#inanis.exe|zip|0.3|4|small|you can beat this one with some practice
+Blunder 8.5|https://github.com/deanmchris/blunder/releases/download/v8.5.5/blunder-8.5.5.zip#windows/blunder-8.5.5-default.exe|zip|14.8|4|fun|plays better than the name says
+Berserk 14|https://github.com/jhonnold/berserk/releases/download/14/berserk-14-x86-64.exe|bin|25.3|1||the new berserk, one of the very best and windows only
+Obsidian 16|https://github.com/gab8192/Obsidian/releases/download/v16.0/Obsidian160-avx2.exe|bin|30.7|1|cpu|right up there with stockfish, wants avx2
+Caissa 2|https://github.com/Witek902/Caissa/releases/download/2.0/caissa-2.0-x64-sse2.exe|bin|75.9|1||top tier and runs on pretty much any cpu
+Integral 8|https://github.com/aronpetko/integral/releases/download/v8/integral_sse41_popcnt.exe|bin|61.9|1||the grown up integral, way stronger than v3
+Alexandria 9.1|https://github.com/PGG106/Alexandria/releases/download/v9.1.0/Alexandria-9.1.0-avx2.exe|bin|39.2|1|cpu|super strong, needs avx2 at least
+Clover 9.1|https://github.com/lucametehau/CloverEngine/releases/download/v9.1/Clover.9.1-old.exe|bin|18.2|1||romanian engine thats been climbing the lists for years
+Igel 3.8|https://github.com/vshcherbyna/igel/releases/download/3.8.0/igel-x64_popcnt_avx2_3_8_0.zip#igel-x64_popcnt_avx2_3_8_0.exe|zip|54.1|1|cpu|started as a greko fork and grew into a monster, wants avx2
+Seer 2.8|https://github.com/connormcmonigle/seer-nnue/releases/download/v2.8.0/seer_v2.8_x64_ssse3_nopopcnt.exe|bin|77.6|2||learned chess by working backwards from endgame tablebases
+Lc0 (NVIDIA GPU)|https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-gpu-nvidia-cuda12.zip#lc0.exe|zip|555.0|1|gpu,vcrt|leela, a neural net engine that runs on your nvidia card. huge download, comes with its net

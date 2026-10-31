@@ -1,0 +1,21 @@
+# macos engines you can grab in open-chease (Settings > Engine > Get engines (Browse))
+# name|url|type|size in MB|tier|tags|about
+# type: bin = the url is the engine, tgz/tar/zip = archive with the engine inside, add #name to the url to pick which file inside
+# tier is rough, 1 = insane (3500+), 2 = really strong (3200+), 3 = strong (2800+), 4 = beatable-ish
+# tags: old, small, fun, variants, cpu (needs a newer cpu, avx2 or so)
+# all of these are intel mac (x86-64) builds, Stockfish 19 is a universal binary
+# if github cant be reached open-chease uses a smaller copy built into it
+Stockfish 19|https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-macos-universal.tar.gz#stockfish/stockfish-macos-universal|tgz|78.5|1||the strongest one out there
+Stockfish 18|https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-macos-x86-64.tar#stockfish/stockfish-macos-x86-64|tar|109.2|1|old|last years stockfish, you wont notice a difference
+Stockfish 17.1|https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-macos-x86-64.tar#stockfish/stockfish-macos-x86-64|tar|76.5|1|old|older stockfish
+Stockfish 16|https://github.com/official-stockfish/Stockfish/releases/download/sf_16/stockfish-macos-x86-64.tar#stockfish/stockfish-macos-x86-64|tar|39.8|1|old|from 2023, smaller download
+Pawnocchio 2|https://github.com/JonathanHallstrom/pawnocchio/releases/download/v2.0.1/pawnocchio-2.0.1-macos-x86_64|bin|66.8|1||crazy strong. its written in zig which almost nobody does for chess
+Halogen 16|https://github.com/KierenP/Halogen/releases/download/v16/Halogen-16.0.0-macos-x86_64-legacy|bin|18.7|2||runs on any cpu
+Avalanche 5|https://github.com/SnowballSH/Avalanche/releases/download/v5.0.0/Avalanche-5.0.0-x86_64-macos-v3|bin|25.1|2|cpu|zig again, wants a newer cpu
+Velvet 8|https://github.com/mhonert/velvet-chess/releases/download/v8.1.1/velvet-v8.1.1-macOS-x86_64-nopopcnt|bin|49.0|2||rust engine, works on really old cpus
+Carp 3|https://github.com/dede1751/carp/releases/download/v3.0.1/carp-v3.0.1-darwin-x86_64-V1|bin|2.8|2|small|tiny download for how good it is
+Zahak 10|https://github.com/amanjpro/zahak/releases/download/10.0/zahak-darwin-amd64-10.0-avx|bin|5.4|3|small|go engine
+Lynx 1.11|https://github.com/lynx-chess/Lynx/releases/download/v1.11.0/Lynx-1.11.0-osx-x64.zip#Lynx.Cli|zip|13.4|3||written in c#, surprisingly good
+Nalwald 19|https://github.com/tsoj/Nalwald/releases/download/19/Nalwald-19-macos-amd64|bin|12.0|3||written in nim
+Mess|https://github.com/raklaptudirm/mess/releases/download/v0.3.0/mess-darwin-amd64|bin|5.1|4|fun,small|a lot weaker, good for chaos games
+Blunder 8.5|https://github.com/deanmchris/blunder/releases/download/v8.5.5/blunder-8.5.5.zip#macOS/blunder-8.5.5-default|zip|14.8|4|fun|plays better than the name says
