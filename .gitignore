@@ -1,0 +1,3 @@
+tests/pieces/
+tests/page/*.svg
+__pycache__/
