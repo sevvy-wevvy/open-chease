@@ -26,7 +26,7 @@ enum {
     ACT_WHITE = 1, ACT_BLACK, ACT_CLOSE, ACT_STOP, ACT_FLIP, ACT_MENU, ACT_DEBUG, ACT_FIX, ACT_RESTART, ACT_UPDATE,
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
-    ACT_CPART, ACT_CSWATCH, ACT_RESET
+    ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE
 };
 
 typedef struct {
@@ -1182,6 +1182,15 @@ static void draw_icon(Canvas *c, Rect r, int kind, uint32_t col)
         draw_triangle(c, cx, y + s * 0.78, cx - s * 0.3, y + s * 0.45, cx + s * 0.3, y + s * 0.45, col);
         draw_line(c, x + s * 0.1, y + s * 0.93, x + s * 0.9, y + s * 0.93, w, col);
         break;
+    case 9:
+    case 10: {
+        Rect pill = {x, y + s * 0.22, s, s * 0.56};
+        draw_round_rect(c, pill, pill.h / 2, col);
+        draw_round_rect(c, (Rect){pill.x + w, pill.y + w, pill.w - 2 * w, pill.h - 2 * w}, pill.h / 2 - w, TH->btn | 0xFF000000);
+        double d = pill.h - 4 * w, kx = kind == 10 ? pill.x + pill.w - d - 2 * w : pill.x + 2 * w;
+        draw_round_rect(c, (Rect){kx, pill.y + 2 * w, d, d}, d / 2, col);
+        break;
+    }
     default:
         draw_line(c, x + s * 0.15, y + s * 0.15, x + s * 0.85, y + s * 0.85, w * 1.3, col);
         draw_line(c, x + s * 0.85, y + s * 0.15, x + s * 0.15, y + s * 0.85, w * 1.3, col);
@@ -1190,14 +1199,16 @@ static void draw_icon(Canvas *c, Rect r, int kind, uint32_t col)
 
 static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
 {
-    const char *items[9] = {debug_on ? "Hide what it sees" : "Show what it sees", fix_mode ? "Done fixing" : "Fix pieces",
-                            tracker.pos.side == WHITE ? "Its black's turn" : "Its white's turn", "Rescan board",
-                            "Engines", "Switch team", "Restart", "Update", "Quit"};
-    const char *hint[9] = {"tags on every square", "click one, pick whats there", "", "if it got lost",
-                           "get, pick or delete them", "", "", "pulls the newest version", ""};
-    int acts[9] = {ACT_DEBUG, ACT_FIX, ACT_TURN, ACT_RESCAN, ACT_LIB_OPEN, ACT_FLIP, ACT_RESTART, ACT_UPDATE, ACT_QUIT};
-    int group[9] = {0, 0, 0, 0, 1, 1, 2, 2, 3};
-    double mw = 236, ih = 42, gap = 9, mh = 9 * ih + 3 * gap + 12;
+    const char *items[10] = {"Helper mode", debug_on ? "Hide what it sees" : "Show what it sees",
+                             fix_mode ? "Done fixing" : "Fix pieces", tracker.pos.side == WHITE ? "Its black's turn" : "Its white's turn",
+                             "Rescan board", "Engines", "Switch team", "Restart", "Update", "Quit"};
+    const char *hint[10] = {cfg.mode ? "on, moves are hidden" : "hides the moves", "tags on every square",
+                            "click one, pick whats there", "", "if it got lost", "get, pick or delete them", "", "",
+                            "pulls the newest version", ""};
+    int acts[10] = {ACT_MODE, ACT_DEBUG, ACT_FIX, ACT_TURN, ACT_RESCAN, ACT_LIB_OPEN, ACT_FLIP, ACT_RESTART, ACT_UPDATE, ACT_QUIT};
+    int icons[10] = {9, 0, 1, 2, 3, 4, 5, 6, 7, 8};
+    int group[10] = {0, 1, 1, 1, 1, 2, 2, 3, 3, 4};
+    double mw = 236, ih = 42, gap = 9, mh = 10 * ih + 4 * gap + 12;
     Rect m = {p.x + p.w - mw, p.y + p.h + 6, mw, mh};
     if (m.y + mh > outr.y + outr.h) m.y = p.y - mh - 6;
     if (m.y < outr.y) m.y = outr.y + 4;
@@ -1210,19 +1221,19 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     panel_bg(c, m, 14, TH->menu);
     if (hit) add_hit(m, ACT_BLOCK);
     double y = m.y + 6;
-    for (int k = 0; k < 9; k++) {
+    for (int k = 0; k < 10; k++) {
         if (k && group[k] != group[k - 1]) {
             draw_line(c, m.x + 14, y + gap / 2 - 1, m.x + m.w - 14, y + gap / 2 - 1, 1, TH->btn);
             y += gap;
         }
         Rect it = {m.x + 6, y, m.w - 12, ih - 3};
-        int on = (k == 0 && debug_on) || (k == 1 && fix_mode);
-        uint32_t fg = k == 8 ? 0xFFFF5A5A : TH->item_fg;
+        int on = (k == 0 && cfg.mode) || (k == 1 && debug_on) || (k == 2 && fix_mode), quit = acts[k] == ACT_QUIT;
+        uint32_t fg = quit ? 0xFFFF5A5A : TH->item_fg;
         draw_round_rect(c, it, 10, on ? TH->btn : TH->item);
         if (on) draw_round_rect(c, (Rect){it.x + 2, it.y + 8, 3, it.h - 16}, 1.5, TH->title);
         Rect ib = {it.x + 10, it.y + (it.h - 30) / 2, 30, 30};
-        draw_round_rect(c, ib, 8, k == 8 ? 0x40FF5A5A : (TH->btn | 0xFF000000));
-        draw_icon(c, (Rect){ib.x + 7, ib.y + 7, 16, 16}, k, k == 8 ? 0xFFFF5A5A : on ? TH->title : TH->btn_fg);
+        draw_round_rect(c, ib, 8, quit ? 0x40FF5A5A : (TH->btn | 0xFF000000));
+        draw_icon(c, (Rect){ib.x + 7, ib.y + 7, 16, 16}, icons[k] == 9 && on ? 10 : icons[k], quit ? 0xFFFF5A5A : on ? TH->title : TH->btn_fg);
         if (*hint[k]) {
             draw_text(c, it.x + 48, it.y + 2, items[k], 0, fg);
             draw_text(c, it.x + 48, it.y + 19, fit_text(c, hint[k], it.w - 54), 0, (TH->item_fg & 0xFFFFFF) | 0x90000000);
@@ -3187,6 +3198,12 @@ static void handle_click(double x, double y)
             }
             break;
         }
+        case ACT_MODE:
+            cfg.mode ^= 1;
+            save_cfg();
+            menu_open = 0;
+            set_note(cfg.mode ? "helper mode, no more moves" : "cheat mode, moves are back");
+            break;
         case ACT_TAB:
             set_tab = hits[i].arg;
             dd_open = -1;

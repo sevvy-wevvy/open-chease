@@ -75,6 +75,7 @@ Open a game on lichess, chess.com or pretty much anywhere with a flat colored bo
 <b>X on the top box</b> - Stop following that board<br>
 <b>Gear on the top box</b> - Settings, they save so they stick next time (theres a whole section on them below)<br>
 <b>... on the top box</b> - Opens the menu:<br>
+&nbsp;&nbsp;<b>Helper mode</b> - Flips between cheats and helper mode in one click (more on helper mode below)<br>
 &nbsp;&nbsp;<b>Show what it sees</b> - Puts a little tag on every square with the piece it thinks is there (white tag = white piece, black tag = black piece)<br>
 &nbsp;&nbsp;<b>Fix pieces</b> - Click a square, then pick what's really there (or Empty, or whose turn it is). Your fixes stick until that piece moves. Click Done fixing in the menu when youre done, the board isnt clickable for the game while this is on<br>
 &nbsp;&nbsp;<b>Its black's/white's turn</b> - If it got whose turn it is wrong<br>
@@ -92,7 +93,7 @@ Open a game on lichess, chess.com or pretty much anywhere with a flat colored bo
 <summary align="center"><b>🤝 Helper Mode 🤝</b></summary>
 
 <p align="center">
-Dont want it playing for you? Gear > Fun > Mode > <b>Helper</b>. It stops showing moves completely (no arrows, no move names, nothing) and just keeps you company:<br> <br>
+Dont want it playing for you? Hit <b>Helper mode</b> in the ... menu (or Gear > Fun > Mode). It stops showing moves completely (no arrows, no move names, nothing) and just keeps you company:<br> <br>
 <b>Whose turn it is</b> - and a heads up when you or they are in check (the king gets a red ring too)<br>
 <b>Win %</b> - your chances right now, from the engine, plus how much the last move changed it like (+6)<br>
 <b>Danger alerts</b> - "your queen is in danger" when something of yours is attacked by a cheaper piece or not defended, and "they have mate in 3" when its coming<br>
