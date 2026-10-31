@@ -21,7 +21,7 @@ static Pos want_pos;
 static int have_want, quit_flag, external, builtin_started, watch_started;
 static pthread_cond_t wcv = PTHREAD_COND_INITIALIZER, rcv = PTHREAD_COND_INITIALIZER;
 static char want_path[1024]; // empty = no outside engine
-static unsigned gen, result_gen;
+static unsigned gen, result_gen; // gen goes up on every switch, older threads check it and back off
 static int result_ok;
 static int opt_threads, opt_hash = 128, opt_lines = 1, opts_dirty, bad_hits;
 static u64 bad_key;
@@ -45,7 +45,7 @@ void analyzer_set_elo(int e)
     pthread_mutex_lock(&mu);
     if (e != elo) {
         elo = e;
-        cur.key = 0;
+        cur.key = 0; // next set_position redoes it at the new level
         if (external && uci_searching && !uci_stop_sent) {
             uci_stop_sent = 1;
             uci_send("stop\n");
@@ -68,7 +68,7 @@ static void fill_from_info(const SearchInfo *in, u64 key)
         cur.depth = in->depth;
         cur.mate = 0;
         cur.score = in->score;
-        if (in->score > MATE_BOUND) cur.mate = (MATE - in->score + 1) / 2;
+        if (in->score > MATE_BOUND) cur.mate = (MATE - in->score + 1) / 2; // plies to moves
         if (in->score < -MATE_BOUND) cur.mate = -(MATE + in->score) / 2;
         cur.pvlen = in->pvlen < 8 ? in->pvlen : 8;
         for (int i = 0; i < cur.pvlen; i++) cur.pv[i] = in->pv[i];
@@ -143,6 +143,28 @@ static void send_opts_fd(int fd)
     opts_dirty = 0;
 }
 
+void uci_fen(const Pos *p, char *fen)
+{
+    pos_to_fen(p, fen);
+    char *sp = strchr(fen, ' ');
+    char *cs = sp ? strchr(sp + 1, ' ') : NULL;
+    // castling rights are a guess, keep them only if king + rook are home
+    if (cs) {
+        char cr[8] = "", ok[5] = "", *o = ok;
+        sscanf(cs + 1, "%7s", cr);
+        int wk = p->sq[4] == KING, bk = p->sq[60] == 6 + KING;
+        if (wk && p->sq[7] == ROOK && strchr(cr, 'K')) *o++ = 'K';
+        if (wk && p->sq[0] == ROOK && strchr(cr, 'Q')) *o++ = 'Q';
+        if (bk && p->sq[63] == 6 + ROOK && strchr(cr, 'k')) *o++ = 'k';
+        if (bk && p->sq[56] == 6 + ROOK && strchr(cr, 'q')) *o++ = 'q';
+        if (o == ok) *o++ = '-';
+        *o = 0;
+        char rest[64], *end = strchr(cs + 1, ' ');
+        snprintf(rest, sizeof(rest), "%s", end ? end : "");
+        snprintf(cs + 1, 128 - (size_t)(cs + 1 - fen), "%s%s", ok, rest);
+    }
+}
+
 static void uci_go(const Pos *p)
 {
     char fen[128], cmd[256];
@@ -156,24 +178,8 @@ static void uci_go(const Pos *p)
         uci_send(opt);
         sent_elo = elo;
     }
-    pos_to_fen(p, fen);
-    char *sp = strchr(fen, ' ');
-    char *cs = sp ? strchr(sp + 1, ' ') : NULL;
-    if (cs) {
-        char cr[8] = "", ok[5] = "", *o = ok;
-        sscanf(cs + 1, "%7s", cr);
-        int wk = p->sq[4] == KING, bk = p->sq[60] == 6 + KING;
-        if (wk && p->sq[7] == ROOK && strchr(cr, 'K')) *o++ = 'K';
-        if (wk && p->sq[0] == ROOK && strchr(cr, 'Q')) *o++ = 'Q';
-        if (bk && p->sq[63] == 6 + ROOK && strchr(cr, 'k')) *o++ = 'k';
-        if (bk && p->sq[56] == 6 + ROOK && strchr(cr, 'q')) *o++ = 'q';
-        if (o == ok) *o++ = '-';
-        *o = 0;
-        char rest[64], *end = strchr(cs + 1, ' ');
-        snprintf(rest, sizeof(rest), "%s", end ? end : "");
-        snprintf(cs + 1, sizeof(fen) - (size_t)(cs + 1 - fen), "%s%s", ok, rest);
-    }
-    snprintf(cmd, sizeof(cmd), "position fen %s\ngo movetime %d\n", fen, elo && think_ms > 1500 ? 1500 : think_ms);
+    uci_fen(p, fen);
+    snprintf(cmd, sizeof(cmd), "position fen %s\ngo movetime %d\n", fen, elo && think_ms > 1500 ? 1500 : think_ms); // a weak pick doesnt need 8s
     search_pos = *p;
     uci_searching = 1;
     uci_stop_sent = 0;
@@ -184,7 +190,7 @@ static void parse_info(char *line)
 {
     char *mp = strstr(line, " multipv ");
     int k = mp ? atoi(mp + 9) : 1;
-    if (k < 1 || k > 3) return;
+    if (k < 1 || k > 3) return; // best + 2 alts is all we draw
     char *pv = strstr(line, " pv ");
     if (!pv) return;
     int depth = 0, score = 0, mate = 0, have_score = 0;
@@ -232,6 +238,7 @@ static void *uci_thread(void *arg)
     while (fgets(line, sizeof(line), uci_in)) {
         if (!strncmp(line, "bestmove", 8)) {
             pthread_mutex_lock(&mu);
+            // after a stop its the bestmove for the old position, toss it
             if (elo && uci_searching && !uci_stop_sent && cur.key == search_pos.key) {
                 char *sv2, *tok = strtok_r(line + 8, " \r\n", &sv2);
                 Move m = tok ? move_from_uci(&search_pos, tok) : 0;
@@ -239,7 +246,7 @@ static void *uci_thread(void *arg)
             }
             uci_searching = 0;
             uci_stop_sent = 0;
-            if (have_want) {
+            if (have_want) { // board changed mid search, engine is free now so go again
                 have_want = 0;
                 Pos p = want_pos;
                 uci_go(&p);
@@ -256,7 +263,7 @@ static void *uci_thread(void *arg)
 }
 
 // stockfish segfaults on a missing king etc
-static int pos_ok(const Pos *p)
+int pos_ok(const Pos *p)
 {
     int kings[2] = {0, 0};
     for (int sq = 0; sq < 64; sq++) {
@@ -266,7 +273,7 @@ static int pos_ok(const Pos *p)
         if (pc % 6 == PAWN && (sq < 8 || sq >= 56)) return 0;
     }
     if (kings[0] != 1 || kings[1] != 1) return 0;
-    return !pos_in_check(p, p->side ^ 1);
+    return !pos_in_check(p, p->side ^ 1); // side that just moved cant be in check
 }
 
 static void grab_id(const char *buf)
@@ -288,7 +295,7 @@ static int read_until(int fd, const char *token, int ms) // raw reads, a hung en
     for (;;) {
         struct pollfd p = {fd, POLLIN, 0};
         if (poll(&p, 1, ms) <= 0) return 0;
-        if (n > sizeof(buf) - 256) {
+        if (n > sizeof(buf) - 256) { // keep a tail incase the token got split between reads
             memmove(buf, buf + n - 64, 64);
             n = 64;
         }
@@ -309,7 +316,7 @@ static int start_uci(const char *path, pid_t *pidp, int *outp, FILE **inp)
         close(to_child[0]), close(to_child[1]);
         return 0;
     }
-    for (int k = 0; k < 2; k++) fcntl(to_child[k], F_SETFD, FD_CLOEXEC), fcntl(from_child[k], F_SETFD, FD_CLOEXEC);
+    for (int k = 0; k < 2; k++) fcntl(to_child[k], F_SETFD, FD_CLOEXEC), fcntl(from_child[k], F_SETFD, FD_CLOEXEC); // or the second engines inherit them and we never see eof
     pid_t pid = fork();
     if (pid < 0) {
         close(to_child[0]), close(to_child[1]), close(from_child[0]), close(from_child[1]);
@@ -320,6 +327,7 @@ static int start_uci(const char *path, pid_t *pidp, int *outp, FILE **inp)
         dup2(to_child[0], 0);
         dup2(from_child[1], 1);
         char real[4096], dir[4096];
+        // run it from its own folder, engines look for their nnue next to them
         if (realpath(path, real)) {
             snprintf(dir, sizeof(dir), "%s", real);
             char *slash = strrchr(dir, '/');
@@ -329,10 +337,10 @@ static int start_uci(const char *path, pid_t *pidp, int *outp, FILE **inp)
         execl(path, path, (char *)NULL);
         _exit(127);
     }
-    setpgid(pid, pid);
+    setpgid(pid, pid); // both sides, dont know who runs first
     close(to_child[0]);
     close(from_child[1]);
-    signal(SIGPIPE, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN); // a dead engine would kill us on the next write
     id_name[0] = 0;
     send_fd(to_child[1], "uci\n");
     int ok = read_until(from_child[0], "uciok", 5000);
@@ -341,7 +349,7 @@ static int start_uci(const char *path, pid_t *pidp, int *outp, FILE **inp)
         send_opts_fd(to_child[1]);
         pthread_mutex_unlock(&mu);
         send_fd(to_child[1], "isready\n");
-        ok = read_until(from_child[0], "readyok", 10000);
+        ok = read_until(from_child[0], "readyok", 10000); // net loading
     }
     FILE *in = ok ? fdopen(from_child[0], "r") : NULL;
     if (!in) {
@@ -444,7 +452,7 @@ static void *uci_watch(void *arg) // owns the outside engine: start it, read it,
             char fen[128];
             pos_to_fen(&last, fen);
             fprintf(stderr, "engine died (last position %s), restarting it\n", fen);
-            usleep(500000);
+            usleep(500000); // dont spin if it dies right on startup
         }
     }
     return NULL;
@@ -482,10 +490,11 @@ int analyzer_switch(const char *engine_path)
     }
     pthread_cond_signal(&wcv);
     pthread_mutex_unlock(&mu);
-    if (old > 0) kill(-old, SIGKILL), kill(old, SIGKILL);
+    if (old > 0) kill(-old, SIGKILL), kill(old, SIGKILL); // uci_watch gets eof and picks up the new path
     struct timespec until;
     clock_gettime(CLOCK_REALTIME, &until);
-    until.tv_sec += 20;
+    until.tv_sec += 20; // 5s uciok + 10s readyok and some slack
+
     pthread_mutex_lock(&mu);
     while (result_gen != g && gen == g)
         if (pthread_cond_timedwait(&rcv, &mu, &until)) break;

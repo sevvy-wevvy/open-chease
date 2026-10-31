@@ -19,13 +19,14 @@ typedef struct {
     struct wl_buffer *buf;
     void *data;
     size_t size;
-    int w, h, stride, busy;
+    int w, h, stride, busy; // busy = compositor still has it
     uint32_t format;
 } ShmBuf;
 
 typedef struct {
     struct wl_output *output;
     uint32_t global_name;
+    int alive;
     struct zxdg_output_v1 *xdg;
     int lx, ly, lw, lh, have_logical;
     char name[64];
@@ -68,6 +69,9 @@ static double ptr_x, ptr_y;
 static int clicked;
 static double click_lx, click_ly;
 static int inited;
+static Overlay *live_ov;
+static int kb_on;
+static Backend *live_cap;
 
 static void buf_release(void *data, struct wl_buffer *buf)
 {
@@ -92,7 +96,7 @@ static int make_shm(ShmBuf *b, int w, int h, int stride, uint32_t format)
     struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, (int32_t)size);
     b->buf = wl_shm_pool_create_buffer(pool, 0, w, h, stride, format);
     wl_shm_pool_destroy(pool);
-    close(fd);
+    close(fd); // pool has its own copy of the fd now
     b->data = data;
     b->size = size;
     b->w = w;
@@ -153,7 +157,7 @@ static void ptr_button(void *d, struct wl_pointer *p, uint32_t serial, uint32_t 
     for (int i = 0; i < nouts; i++)
         if (outs[i].surface == ptr_surface) {
             clicked = 1;
-            click_lx = outs[i].lx + ptr_x;
+            click_lx = outs[i].lx + ptr_x; // our surface covers the whole output so just add its spot
             click_ly = outs[i].ly + ptr_y;
         }
 }
@@ -163,13 +167,13 @@ static void ptr_axis(void *d, struct wl_pointer *p, uint32_t t, uint32_t a, wl_f
     scroll_acc += v; // wl_fixed, keep the fractions so slow touchpad scrolls still add up
     for (int i = 0; i < nouts; i++)
         if (outs[i].surface == ptr_surface) scroll_lx = outs[i].lx + ptr_x, scroll_ly = outs[i].ly + ptr_y;
-    if (scroll_acc >= 10 * 256 || scroll_acc <= -10 * 256) scrolled = scroll_acc > 0 ? 1 : -1, scroll_acc = 0;
+    if (scroll_acc >= 10 * 256 || scroll_acc <= -10 * 256) scrolled = scroll_acc > 0 ? 1 : -1, scroll_acc = 0; // wl_fixed is 256 a unit, a wheel notch is 10-15
 }
 static void ptr_frame(void *d, struct wl_pointer *p) {}
 static void ptr_axis_source(void *d, struct wl_pointer *p, uint32_t s) {}
 static void ptr_axis_stop(void *d, struct wl_pointer *p, uint32_t t, uint32_t a) {}
 static void ptr_axis_discrete(void *d, struct wl_pointer *p, uint32_t a, int32_t v) {}
-static void ptr_axis_v120(void *d, struct wl_pointer *p, uint32_t a, int32_t v) {}
+static void ptr_axis_v120(void *d, struct wl_pointer *p, uint32_t a, int32_t v) {} // v8+ only, seat is bound at 5 so these never fire
 static void ptr_axis_rel(void *d, struct wl_pointer *p, uint32_t a, uint32_t v) {}
 static const struct wl_pointer_listener ptr_listener = {ptr_enter, ptr_leave, ptr_motion, ptr_button, ptr_axis,
                                                         ptr_frame, ptr_axis_source, ptr_axis_stop, ptr_axis_discrete,
@@ -207,7 +211,7 @@ static void kb_keymap(void *d, struct wl_keyboard *k, uint32_t fmt, int32_t fd, 
     if (xkb.ctx && fmt == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1) {
         char *map = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
         if (map != MAP_FAILED) {
-            void *km = xkb.keymap_new_from_string(xkb.ctx, map, 1, 0);
+            void *km = xkb.keymap_new_from_string(xkb.ctx, map, 1, 0); // 1 = XKB_KEYMAP_FORMAT_TEXT_V1
             munmap(map, size);
             if (km) {
                 if (xkb.state) xkb.state_unref(xkb.state);
@@ -228,7 +232,7 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t t, 
     if (state != WL_KEYBOARD_KEY_STATE_PRESSED || nkey_q >= 32) return;
     if (xkb.state) {
         char buf[8] = {0};
-        if (xkb.key_get_utf8(xkb.state, key + 8, buf, sizeof(buf)) == 1) key_q[nkey_q++] = (unsigned char)buf[0];
+        if (xkb.key_get_utf8(xkb.state, key + 8, buf, sizeof(buf)) == 1) key_q[nkey_q++] = (unsigned char)buf[0]; // xkb keycodes are evdev + 8
         return;
     }
     if (key >= sizeof(map) - 1 || !map[key]) return;
@@ -262,6 +266,8 @@ static void seat_caps(void *d, struct wl_seat *s, uint32_t caps)
 static void seat_name(void *d, struct wl_seat *s, const char *n) {}
 static const struct wl_seat_listener seat_listener = {seat_caps, seat_name};
 
+static void add_layer(WlOut *o);
+static void sync_outputs(void);
 static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char *iface, uint32_t version)
 {
     if (!strcmp(iface, wl_compositor_interface.name)) {
@@ -271,22 +277,72 @@ static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char
     } else if (!strcmp(iface, zwlr_layer_shell_v1_interface.name)) {
         layer_shell = wl_registry_bind(r, name, &zwlr_layer_shell_v1_interface, version < 4 ? version : 4);
     } else if (!strcmp(iface, zwlr_screencopy_manager_v1_interface.name)) {
-        screencopy_version = version < 3 ? version : 3;
+        screencopy_version = version < 3 ? version : 3; // v3 has buffer_done and the dmabuf offers
         screencopy = wl_registry_bind(r, name, &zwlr_screencopy_manager_v1_interface, screencopy_version);
     } else if (!strcmp(iface, zxdg_output_manager_v1_interface.name)) {
         xdg_output_mgr = wl_registry_bind(r, name, &zxdg_output_manager_v1_interface, version < 3 ? version : 3);
     } else if (!strcmp(iface, wl_seat_interface.name) && !seat) {
         seat = wl_registry_bind(r, name, &wl_seat_interface, version < 5 ? version : 5);
         wl_seat_add_listener(seat, &seat_listener, NULL);
-    } else if (!strcmp(iface, wl_output_interface.name) && nouts < MAX_OUTPUTS) {
-        WlOut *o = &outs[nouts++];
+    } else if (!strcmp(iface, wl_output_interface.name)) {
+        int i = 0;
+        while (i < nouts && outs[i].alive) i++; // reuse an unplugged slot so the other indexes dont move
+        if (i >= MAX_OUTPUTS) return;
+        if (i == nouts) nouts++;
+        WlOut *o = &outs[i];
         memset(o, 0, sizeof(*o));
+        o->cap_state = -1;
+        o->alive = 1;
         o->global_name = name;
         o->output = wl_registry_bind(r, name, &wl_output_interface, version < 3 ? version : 3);
         snprintf(o->name, sizeof(o->name), "output-%u", name);
+        if (inited > 0) { // hotplug, the ones there at startup get xdg_output in init
+            if (xdg_output_mgr) {
+                o->xdg = zxdg_output_manager_v1_get_xdg_output(xdg_output_mgr, o->output);
+                zxdg_output_v1_add_listener(o->xdg, &xo_listener, o);
+            }
+            if (live_ov) add_layer(o);
+            sync_outputs();
+            fprintf(stderr, "new screen plugged in\n");
+        }
     }
 }
-static void reg_remove(void *d, struct wl_registry *r, uint32_t name) {}
+static void drop_layer(WlOut *o)
+{
+    if (ptr_surface && ptr_surface == o->surface) ptr_surface = NULL;
+    if (o->layer) zwlr_layer_surface_v1_destroy(o->layer); // role object goes before its wl_surface
+    if (o->surface) wl_surface_destroy(o->surface);
+    o->layer = NULL;
+    o->surface = NULL;
+    o->configured = 0;
+    free_shm(&o->draw[0]);
+    free_shm(&o->draw[1]);
+    free(o->canvas_px);
+    o->canvas_px = NULL;
+    o->cw = o->ch = 0;
+    memset(&o->canvas, 0, sizeof(o->canvas));
+}
+static void reg_remove(void *d, struct wl_registry *r, uint32_t name)
+{
+    for (int i = 0; i < nouts; i++) {
+        WlOut *o = &outs[i];
+        if (!o->alive || o->global_name != name) continue;
+        if (o->frame) zwlr_screencopy_frame_v1_destroy(o->frame); // a late frame event would land on the zeroed slot
+        drop_layer(o);
+        if (o->xdg) zxdg_output_v1_destroy(o->xdg);
+        if (wl_output_get_version(o->output) >= 3) wl_output_release(o->output);
+        else wl_output_destroy(o->output);
+        free_shm(&o->cap);
+        free(o->flip);
+        free(o->conv);
+        memset(o, 0, sizeof(*o));
+        o->cap_state = -1;
+        while (nouts && !outs[nouts - 1].alive) nouts--;
+        sync_outputs();
+        fprintf(stderr, "a screen got unplugged\n");
+        return;
+    }
+}
 static const struct wl_registry_listener reg_listener = {reg_global, reg_remove};
 
 int backend_wl_init_shared(void)
@@ -301,11 +357,12 @@ int backend_wl_init_shared(void)
     if (!compositor || !shm || !nouts) return 0;
     if (xdg_output_mgr)
         for (int i = 0; i < nouts; i++) {
+            if (!outs[i].alive) continue;
             outs[i].xdg = zxdg_output_manager_v1_get_xdg_output(xdg_output_mgr, outs[i].output);
             zxdg_output_v1_add_listener(outs[i].xdg, &xo_listener, &outs[i]);
         }
     wl_display_roundtrip(dpy);
-    wl_display_roundtrip(dpy);
+    wl_display_roundtrip(dpy); // seat caps and keymap come in after the first one
     inited = 1;
     return 1;
 }
@@ -329,7 +386,7 @@ static void fr_buffer(void *d, struct zwlr_screencopy_frame_v1 *f, uint32_t fmt,
     o->cap_w = (int)w;
     o->cap_h = (int)h;
     o->cap_stride = (int)stride;
-    if (screencopy_version < 3) {
+    if (screencopy_version < 3) { // no buffer_done before v3, copy right away
         if (o->cap.w != (int)w || o->cap.h != (int)h || o->cap.format != fmt || o->cap.stride != (int)stride) {
             free_shm(&o->cap);
             if (!make_shm(&o->cap, (int)w, (int)h, (int)stride, fmt)) {
@@ -344,7 +401,7 @@ static void fr_flags(void *d, struct zwlr_screencopy_frame_v1 *f, uint32_t flags
 {
     ((WlOut *)d)->y_invert = flags & ZWLR_SCREENCOPY_FRAME_V1_FLAGS_Y_INVERT;
 }
-static void fr_ready(void *d, struct zwlr_screencopy_frame_v1 *f, uint32_t a, uint32_t b, uint32_t c)
+static void fr_ready(void *d, struct zwlr_screencopy_frame_v1 *f, uint32_t a, uint32_t b, uint32_t c) // a b c = timestamp, dont care
 {
     WlOut *o = d;
     o->cap_state = 1;
@@ -359,7 +416,7 @@ static void fr_failed(void *d, struct zwlr_screencopy_frame_v1 *f)
     o->frame = NULL;
     if (!o->warned++) fprintf(stderr, "the compositor wont let me grab %s\n", o->name);
 }
-static void fr_damage(void *d, struct zwlr_screencopy_frame_v1 *f, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {}
+static void fr_damage(void *d, struct zwlr_screencopy_frame_v1 *f, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {} // only with copy_with_damage
 static void fr_dmabuf(void *d, struct zwlr_screencopy_frame_v1 *f, uint32_t fmt, uint32_t w, uint32_t h) {}
 static void fr_buffer_done(void *d, struct zwlr_screencopy_frame_v1 *f)
 {
@@ -370,7 +427,7 @@ static void fr_buffer_done(void *d, struct zwlr_screencopy_frame_v1 *f)
             fprintf(stderr, "%s only offers screen formats i cant read:", o->name);
             for (int i = 0; i < o->noffered; i++) {
                 uint32_t f = o->offered[i];
-                if (f <= 1) fprintf(stderr, " %s", f ? "XRGB8888" : "ARGB8888");
+                if (f <= 1) fprintf(stderr, " %s", f ? "XRGB8888" : "ARGB8888"); // those two are 0 and 1 in wl_shm, not fourcc
                 else fprintf(stderr, " %.4s", (char *)&f);
             }
             fprintf(stderr, "\n");
@@ -411,27 +468,45 @@ static int dispatch_for(int timeout_ms)
     return r;
 }
 
+static void sync_outputs(void)
+{
+    if (live_cap) {
+        live_cap->nout = nouts;
+        for (int i = 0; i < MAX_OUTPUTS; i++) {
+            int on = i < nouts && outs[i].alive;
+            snprintf(live_cap->out[i].name, 64, "%s", on ? outs[i].name : "gone");
+            if (!on) live_cap->out[i].have_frame = 0;
+        }
+    }
+    if (live_ov) live_ov->ncanvas = nouts;
+}
+
 static int wl_cap_init(Backend *b)
 {
     if (!backend_wl_init_shared() || !screencopy) return 0;
-    b->nout = nouts;
-    for (int i = 0; i < nouts; i++) snprintf(b->out[i].name, 64, "%s", outs[i].name);
+    live_cap = b;
+    sync_outputs();
     return 1;
 }
 
 static int wl_capture(Backend *b)
 {
+    sync_outputs();
     for (int i = 0; i < nouts; i++) {
         WlOut *o = &outs[i];
+        if (!o->alive) {
+            o->cap_state = -1;
+            continue;
+        }
         o->cap_state = 0;
         o->cap_format = 0;
         o->have_format = 0;
         o->noffered = 0;
         o->y_invert = 0;
-        o->frame = zwlr_screencopy_manager_v1_capture_output(screencopy, 0, o->output);
+        o->frame = zwlr_screencopy_manager_v1_capture_output(screencopy, 0, o->output); // 0 = no cursor
         zwlr_screencopy_frame_v1_add_listener(o->frame, &fr_listener, o);
     }
-    long deadline = now_ms() + 600;
+    long deadline = now_ms() + 600; // a screen thats asleep may never answer
     for (;;) {
         int pending = 0;
         for (int i = 0; i < nouts; i++)
@@ -449,7 +524,12 @@ static int wl_capture(Backend *b)
     for (int i = 0; i < nouts; i++) {
         WlOut *o = &outs[i];
         Output *bo = &b->out[i];
-        if (o->frame) {
+        if (!o->alive) {
+            bo->have_frame = 0;
+            bo->logical = (Rect){0, 0, 0, 0};
+            continue;
+        }
+        if (o->frame) { // timed out, a late copy cant write into cap now
             zwlr_screencopy_frame_v1_destroy(o->frame);
             o->frame = NULL;
         }
@@ -459,7 +539,7 @@ static int wl_capture(Backend *b)
             continue;
         }
         uint8_t *px = o->cap.data;
-        if (o->y_invert) {
+        if (o->y_invert) { // row 0 is the bottom
             size_t sz = (size_t)o->cap_stride * o->cap_h;
             o->flip = realloc(o->flip, sz);
             for (int y = 0; y < o->cap_h; y++)
@@ -467,7 +547,7 @@ static int wl_capture(Backend *b)
                        (size_t)o->cap_stride);
             px = o->flip;
         }
-        int stride = o->cap_stride, bgr = o->cap_format == WL_SHM_FORMAT_XRGB8888 || o->cap_format == WL_SHM_FORMAT_ARGB8888;
+        int stride = o->cap_stride, bgr = o->cap_format == WL_SHM_FORMAT_XRGB8888 || o->cap_format == WL_SHM_FORMAT_ARGB8888; // XRGB8888 is B G R X in memory
         if (is_10bit(o->cap_format)) { // 10 bit laptop panels
             int rb = o->cap_format == WL_SHM_FORMAT_XRGB2101010 || o->cap_format == WL_SHM_FORMAT_ARGB2101010;
             o->conv = realloc(o->conv, (size_t)o->cap_w * o->cap_h * 4);
@@ -476,7 +556,7 @@ static int wl_capture(Backend *b)
                 uint8_t *dst = o->conv + (size_t)y * o->cap_w * 4;
                 for (int x = 0; x < o->cap_w; x++) {
                     uint32_t v = src[x];
-                    uint8_t hi = (uint8_t)(v >> 22), mid = (uint8_t)(v >> 12), lo = (uint8_t)(v >> 2);
+                    uint8_t hi = (uint8_t)(v >> 22), mid = (uint8_t)(v >> 12), lo = (uint8_t)(v >> 2); // top 8 of each 10
                     dst[x * 4 + 0] = rb ? lo : hi;
                     dst[x * 4 + 1] = mid;
                     dst[x * 4 + 2] = rb ? hi : lo;
@@ -518,31 +598,35 @@ static void ls_configure(void *d, struct zwlr_layer_surface_v1 *l, uint32_t seri
 }
 static void ls_closed(void *d, struct zwlr_layer_surface_v1 *l)
 {
-    ((WlOut *)d)->configured = 0;
+    drop_layer(d); // wl_commit puts it back if the output is still there
 }
 static const struct zwlr_layer_surface_v1_listener ls_listener = {ls_configure, ls_closed};
+
+static void add_layer(WlOut *o)
+{
+    o->surface = wl_compositor_create_surface(compositor);
+    o->layer = zwlr_layer_shell_v1_get_layer_surface(layer_shell, o->surface, o->output,
+                                                     ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "open-chease");
+    zwlr_layer_surface_v1_add_listener(o->layer, &ls_listener, o);
+    zwlr_layer_surface_v1_set_anchor(o->layer, 15); // all 4 edges
+    zwlr_layer_surface_v1_set_exclusive_zone(o->layer, -1); // or waybar pushes it around
+    zwlr_layer_surface_v1_set_keyboard_interactivity(o->layer, kb_on); // 1 = exclusive, eats every key
+    zwlr_layer_surface_v1_set_size(o->layer, 0, 0); // 0x0 + anchors = whole output
+    struct wl_region *empty = wl_compositor_create_region(compositor);
+    wl_surface_set_input_region(o->surface, empty);
+    wl_region_destroy(empty);
+    wl_surface_commit(o->surface); // no buffer yet, this just asks for the first configure
+}
 
 static int wl_ov_init(Overlay *ov, Backend *cap)
 {
     if (!backend_wl_init_shared() || !layer_shell) return 0;
-    for (int i = 0; i < nouts; i++) {
-        WlOut *o = &outs[i];
-        o->surface = wl_compositor_create_surface(compositor);
-        o->layer = zwlr_layer_shell_v1_get_layer_surface(layer_shell, o->surface, o->output,
-                                                         ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "open-chease");
-        zwlr_layer_surface_v1_add_listener(o->layer, &ls_listener, o);
-        zwlr_layer_surface_v1_set_anchor(o->layer, 15); // all 4 edges
-        zwlr_layer_surface_v1_set_exclusive_zone(o->layer, -1); // or waybar pushes it around
-        zwlr_layer_surface_v1_set_keyboard_interactivity(o->layer, 0);
-        zwlr_layer_surface_v1_set_size(o->layer, 0, 0);
-        struct wl_region *empty = wl_compositor_create_region(compositor);
-        wl_surface_set_input_region(o->surface, empty);
-        wl_region_destroy(empty);
-        wl_surface_commit(o->surface);
-    }
+    for (int i = 0; i < nouts; i++)
+        if (outs[i].alive) add_layer(&outs[i]);
+    live_ov = ov;
     wl_display_roundtrip(dpy);
-    wl_display_roundtrip(dpy);
-    ov->ncanvas = nouts;
+    wl_display_roundtrip(dpy); // wait for the configures
+    sync_outputs();
     return 1;
 }
 
@@ -555,7 +639,7 @@ static Canvas *wl_canvas(Overlay *ov, int i)
     o->canvas.h = o->ch;
     o->canvas.ox = o->lx;
     o->canvas.oy = o->ly;
-    o->canvas.scale = 1;
+    o->canvas.scale = 1; // logical px, never set a buffer scale
     return &o->canvas;
 }
 
@@ -563,9 +647,11 @@ static void wl_commit(Overlay *ov, const Rect *hits, int nhits)
 {
     for (int i = 0; i < nouts; i++) {
         WlOut *o = &outs[i];
+        if (o->alive && !o->layer && live_ov) add_layer(o);
         if (!o->configured || !o->canvas_px) continue;
         ShmBuf *b = NULL;
         int x0, y0, x1, y1, dmg = canvas_damage(&o->canvas, &x0, &y0, &x1, &y1), bi = 0;
+        // both buffers need it, the other one is a frame behind
         for (int k = 0; k < 2 && dmg; k++) {
             int *q = o->pend[k];
             if (q[2] <= q[0]) q[0] = x0, q[1] = y0, q[2] = x1, q[3] = y1;
@@ -575,14 +661,14 @@ static void wl_commit(Overlay *ov, const Rect *hits, int nhits)
             if (y1 > q[3]) q[3] = y1;
         }
         for (int k = 0; k < 2; k++) {
-            if (!o->draw[k].buf && make_shm(&o->draw[k], o->cw, o->ch, o->cw * 4, WL_SHM_FORMAT_ARGB8888)) o->pend_all[k] = 1;
+            if (!o->draw[k].buf && make_shm(&o->draw[k], o->cw, o->ch, o->cw * 4, WL_SHM_FORMAT_ARGB8888)) o->pend_all[k] = 1; // new buffer never saw the old frames
             if (o->draw[k].buf && !o->draw[k].busy) {
                 b = &o->draw[k];
                 bi = k;
                 break;
             }
         }
-        if (!b) continue;
+        if (!b) continue; // both still held, next commit then
         int *q = o->pend[bi], full = o->pend_all[bi], qx = q[0], qy = q[1], qw = q[2] - q[0], qh = q[3] - q[1];
         if (full)
             memcpy(b->data, o->canvas_px, (size_t)o->cw * o->ch * 4);
@@ -592,7 +678,7 @@ static void wl_commit(Overlay *ov, const Rect *hits, int nhits)
         q[0] = q[1] = q[2] = q[3] = 0;
         o->pend_all[bi] = 0;
         b->busy = 1;
-        struct wl_region *region = wl_compositor_create_region(compositor);
+        struct wl_region *region = wl_compositor_create_region(compositor); // only the buttons take clicks, the rest falls through to the game
         for (int h = 0; h < nhits; h++)
             wl_region_add(region, (int)(hits[h].x - o->lx), (int)(hits[h].y - o->ly), (int)hits[h].w, (int)hits[h].h);
         wl_surface_set_input_region(o->surface, region);
@@ -637,10 +723,11 @@ static int wl_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
 
 static void wl_keyboard_mode(Overlay *ov, int on)
 {
+    kb_on = on;
     for (int i = 0; i < nouts; i++) {
         if (!outs[i].layer) continue;
         zwlr_layer_surface_v1_set_keyboard_interactivity(outs[i].layer, on ? 1 : 0);
-        wl_surface_commit(outs[i].surface);
+        wl_surface_commit(outs[i].surface); // double buffered, needs a commit
     }
     nkey_q = 0;
     wl_display_flush(dpy);

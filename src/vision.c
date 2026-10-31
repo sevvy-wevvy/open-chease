@@ -65,7 +65,7 @@ static double score_board(const Frame *f, double bx, double by, double s, const 
                           int (*masked)(void *, int, int), void *mctx, int *outside_penalty, int soft)
 {
     int pr = (int)fmax(1, s * 0.035), sep = cdiff(light, dark);
-    static const double pts[5][2] = {{0.17, 0.17}, {0.83, 0.17}, {0.17, 0.83}, {0.83, 0.83}, {0.5, 0.15}};
+    static const double pts[5][2] = {{0.17, 0.17}, {0.83, 0.17}, {0.17, 0.83}, {0.83, 0.83}, {0.5, 0.15}}; // near the corners, pieces mostly sit in the middle
     int ok = 0;
     for (int r = 0; r < 8; r++)
         for (int c = 0; c < 8; c++) {
@@ -96,9 +96,9 @@ static double score_board(const Frame *f, double bx, double by, double s, const 
                 else if (cdiff(px, other) < 42)
                     bad++;
             }
-            if (!valid && !bad)
+            if (!valid && !bad) // all under our overlay, dont punish it
                 ok++;
-            else if (good >= 2 && good > bad)
+            else if (good >= 2 && good > bad) // a piece or highlight can eat a couple
                 ok++;
         }
     // checkers keep going past the edge? then we're a row off
@@ -154,7 +154,7 @@ static double edge_strength_v(const Frame *f, const Board *bd, int x, int y0, in
         if (is_flip(a, b, bd)) sum += 1;
         else if (x - 2 - o >= 0) {
             rgb(f, x - 2 - o, y, a2);
-            if (is_flip(a2, b, bd)) sum += 0.5;
+            if (is_flip(a2, b, bd)) sum += 0.5; // blurry edge, one more px out
         }
     }
     return sum;
@@ -187,7 +187,7 @@ static int line_fit(const double *ks, const double *vs, const double *str, doubl
         if (str[i] > mx) mx = str[i];
     double n = 0, sk = 0, skk = 0, sv = 0, skv = 0;
     for (int i = 0; i < 7; i++) {
-        if (str[i] < mx * 0.25) continue;
+        if (str[i] < mx * 0.25) continue; // lines mostly behind pieces dont get a vote
         n++, sk += ks[i], skk += ks[i] * ks[i], sv += vs[i], skv += ks[i] * vs[i];
     }
     double den = n * skk - sk * sk;
@@ -205,6 +205,7 @@ static double plateau_mid(const double *es, int win, double *best)
     *best = es[bi];
     if (es[bi] <= 0) return 0;
     int lo = bi, hi = bi;
+    // smeared edges give a wide flat peak, take the middle
     while (lo > 0 && es[lo - 1] >= es[bi] * 0.95) lo--;
     while (hi < 2 * win && es[hi + 1] >= es[bi] * 0.95) hi++;
     return (lo + hi) / 2.0 - win;
@@ -229,7 +230,7 @@ static void refine(const Frame *f, Board *b)
     int okx = line_fit(ks, xs, sx_, s, &slope_x, &icpt_x), oky = line_fit(ks, ys, sy_, s, &slope_y, &icpt_y);
     if (!okx && !oky) return;
     double ns = okx && oky ? (slope_x + slope_y) / 2 : okx ? slope_x : slope_y;
-    if (fabs(ns - s) >= s * 0.08) return;
+    if (fabs(ns - s) >= s * 0.08) return; // 8% off is a bad fit not a better one
     b->s = ns;
     if (okx) b->x = icpt_x;
     if (oky) b->y = icpt_y;
@@ -277,11 +278,11 @@ static int find_chains(const Frame *f, Chain *chains, int maxc, const Rect *igno
             double L = r0->len;
             for (int j = i + 1; j < ns; j++) {
                 Run *prev = &runs[idx[last]], *cur = &runs[idx[j]];
-                if (cur->start - (prev->start + prev->len) > 3 + L * 0.04) break;
+                if (cur->start - (prev->start + prev->len) > 3 + L * 0.04) break; // antialiased seam between squares
                 double tol = L * 0.08 + 3;
                 if (fabs(cur->len - L) > tol) break;
                 if (cdiff(cur->c, prev->c) < 45) break;
-                if (n >= 2 && cdiff(cur->c, runs[idx[last - 1]].c) > 40) break;
+                if (n >= 2 && cdiff(cur->c, runs[idx[last - 1]].c) > 40) break; // a b a b, every second one has to match
                 n++;
                 last = j;
                 if (n > 8) break;
@@ -317,7 +318,7 @@ static int find_chains_soft(const Frame *f, Chain *chains, int maxc, const Rect 
         for (int k = 0; k < 3; k++) pre[k] = 0;
         for (int x = 0; x < W; x++) {
             int acc[3] = {0, 0, 0};
-            for (int dy = -2; dy <= 2; dy++) {
+            for (int dy = -2; dy <= 2; dy++) { // 5 rows blurred so wood grain doesnt split a square
                 uint8_t px[3];
                 rgb(f, x, y + dy, px);
                 for (int k = 0; k < 3; k++) acc[k] += px[k];
@@ -338,6 +339,7 @@ static int find_chains_soft(const Frame *f, Chain *chains, int maxc, const Rect 
             if (ed[x] < 60) continue;
             int peak = 1;
             for (int d = -3; d <= 3 && peak; d++)
+                // only the local max, grain makes lots of small bumps
                 if (d && (ed[x + d] > ed[x] || (ed[x + d] == ed[x] && d < 0))) peak = 0;
             if (peak && x - cut[nc - 1] >= 4) cut[nc++] = x;
         }
@@ -347,7 +349,7 @@ static int find_chains_soft(const Frame *f, Chain *chains, int maxc, const Rect 
             int a = cut[i], b = cut[i + 1], len = b - a;
             runs[nr].start = a;
             runs[nr].len = len;
-            int m0 = a + len / 5, m1 = b - len / 5, acc[3] = {0, 0, 0}, n = 0;
+            int m0 = a + len / 5, m1 = b - len / 5, acc[3] = {0, 0, 0}, n = 0; // middle of the run, the ends are blurry
             for (int x = m0; x < m1; x++, n++)
                 for (int k = 0; k < 3; k++) acc[k] += sm[x * 3 + k];
             for (int k = 0; k < 3; k++) runs[nr].c[k] = (uint8_t)(n ? acc[k] / n : sm[a * 3 + k]);
@@ -423,7 +425,7 @@ static int find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
                 if (!same_colors(&chains[i], &chains[j], soft ? 70 : 40)) continue;
                 double dist = abs(chains[j].x0 - chains[i].x0);
                 double ph = dist - floor(dist / chains[i].pitch) * chains[i].pitch;
-                if (ph > 4 && ph < chains[i].pitch - 4) continue;
+                if (ph > 4 && ph < chains[i].pitch - 4) continue; // same grid, just offset by whole squares
                 support += chains[j].n;
             }
             w += support;
@@ -444,7 +446,7 @@ static int find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
         if (cdiff(light, dark) < 45) continue;
         double lo_score = 0;
         Board cand = {0};
-        int coarse = (int)fmax(1, s / 8);
+        int coarse = (int)fmax(1, s / 8); // coarse first, then 1px around the best
         for (int i = 0; i < 8; i++) {
             double bx = ch->x0 - i * s;
             if (bx < -s * 0.5 || bx + 8 * s > f->w + s * 0.5) continue;
@@ -478,7 +480,7 @@ static int find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
             best_score = sc;
             best = cand;
         }
-        if (best_score >= 60) break;
+        if (best_score >= 60) break; // good enough, dont bother with the other chains
     }
     free(chains);
     if (best_score >= 52 && best.s * 8 >= 150) { // 52/64, room for highlights + check glow
@@ -507,7 +509,7 @@ static int textured(const Frame *f, const Board *b)
             }
     int acc = 0, v = 0;
     while (v < 765 && (acc += h[v]) <= n / 2) v++;
-    return v > 10;
+    return v > 10; // median off by more than 10 = wood/marble, read it soft
 }
 
 int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignore, int (*masked)(void *, int, int),
@@ -520,7 +522,7 @@ int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
         return 1;
     }
     int sc = out->score;
-    if (misses++ % 3 == 0 && find_board(f, out, ignore, nignore, masked, mctx, 1)) {
+    if (misses++ % 3 == 0 && find_board(f, out, ignore, nignore, masked, mctx, 1)) { // blurred pass is slow, only every 3rd miss
         misses = 0;
         return 1;
     }
@@ -533,6 +535,7 @@ int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), voi
     double sc = score_board(f, b->x, b->y, b->s, b->light, b->dark, masked, mctx, NULL, b->soft);
     b->score = (int)sc;
     if (sc >= 46) return 1;
+    // square colors changed? still a board if the checker pattern holds
     static const double pts[4][2] = {{0.12, 0.12}, {0.88, 0.12}, {0.12, 0.88}, {0.88, 0.88}};
     double sum[2][3] = {{0}}, cnt[2] = {0};
     uint8_t smp[64][3];
@@ -552,7 +555,7 @@ int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), voi
             for (int a = 0; a < votes; a++) {
                 int m = 0;
                 for (int k = 0; k < votes; k++) m += cdiff(cols[a], cols[k]) < 30;
-                if (m > bn) bn = m, bi = a;
+                if (m > bn) bn = m, bi = a; // most common of the 4, a piece edge can hit one
             }
             memcpy(smp[r * 8 + c], cols[bi], 3);
             have[r * 8 + c] = 1;
@@ -610,8 +613,9 @@ static double piece_fill_lum(const Frame *f, double x0, double y0, double s, con
             int mn = px[0] < px[1] ? (px[0] < px[2] ? px[0] : px[2]) : (px[1] < px[2] ? px[1] : px[2]);
             int reddish = px[0] - px[1] > 15 && px[0] - px[2] > 15; // check glow makes the king look black
             int glow = reddish && px[1] < px[0] * 0.55;
-            lm[(j + 1) * W + i + 1] = (soft_colors ? glow : (mx - mn > 30 || reddish)) ? 128 : (uint8_t)lum(px);
+            lm[(j + 1) * W + i + 1] = (soft_colors ? glow : (mx - mn > 30 || reddish)) ? 128 : (uint8_t)lum(px); // 128 = no vote either way
         }
+    // flood the bg in from the border, whats left is the piece plus its insides
     int sp = 0;
     stack[sp++] = 0;
     m[0] = 2;
@@ -656,6 +660,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
     double s = b->s;
     float lums[64];
     int occ[64], board_nz = 0;
+    // how noisy the texture is over the whole board, the thresholds below scale off it
     if (b->soft) {
         int per[64], np = 0, pr = (int)fmax(1, s * 0.025);
         for (int r = 0; r < 8; r++)
@@ -723,7 +728,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                         continue;
                     }
                     if (masked && masked(mctx, (int)x, (int)y)) continue;
-                    if (b->soft && ((c == 0 && k == 0) || (r == 7 && k == 3))) continue;
+                    if (b->soft && ((c == 0 && k == 0) || (r == 7 && k == 3))) continue; // coordinate labels
                     if (b->soft)
                         patch(f, x, y, (int)fmax(1, s * 0.02), cc[k]);
                     else
@@ -742,6 +747,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                         int dl = cdiff(cc[k], b->light), dd = cdiff(cc[k], b->dark);
                         off[k] = (dl < dd ? dl : dd) > fmax(sep * 0.6, 110);
                     }
+                    // a straight edge cuts the square, something is on top of the board
                     if ((off[0] && off[1] && !off[2] && !off[3] && SAME(0, 1)) || (off[2] && off[3] && !off[0] && !off[1] && SAME(2, 3)) ||
                         (off[0] && off[2] && !off[1] && !off[3] && SAME(0, 2)) || (off[1] && off[3] && !off[0] && !off[2] && SAME(1, 3)))
                         hid = 1;
@@ -765,7 +771,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             }
             int nbase = 0;
             for (int i = 0; i < nring; i++) nbase += cdiff(ring[i], base) < 30;
-            if (bestn < nring / 4 || nbase * 8 >= nring) memcpy(bg, base, 3);
+            if (bestn < nring / 4 || nbase * 8 >= nring) memcpy(bg, base, 3); // only trust the ring color if the theme color is basically gone (last move tint)
             int fthr = 60, sthr = 40;
             if (b->soft && nring) {
                 for (int k = 0; k < 3; k++) {
@@ -783,10 +789,10 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                         dev[b2 - 1] = t;
                     }
                 int nz = dev[nd * 2 / 5] > board_nz ? dev[nd * 2 / 5] : board_nz;
-                fthr = (int)fmax(60, nz * 2.2);
+                fthr = (int)fmax(60, nz * 2.2); // noisier wood needs a bigger gap
                 sthr = (int)fmax(40, nz * 1.6);
             }
-            out->highlighted[sq] = cdiff(bg, base) > (b->soft ? 70 : 45);
+            out->highlighted[sq] = cdiff(bg, base) > (b->soft ? 70 : 45); // tracker guesses whose turn it is from these
             int fg = 0, valid = 0, covered = 0;
             uint8_t cell_lum[FEAT_N * FEAT_N];
             for (int gy = 0; gy < FEAT_N; gy++)
@@ -807,7 +813,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                             cell_lum[gy * FEAT_N + gx] = (uint8_t)lum(px);
                         }
                     } else {
-                        v = 0.5f;
+                        v = 0.5f; // unknown, similarity() skips it
                         covered++;
                     }
                     int lft = gx < 6, rgt = gx >= FEAT_N - 6, top = gy < 7, bot = gy >= FEAT_N - 7;
@@ -821,6 +827,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             for (int gy = 1; gy < FEAT_N - 1; gy++)
                 for (int gx = 1; gx < FEAT_N - 1; gx++) {
                     int i = gy * FEAT_N + gx;
+                    // inner cells only, outlines are dark on both colors
                     if (mk[i] == 1 && mk[i - 1] == 1 && mk[i + 1] == 1 && mk[i - FEAT_N] == 1 && mk[i + FEAT_N] == 1) {
                         hist[cell_lum[i]]++;
                         nh++;
@@ -849,7 +856,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                         }
                 int bw = x1b - x0b + 1, bh = y1b - y0b + 1;
                 double cx = (x0b + x1b) / 2.0, cy = (y0b + y1b) / 2.0;
-                if (bw <= 12 && bh <= 12 && fabs(cx - 11.5) <= 3 && fabs(cy - 11.5) <= 3) {
+                if (bw <= 12 && bh <= 12 && fabs(cx - 11.5) <= 3 && fabs(cy - 11.5) <= 3) { // legal move dot, not a piece
                     occ[sq] = 0;
                     out->occ_frac[sq] = 0;
                 }
@@ -878,7 +885,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             double score = gap * bal * pull;
             if (score > best) best = score, thr = mid;
         }
-        if (vals[n - 1] - vals[0] < 25) {
+        if (vals[n - 1] - vals[0] < 25) { // one blob of grey? maybe recolored pieces, retry without dropping the colored pixels
             if (!soft_colors && n >= 4 && color_thr <= 0) {
                 soft_colors = 1;
                 vision_read(f, b, white_bottom, color_thr, out, masked, mctx);

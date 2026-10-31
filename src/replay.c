@@ -7,10 +7,10 @@
 static const char *dir;
 static Canvas canvas;
 static int frame_no;
-static uint8_t *buf;
+static uint8_t *buf; // bgrx like a real grab
 static int bw, bh;
 
-int replay_frame(void) { return frame_no; }
+int replay_frame(void) { return frame_no; } // already bumped by rp_capture
 
 static int load(int n)
 {
@@ -33,7 +33,7 @@ static int load(int n)
         }
     }
     if (nv == 3) w = vals[0], h = vals[1], mx = vals[2];
-    if (w <= 0 || h <= 0 || w > 16384 || h > 16384 || mx != 255) {
+    if (w <= 0 || h <= 0 || w > 16384 || h > 16384 || mx != 255) { // 8 bit only
         fclose(f);
         return 0;
     }
@@ -74,7 +74,7 @@ static int rp_init(Backend *b)
     if (!load(0)) return 0;
     b->nout = 1;
     snprintf(b->out[0].name, sizeof(b->out[0].name), "replay");
-    b->out[0].logical = (Rect){0, 0, bw, bh};
+    b->out[0].logical = (Rect){0, 0, bw, bh}; // always 1x
     return 1;
 }
 
@@ -118,7 +118,7 @@ static int ro_init(Overlay *ov, Backend *cap)
 static Canvas *ro_canvas(Overlay *ov, int i) { return i == 0 ? &canvas : NULL; }
 static void ro_commit(Overlay *ov, const Rect *hits, int nhits)
 {
-    const char *shots = getenv("OPEN_CHEASE_SHOTS");
+    const char *shots = getenv("OPEN_CHEASE_SHOTS"); // frame + overlay like the user would see it
     if (!shots || !buf || canvas.w != bw || canvas.h != bh) return;
     char path[1024];
     snprintf(path, sizeof(path), "%s/%06d.ppm", shots, frame_no - 1);
@@ -129,7 +129,7 @@ static void ro_commit(Overlay *ov, const Rect *hits, int nhits)
         uint32_t o = canvas.px[i], a = o >> 24;
         uint8_t px[3];
         for (int k = 0; k < 3; k++) {
-            int under = buf[i * 4 + 2 - k], over = (o >> (16 - 8 * k)) & 255;
+            int under = buf[i * 4 + 2 - k], over = (o >> (16 - 8 * k)) & 255; // buf is bgr, ppm wants rgb
             px[k] = (uint8_t)(over + under * (255 - a) / 255);
         }
         fwrite(px, 1, 3, f);
@@ -150,7 +150,7 @@ static int ro_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
         while (*c >= '0' && *c <= '9') n = n * 10 + *c++ - '0';
         if (*c == ':' && n == kframe) kp = c + 1;
     }
-    if (kp && *kp) {
+    if (kp && *kp) { // one char per call, like real key events
         char ch = *kp++;
         ov->key = ch == '^' ? 8 : ch == '~' ? 27 : ch;
         return 2;

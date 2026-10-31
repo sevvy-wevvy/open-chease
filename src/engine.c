@@ -17,7 +17,7 @@ static const u64 FILE_A = 0x0101010101010101ULL;
 
 static u64 knight_att[64], king_att[64], pawn_att[2][64];
 static u64 rays[8][64];
-static const int dir_step[8] = {8, -8, 1, -1, 9, 7, -7, -9};
+static const int dir_step[8] = {8, -8, 1, -1, 9, 7, -7, -9}; // n s e w ne nw se sw, a1 is 0
 static const int dir_df[8] = {0, 0, 1, -1, 1, -1, 1, -1};
 static const int dir_dr[8] = {1, -1, 0, 0, 1, 1, -1, -1};
 
@@ -39,7 +39,7 @@ static u64 ray_attacks(int d, int sq, u64 occ)
     u64 a = rays[d][sq];
     u64 b = a & occ;
     if (b) {
-        int s = dir_step[d] > 0 ? LSB(b) : MSB(b);
+        int s = dir_step[d] > 0 ? LSB(b) : MSB(b); // nearest blocker, rays going down hit it from the top
         a ^= rays[d][s];
     }
     return a;
@@ -61,7 +61,7 @@ typedef struct {
     uint16_t move16;
     int8_t depth;
     uint8_t flag;
-    uint16_t pad;
+    uint16_t pad; // 16 bytes
 } TTEntry;
 
 enum { TT_NONE, TT_EXACT, TT_LOWER, TT_UPPER };
@@ -71,7 +71,7 @@ static u64 tt_mask;
 void engine_tt_resize(int mb)
 {
     u64 n = 1;
-    while (n * 2 * sizeof(TTEntry) <= (u64)mb * 1024 * 1024) n *= 2;
+    while (n * 2 * sizeof(TTEntry) <= (u64)mb * 1024 * 1024) n *= 2; // power of 2 so the index is just key & mask
     free(tt);
     tt = calloc(n, sizeof(TTEntry));
     tt_mask = n - 1;
@@ -136,6 +136,7 @@ void engine_init(void)
     for (int i = 0; i < 8; i++) z_ep[i] = rnd64();
     z_side = rnd64();
     for (int s = 0; s < 64; s++) castle_mask[s] = 15;
+    // touching these squares kills the rights, bits are K Q k q
     castle_mask[4] = 15 & ~3;
     castle_mask[0] = 15 & ~2;
     castle_mask[7] = 15 & ~1;
@@ -204,7 +205,7 @@ void pos_finish_setup(Pos *p)
         if (p->sq[63] == PC(BLACK, ROOK)) c |= 4;
         if (p->sq[56] == PC(BLACK, ROOK)) c |= 8;
     }
-    p->castle &= c;
+    p->castle &= c; // fens love to claim rights the board cant have
     p->key = compute_key(p);
     p->nhist = 0;
 }
@@ -299,7 +300,7 @@ void pos_to_fen(const Pos *p, char *out)
 
 int pos_is_attacked(const Pos *p, int s, int by)
 {
-    if (pawn_att[by ^ 1][s] & p->bb[PC(by, PAWN)]) return 1;
+    if (pawn_att[by ^ 1][s] & p->bb[PC(by, PAWN)]) return 1; // other sides pawn pattern from s finds the pawns hitting it
     if (knight_att[s] & p->bb[PC(by, KNIGHT)]) return 1;
     if (king_att[s] & p->bb[PC(by, KING)]) return 1;
     u64 bq = p->bb[PC(by, BISHOP)] | p->bb[PC(by, QUEEN)];
@@ -330,7 +331,7 @@ int pos_make(Pos *p, Move m, Undo *u)
     if (p->nhist < 1024) p->hist[p->nhist] = p->key;
     p->nhist++;
 
-    p->key ^= z_castle[p->castle];
+    p->key ^= z_castle[p->castle]; // old rights and ep out, the new ones go back in at the end
     if (p->ep >= 0) p->key ^= z_ep[p->ep & 7];
     p->ep = -1;
     p->half++;
@@ -370,7 +371,7 @@ int pos_make(Pos *p, Move m, Undo *u)
     p->key ^= z_side;
     if (us == BLACK) p->fullmove++;
 
-    if (pos_in_check(p, us)) {
+    if (pos_in_check(p, us)) { // gen is pseudo legal, this is where illegal ones die
         pos_unmake(p, u);
         return 0;
     }
@@ -402,7 +403,7 @@ void pos_unmake(Pos *p, const Undo *u)
     p->castle = u->castle;
     p->ep = u->ep;
     p->half = u->half;
-    p->key = u->key;
+    p->key = u->key; // the piece moves above xor it around, saved one is the truth
     p->nhist--;
 }
 
@@ -413,7 +414,7 @@ static void make_null(Pos *p, Undo *u)
     u->half = p->half;
     if (p->nhist < 1024) p->hist[p->nhist] = p->key;
     p->nhist++;
-    if (p->ep >= 0) p->key ^= z_ep[p->ep & 7];
+    if (p->ep >= 0) p->key ^= z_ep[p->ep & 7]; // castling cant change on a pass, just ep and side
     p->ep = -1;
     p->side ^= 1;
     p->key ^= z_side;
@@ -443,7 +444,7 @@ static int gen_moves(const Pos *p, Move *out, int captures_only)
         pawns &= pawns - 1;
         int t = s + fwd;
         if (t >= 0 && t < 64 && !(occ & BIT(t))) {
-            if ((t >> 3) == promo_rank) {
+            if ((t >> 3) == promo_rank) { // queen push counts as noisy so qsearch gets it too
                 out[n++] = MK_MOVE(s, t, QUEEN, 0);
                 if (!captures_only) {
                     out[n++] = MK_MOVE(s, t, ROOK, 0);
@@ -494,6 +495,7 @@ static int gen_moves(const Pos *p, Move *out, int captures_only)
     if (!captures_only) {
         int k = us == WHITE ? 4 : 60;
         int kr = us == WHITE ? 1 : 4, qr = us == WHITE ? 2 : 8;
+        // not out of or through check. b1/b8 only has to be empty
         if ((p->castle & kr) && !(occ & (BIT(k + 1) | BIT(k + 2))) && !pos_is_attacked(p, k, them) &&
             !pos_is_attacked(p, k + 1, them) && !pos_is_attacked(p, k + 2, them))
             out[n++] = MK_MOVE(k, k + 2, 0, FL_CASTLE);
@@ -543,7 +545,7 @@ Move move_from_uci(Pos *p, const char *s)
     char buf[8];
     for (int i = 0; i < n; i++) {
         move_to_uci(moves[i], buf);
-        if (!strncmp(buf, s, strlen(buf)) && (s[strlen(buf)] == 0 || s[strlen(buf)] == ' ' || s[strlen(buf)] == '\n'))
+        if (!strncmp(buf, s, strlen(buf)) && (s[strlen(buf)] == 0 || s[strlen(buf)] == ' ' || s[strlen(buf)] == '\n')) // so e7e8 doesnt eat e7e8q
             return moves[i];
     }
     return 0;
@@ -634,7 +636,7 @@ int evaluate(const Pos *p)
             while (b) {
                 int s = LSB(b);
                 b &= b - 1;
-                int ix = c == WHITE ? s ^ 56 : s;
+                int ix = c == WHITE ? s ^ 56 : s; // flip the rank for white, black reads them as is
                 mg[c] += piece_val_mg[t] + pst_mg[t][ix];
                 eg[c] += piece_val_eg[t] + pst_eg[t][ix];
                 phase += phase_inc[t];
@@ -645,20 +647,20 @@ int evaluate(const Pos *p)
                     if (!(passed_mask[c][s] & their_pawns) && !(front_span[c][s] & my_pawns)) {
                         mg[c] += passed_mg[rel_rank];
                         eg[c] += passed_eg[rel_rank];
-                        if (front_span[c][s] & occ) eg[c] -= passed_eg[rel_rank] / 3;
+                        if (front_span[c][s] & occ) eg[c] -= passed_eg[rel_rank] / 3; // blocked, worth a lot less
                     }
-                    if (!(adj_files[f] & my_pawns)) {
+                    if (!(adj_files[f] & my_pawns)) { // isolated
                         mg[c] -= 8;
                         eg[c] -= 14;
                     }
-                    if (front_span[c][s] & my_pawns) {
+                    if (front_span[c][s] & my_pawns) { // doubled, only the back one pays
                         mg[c] -= 10;
                         eg[c] -= 20;
                     }
                     break;
                 case KNIGHT:
                     mob = knight_att[s] & ~own & ~enemy_pawn_att;
-                    mg[c] += 4 * (POP(mob) - 4);
+                    mg[c] += 4 * (POP(mob) - 4); // minus a normal count so avg mobility is about 0
                     eg[c] += 4 * (POP(mob) - 4);
                     break;
                 case BISHOP:
@@ -671,7 +673,7 @@ int evaluate(const Pos *p)
                     mg[c] += 2 * (POP(mob) - 7);
                     eg[c] += 4 * (POP(mob) - 7);
                     if (!(file_bb[f] & my_pawns)) {
-                        mg[c] += (file_bb[f] & their_pawns) ? 10 : 22;
+                        mg[c] += (file_bb[f] & their_pawns) ? 10 : 22; // half open vs fully open
                         eg[c] += (file_bb[f] & their_pawns) ? 4 : 10;
                     }
                     break;
@@ -682,7 +684,7 @@ int evaluate(const Pos *p)
                     break;
                 case KING: {
                     u64 shield = king_att[s] | BIT(s);
-                    shield = c == WHITE ? shield << 8 : shield >> 8;
+                    shield = c == WHITE ? shield << 8 : shield >> 8; // 3x3 box pushed one rank forward
                     mg[c] += 8 * POP(shield & my_pawns);
                     u64 zone = king_att[s];
                     int attackers = 0;
@@ -711,7 +713,7 @@ int evaluate(const Pos *p)
                         e &= e - 1;
                         if ((bishop_att(q, occ) | rook_att(q, occ)) & zone) attackers += 5;
                     }
-                    mg[c] -= attackers * attackers;
+                    mg[c] -= attackers * attackers; // squared, one attacker is nothing, 3 is scary
                     break;
                 }
                 }
@@ -726,7 +728,7 @@ int evaluate(const Pos *p)
     int us = p->side;
     int mgs = mg[us] - mg[us ^ 1], egs = eg[us] - eg[us ^ 1];
     int score = (mgs * phase + egs * (24 - phase)) / 24;
-    return score + 12;
+    return score + 12; // tempo
 }
 
 typedef struct {
@@ -759,7 +761,7 @@ static int is_repetition(const Pos *p)
 {
     int lim = p->nhist - p->half;
     if (lim < 0) lim = 0;
-    for (int i = p->nhist - 2; i >= lim; i -= 2)
+    for (int i = p->nhist - 2; i >= lim; i -= 2) // same side to move, nothing past the last capture or pawn push
         if (i < 1024 && p->hist[i] == p->key) return 1;
     return 0;
 }
@@ -769,15 +771,15 @@ static TTEntry *tt_probe(u64 key) { return &tt[key & tt_mask]; }
 static void tt_store(u64 key, int depth, int score, int flag, Move m, int ply)
 {
     TTEntry *e = &tt[key & tt_mask];
-    if (e->key == key && depth < e->depth - 2 && flag != TT_EXACT) return;
-    if (score > MATE_BOUND) score += ply;
+    if (e->key == key && depth < e->depth - 2 && flag != TT_EXACT) return; // already have it way deeper, keep that
+    if (score > MATE_BOUND) score += ply; // mates go in as distance from this node, not from the root
     if (score < -MATE_BOUND) score -= ply;
     if (!m && e->key == key) m = e->move16;
     e->key = key;
     e->score = (int16_t)score;
     e->depth = (int8_t)depth;
     e->flag = (uint8_t)flag;
-    e->move16 = (uint16_t)(m & 0x7fff) | (uint16_t)((M_FLAG(m) & 1) << 15);
+    e->move16 = (uint16_t)(m & 0x7fff) | (uint16_t)((M_FLAG(m) & 1) << 15); // 1 flag bit fits, tt_move_full digs the real move back up
 }
 
 static Move tt_move_full(const Pos *p, uint16_t m16)
@@ -803,7 +805,7 @@ static void score_moves(Searcher *s, Move *moves, int *scores, int n, Move ttm, 
             scores[i] = 10000000;
         } else if (victim != EMPTY || M_FLAG(m) == FL_EP) {
             int v = victim == EMPTY ? PAWN : TYPE(victim);
-            scores[i] = 1000000 + mvv[v] * 10 - mvv[TYPE(p->sq[M_FROM(m)])] / 10;
+            scores[i] = 1000000 + mvv[v] * 10 - mvv[TYPE(p->sq[M_FROM(m)])] / 10; // mvv lva
         } else if (M_PROMO(m) == QUEEN) {
             scores[i] = 950000;
         } else if (m == s->killers[ply][0]) {
@@ -851,7 +853,7 @@ static int qsearch(Searcher *s, int alpha, int beta, int ply)
         int victim = p->sq[M_TO(m)];
         int gain = victim == EMPTY ? 100 : mvv[TYPE(victim)];
         if (M_PROMO(m)) gain += 800;
-        if (stand + gain + 200 < alpha) continue;
+        if (stand + gain + 200 < alpha) continue; // delta pruning, even winning this wont reach alpha
         if (!pos_make(p, m, &u)) continue;
         int sc = -qsearch(s, -beta, -alpha, ply + 1);
         pos_unmake(p, &u);
@@ -878,7 +880,7 @@ static int search(Searcher *s, int alpha, int beta, int depth, int ply, int do_n
     if (ply && (p->half >= 100 || is_repetition(p))) return 0;
 
     int in_check = pos_in_check(p, p->side);
-    if (in_check) depth++;
+    if (in_check) depth++; // check extension
     if (depth <= 0) return qsearch(s, alpha, beta, ply);
 
     s->nodes++;
@@ -886,7 +888,7 @@ static int search(Searcher *s, int alpha, int beta, int depth, int ply, int do_n
     if (s->stopped) return 0;
 
     if (ply) {
-        int ma = -MATE + ply, mb = MATE - ply - 1;
+        int ma = -MATE + ply, mb = MATE - ply - 1; // mate distance pruning
         if (ma > alpha) alpha = ma;
         if (mb < beta) beta = mb;
         if (alpha >= beta) return alpha;
@@ -896,7 +898,7 @@ static int search(Searcher *s, int alpha, int beta, int depth, int ply, int do_n
     Move ttm = 0;
     if (e->key == p->key) {
         ttm = tt_move_full(p, e->move16);
-        if (!pv_node && e->depth >= depth) {
+        if (!pv_node && e->depth >= depth) { // cutting in pv nodes chops the pv short
             int sc = e->score;
             if (sc > MATE_BOUND) sc -= ply;
             if (sc < -MATE_BOUND) sc += ply;
@@ -905,12 +907,12 @@ static int search(Searcher *s, int alpha, int beta, int depth, int ply, int do_n
         }
     }
 
-    int static_eval = in_check ? -MATE : evaluate(p);
+    int static_eval = in_check ? -MATE : evaluate(p); // eval means nothing in check
 
     if (!pv_node && !in_check) {
-        if (depth <= 6 && static_eval - 85 * depth >= beta && abs(beta) < MATE_BOUND) return static_eval;
+        if (depth <= 6 && static_eval - 85 * depth >= beta && abs(beta) < MATE_BOUND) return static_eval; // reverse futility
         if (do_null && depth >= 3 && static_eval >= beta && has_non_pawn(p, p->side)) {
-            int r = 3 + depth / 5;
+            int r = 3 + depth / 5; // null move, has_non_pawn keeps it out of zugzwang endings
             Undo nu;
             make_null(p, &nu);
             int sc = -search(s, -beta, -beta + 1, depth - 1 - r, ply + 1, 0);
@@ -927,7 +929,7 @@ static int search(Searcher *s, int alpha, int beta, int depth, int ply, int do_n
     int legal = 0, best = -MATE - 1, flag = TT_UPPER;
     Move best_move = 0;
     Undo u;
-    int futile = !pv_node && !in_check && depth <= 3 && static_eval + 120 + 90 * depth <= alpha;
+    int futile = !pv_node && !in_check && depth <= 3 && static_eval + 120 + 90 * depth <= alpha; // so far under alpha a quiet move wont save it
 
     for (int i = 0; i < n; i++) {
         Move m = pick(moves, scores, n, i);
@@ -936,7 +938,7 @@ static int search(Searcher *s, int alpha, int beta, int depth, int ply, int do_n
         if (!pos_make(p, m, &u)) continue;
         legal++;
         int gives_check = pos_in_check(p, p->side);
-        if (futile && quiet && legal > 1 && !gives_check && best > -MATE_BOUND) {
+        if (futile && quiet && legal > 1 && !gives_check && best > -MATE_BOUND) { // always search one so we never return a fake mate
             pos_unmake(p, &u);
             continue;
         }
@@ -946,12 +948,13 @@ static int search(Searcher *s, int alpha, int beta, int depth, int ply, int do_n
         } else {
             int r = 0;
             if (depth >= 3 && quiet && !in_check && !gives_check && legal > 3) {
-                r = 1 + (legal > 8) + (depth > 7);
+                r = 1 + (legal > 8) + (depth > 7); // lmr
                 if (pv_node) r--;
                 if (m == s->killers[ply][0] || m == s->killers[ply][1]) r--;
                 if (r < 0) r = 0;
-                if (r > depth - 2) r = depth - 2;
+                if (r > depth - 2) r = depth - 2; // dont reduce straight into qsearch
             }
+            // zero window first, only re-search when it beats alpha
             sc = -search(s, -alpha - 1, -alpha, depth - 1 - r, ply + 1, 1);
             if (r && sc > alpha) sc = -search(s, -alpha - 1, -alpha, depth - 1, ply + 1, 1);
             if (sc > alpha && sc < beta) sc = -search(s, -beta, -alpha, depth - 1, ply + 1, 1);
@@ -1000,7 +1003,7 @@ Move engine_search(Pos *p, const SearchLimits *lim, SearchInfo *final)
     clock_gettime(CLOCK_MONOTONIC, &s->start);
     Move legal[256];
     int nlegal = pos_gen_legal(p, legal);
-    Move best = nlegal ? legal[0] : 0;
+    Move best = nlegal ? legal[0] : 0; // something to play even if we get stopped right away
     SearchInfo info;
     memset(&info, 0, sizeof(info));
     if (final) memset(final, 0, sizeof(*final));
@@ -1009,7 +1012,7 @@ Move engine_search(Pos *p, const SearchLimits *lim, SearchInfo *final)
     for (int d = 1; d <= max_depth && nlegal; d++) {
         s->seldepth = 0;
         int alpha = -MATE - 1, beta = MATE + 1, delta = 30;
-        if (d >= 5) {
+        if (d >= 5) { // aspiration, the first few depths swing too much for it
             alpha = prev - delta;
             beta = prev + delta;
         }
@@ -1029,7 +1032,7 @@ Move engine_search(Pos *p, const SearchLimits *lim, SearchInfo *final)
                 break;
             }
         }
-        if (s->stopped && d > 1) break;
+        if (s->stopped && d > 1) break; // half done iteration, keep the last full one
         if (s->pvlen[0] > 0) best = s->pv[0][0];
         prev = sc;
         info.depth = d;
@@ -1045,9 +1048,9 @@ Move engine_search(Pos *p, const SearchLimits *lim, SearchInfo *final)
         }
         if (final) *final = info;
         if (lim->cb) lim->cb(&info, lim->user);
-        if (abs(sc) > MATE_BOUND && d > 8 && MATE - abs(sc) < d) break;
+        if (abs(sc) > MATE_BOUND && d > 8 && MATE - abs(sc) < d) break; // mate shorter than the depth, going deeper wont change it
         if (s->stopped) break;
-        if (nlegal == 1 && d >= 4) break;
+        if (nlegal == 1 && d >= 4) break; // only move, dont burn the clock
     }
     free(s);
     return best;

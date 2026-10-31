@@ -61,6 +61,9 @@ typedef struct {
     double scale;
     int composited, mapped;
     int bx, by, bw, bh;
+    Backend *cap;
+    int gen;
+    long checked;
 } XState;
 
 static XState xs;
@@ -117,6 +120,8 @@ static int load_x(void)
     return 1;
 }
 
+static void make_img(void);
+
 static int x_init(Overlay *ov, Backend *cap)
 {
     if (!load_x()) return 0;
@@ -126,6 +131,7 @@ static int x_init(Overlay *ov, Backend *cap)
     if (!X.FixesQueryExtension(xs.dpy, &ev, &er)) return 0;
     int scr = X.DefaultScreen_(xs.dpy);
     char cm[32];
+    // whoever owns _NET_WM_CM_Sn is the compositor
     snprintf(cm, sizeof(cm), "_NET_WM_CM_S%d", scr);
     xs.composited = X.GetSelectionOwner(xs.dpy, X.InternAtom(xs.dpy, cm, False)) != 0;
     if (!xs.composited)
@@ -135,20 +141,20 @@ static int x_init(Overlay *ov, Backend *cap)
     xs.w = X.DisplayWidth_(xs.dpy, scr);
     xs.h = X.DisplayHeight_(xs.dpy, scr);
     XVisualInfo vi;
-    if (!X.MatchVisualInfo(xs.dpy, scr, 32, TrueColor, &vi)) return 0;
+    if (!X.MatchVisualInfo(xs.dpy, scr, 32, TrueColor, &vi)) return 0; // argb visual, the alpha only works with a compositor
     xs.visual = vi.visual;
     XSetWindowAttributes a;
     memset(&a, 0, sizeof(a));
-    a.override_redirect = True;
+    a.override_redirect = True; // wm leaves it alone, no frame no focus
     a.colormap = X.CreateColormap(xs.dpy, root, vi.visual, AllocNone);
     a.background_pixel = 0;
     a.border_pixel = 0;
-    xs.win = X.CreateWindow(xs.dpy, root, 0, 0, 1, 1, 0, 32, InputOutput, vi.visual,
+    xs.win = X.CreateWindow(xs.dpy, root, 0, 0, 1, 1, 0, 32, InputOutput, vi.visual, // real size comes on commit
                             CWOverrideRedirect | CWColormap | CWBackPixel | CWBorderPixel, &a);
     X.StoreName(xs.dpy, xs.win, "open-chease");
     Atom type = X.InternAtom(xs.dpy, "_NET_WM_WINDOW_TYPE", False);
     Atom notif = X.InternAtom(xs.dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
-    X.ChangeProperty(xs.dpy, xs.win, type, 4, 32, PropModeReplace, (unsigned char *)&notif, 1);
+    X.ChangeProperty(xs.dpy, xs.win, type, 4, 32, PropModeReplace, (unsigned char *)&notif, 1); // 4 = XA_ATOM, the 6 below is XA_CARDINAL
     long keep = 2; // 2 = never unredirect us, xfwm did and the screen went black
     X.ChangeProperty(xs.dpy, xs.win, X.InternAtom(xs.dpy, "_NET_WM_BYPASS_COMPOSITOR", False), 6, 32, PropModeReplace,
                      (unsigned char *)&keep, 1);
@@ -157,34 +163,64 @@ static int x_init(Overlay *ov, Backend *cap)
     X.FixesDestroyRegion(xs.dpy, empty);
     X.SelectInput(xs.dpy, xs.win, ButtonPressMask | ExposureMask | KeyPressMask);
     xs.gc = X.CreateGC(xs.dpy, xs.win, 0, NULL);
+    xs.cap = cap;
+    xs.gen = cap->out_gen;
+    make_img();
+    X.Flush(xs.dpy);
+    ov->ncanvas = 1;
+    return 1;
+}
+
+static void make_img(void)
+{
+    if (xs.img) xs.img->f.destroy_image(xs.img); // frees data too
     char *data = calloc((size_t)xs.w * xs.h, 4);
-    xs.img = X.CreateImage(xs.dpy, vi.visual, 32, ZPixmap, 0, data, (unsigned)xs.w, (unsigned)xs.h, 32, xs.w * 4);
+    xs.img = X.CreateImage(xs.dpy, xs.visual, 32, ZPixmap, 0, data, (unsigned)xs.w, (unsigned)xs.h, 32, xs.w * 4);
+    Backend *cap = xs.cap;
     double layout_w = 0, layout_h = 0;
     for (int i = 0; i < cap->nout; i++) {
         Rect r = cap->out[i].logical;
         if (r.x + r.w > layout_w) layout_w = r.x + r.w;
         if (r.y + r.h > layout_h) layout_h = r.y + r.h;
     }
-    xs.scale = layout_w > 0 ? xs.w / layout_w : 1;
+    xs.scale = layout_w > 0 ? xs.w / layout_w : 1; // grab rects can be logical px (xwayland), X is real px
     xs.canvas.px = (uint32_t *)data;
     xs.canvas.w = xs.w;
     xs.canvas.h = xs.h;
     xs.canvas.ox = 0;
     xs.canvas.oy = 0;
     xs.canvas.scale = xs.scale;
-    X.Flush(xs.dpy);
-    ov->ncanvas = 1;
-    return 1;
+    xs.canvas.cx0 = xs.canvas.cy0 = xs.canvas.dx0 = xs.canvas.dy0 = 0;
+    xs.canvas.cx1 = xs.canvas.dx1 = xs.w;
+    xs.canvas.cy1 = xs.canvas.dy1 = xs.h;
 }
+
+static long now_ms(void);
 
 static Canvas *x_canvas(Overlay *ov, int i)
 {
-    return i == 0 ? &xs.canvas : NULL;
+    if (i) return NULL;
+    long t = now_ms();
+    if (xs.gen != xs.cap->out_gen || t - xs.checked > 2000) { // no randr here, just poll the root size
+        xs.checked = t;
+        Window r;
+        int gx, gy;
+        unsigned gw, gh, gb, gd;
+        int scr = X.DefaultScreen_(xs.dpy);
+        if (X.GetGeometry(xs.dpy, X.RootWindow_(xs.dpy, scr), &r, &gx, &gy, &gw, &gh, &gb, &gd) && gw && gh &&
+            ((int)gw != xs.w || (int)gh != xs.h || xs.gen != xs.cap->out_gen)) {
+            xs.w = (int)gw;
+            xs.h = (int)gh;
+            xs.gen = xs.cap->out_gen;
+            make_img();
+        }
+    }
+    return &xs.canvas;
 }
 
 static void set_bounding_shape(void)
 {
-    if (xs.composited) return;
+    if (xs.composited) return; // no compositor = no alpha, so cut the window down to the solid px
     int cap = 4096, n = 0;
     XRectangle *r = malloc(sizeof(XRectangle) * cap);
     for (int y = 0; y < xs.bh; y++) {
@@ -229,7 +265,7 @@ static void x_commit(Overlay *ov, const Rect *hits, int nhits)
         if (y < y0) y0 = y;
         y1 = y;
     }
-    if (x1 < 0) {
+    if (x1 < 0) { // nothing drawn
         if (xs.mapped) {
             X.UnmapWindow(xs.dpy, xs.win);
             xs.mapped = 0;
@@ -249,7 +285,7 @@ static void x_commit(Overlay *ov, const Rect *hits, int nhits)
     for (int i = 0; i < nhits && n < 128; i++) {
         rects[n].x = (short)(hits[i].x * xs.scale - xs.bx);
         rects[n].y = (short)(hits[i].y * xs.scale - xs.by);
-        rects[n].width = (unsigned short)(hits[i].w * xs.scale + 1);
+        rects[n].width = (unsigned short)(hits[i].w * xs.scale + 1); // +1 so rounding cant shave a button edge
         rects[n].height = (unsigned short)(hits[i].h * xs.scale + 1);
         n++;
     }
@@ -262,7 +298,7 @@ static void x_commit(Overlay *ov, const Rect *hits, int nhits)
         xs.mapped = 1;
     }
     X.PutImage(xs.dpy, xs.win, xs.gc, xs.img, xs.bx, xs.by, 0, 0, (unsigned)xs.bw, (unsigned)xs.bh);
-    X.RaiseWindow(xs.dpy, xs.win);
+    X.RaiseWindow(xs.dpy, xs.win); // windows raised since then would cover us
     X.Flush(xs.dpy);
 }
 
@@ -283,7 +319,7 @@ static int x_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
             if (e.type == ButtonPress) {
                 *cx = (e.xbutton.x + xs.bx) / xs.scale;
                 *cy = (e.xbutton.y + xs.by) / xs.scale;
-                if (e.xbutton.button == 4 || e.xbutton.button == 5) {
+                if (e.xbutton.button == 4 || e.xbutton.button == 5) { // 4/5 = wheel
                     ov->key = e.xbutton.button == 5 ? 1 : -1;
                     return 3;
                 }
@@ -353,17 +389,18 @@ static int xcap_capture(Backend *b)
     if (X.GetGeometry(cap_dpy, root, &r, &gx, &gy, &gw, &gh, &gb, &gd) && gw && gh && ((int)gw != cap_w || (int)gh != cap_h)) {
         cap_w = (int)gw, cap_h = (int)gh;
         b->out[0].logical = (Rect){0, 0, cap_w, cap_h};
+        b->out_gen++;
     }
     x_err = 0;
     cap_img = X.GetImage(cap_dpy, root, 0, 0, (unsigned)cap_w, (unsigned)cap_h, ~0UL, ZPixmap);
     Output *o = &b->out[0];
     o->have_frame = 0;
-    if (x_err || !cap_img || cap_img->bits_per_pixel != 32) return 0;
+    if (x_err || !cap_img || cap_img->bits_per_pixel != 32) return 0; // 16 bit screens, not bothering
     o->frame.px = (uint8_t *)cap_img->data;
     o->frame.w = cap_img->width;
     o->frame.h = cap_img->height;
     o->frame.stride = cap_img->bytes_per_line;
-    o->frame.bgr = cap_img->red_mask == 0xff0000;
+    o->frame.bgr = cap_img->red_mask == 0xff0000; // B G R X in memory
     if (cap_img->red_mask == 0x3ff00000 || cap_img->red_mask == 0x3ff) { // depth 30, squash to 8 bits a channel
         int rb = cap_img->red_mask == 0x3ff00000, w = cap_img->width, h = cap_img->height;
         conv = realloc(conv, (size_t)w * h * 4);

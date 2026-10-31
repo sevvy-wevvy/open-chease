@@ -28,7 +28,7 @@ typedef struct {
     size_t maxsize;
     void *user_data[4];
     void *reserved[4];
-} GstMapInfo;
+} GstMapInfo; // has to match the real one byte for byte
 typedef void (*SignalCb)(GDBusConnection *, const char *, const char *, const char *, const char *, GVariant *, void *);
 
 static struct {
@@ -59,6 +59,8 @@ static struct {
     int (*buffer_map)(GstBuffer *, GstMapInfo *, int);
     void (*buffer_unmap)(GstBuffer *, GstMapInfo *);
     void (*mini_unref)(void *);
+    void (*obj_unref)(void *);
+    void (*unsubscribe)(GDBusConnection *, unsigned);
 } G;
 
 typedef struct {
@@ -69,12 +71,15 @@ typedef struct {
     GstElement *pipe, *sink;
     uint8_t *buf;
     int fw, fh;
+    unsigned sub;
 } Stream;
 
 static GDBusConnection *bus;
 static char session_path[256];
 static Stream streams[MAX_OUTPUTS];
-static int nstreams;
+static int nstreams, changed, loaded;
+static long changed_at;
+static unsigned session_sub;
 
 static int load(void)
 {
@@ -121,6 +126,8 @@ static int load(void)
     L(gst, buffer_map, "gst_buffer_map");
     L(gst, buffer_unmap, "gst_buffer_unmap");
     L(gst, mini_unref, "gst_mini_object_unref");
+    L(gst, obj_unref, "gst_object_unref");
+    L(gio, unsubscribe, "g_dbus_connection_signal_unsubscribe");
     L(app, try_pull_sample, "gst_app_sink_try_pull_sample");
 #undef L
     return 1;
@@ -129,7 +136,7 @@ static int load(void)
 static GVariant *call(const char *dest, const char *path, const char *iface, const char *method, GVariant *args)
 {
     GError *err = NULL;
-    GVariant *r = G.call_sync(bus, dest, path, iface, method, args, NULL, 0, 5000, NULL, &err);
+    GVariant *r = G.call_sync(bus, dest, path, iface, method, args, NULL, 0, 5000, NULL, &err); // 0 = no flags, 5s timeout
     if (!r) {
         fprintf(stderr, "gnome capture: %s.%s failed: %s\n", iface, method, err ? err->message : "?");
         if (err) G.error_free(err);
@@ -141,7 +148,7 @@ static void on_stream_added(GDBusConnection *c, const char *sender, const char *
                             const char *sig, GVariant *params, void *user)
 {
     for (int i = 0; i < nstreams; i++)
-        if (!strcmp(streams[i].stream_path, path)) G.variant_get(params, "(u)", &streams[i].node);
+        if (!strcmp(streams[i].stream_path, path)) G.variant_get(params, "(u)", &streams[i].node); // the pipewire node id
 }
 
 static long now_ms(void)
@@ -151,21 +158,49 @@ static long now_ms(void)
     return t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 
-// skip the portal, no share-screen popup every launch
-static int gnome_init(Backend *b)
+static void on_change(GDBusConnection *c, const char *sender, const char *path, const char *iface,
+                      const char *sig, GVariant *params, void *user)
 {
-    if (!load()) return 0;
-    GError *err = NULL;
-    bus = G.bus_get_sync(2, NULL, &err); // G_BUS_TYPE_SESSION
-    if (!bus) return 0;
+    changed = 1;
+    changed_at = now_ms();
+}
+
+static void stop_streams(void)
+{
+    for (int i = 0; i < nstreams; i++) {
+        Stream *s = &streams[i];
+        if (s->sub) G.unsubscribe(bus, s->sub);
+        if (s->pipe) {
+            G.set_state(s->pipe, 1); // GST_STATE_NULL, before the unref
+            if (s->sink) G.obj_unref(s->sink);
+            G.obj_unref(s->pipe);
+        }
+        free(s->buf);
+    }
+    if (session_sub) G.unsubscribe(bus, session_sub); // before Stop, or its Closed signal kicks off another restart
+    session_sub = 0;
+    if (*session_path) {
+        GError *err = NULL;
+        GVariant *r = G.call_sync(bus, "org.gnome.Mutter.ScreenCast", session_path, "org.gnome.Mutter.ScreenCast.Session",
+                                  "Stop", NULL, NULL, 0, 2000, NULL, &err);
+        if (r) G.unref(r);
+        if (err) G.error_free(err);
+    }
+    *session_path = 0;
+    memset(streams, 0, sizeof(streams));
+    nstreams = 0;
+}
+
+static int start_streams(Backend *b)
+{
     GVariant *st = call("org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",
                         "org.gnome.Mutter.DisplayConfig", "GetCurrentState", NULL);
     if (!st) return 0;
-    GVariant *mons = G.child(st, 1);
+    GVariant *mons = G.child(st, 1); // (serial, monitors, logical monitors, props)
     size_t nm = G.n_children(mons);
     for (size_t i = 0; i < nm && nstreams < MAX_OUTPUTS; i++) {
         GVariant *m = G.child(mons, i);
-        GVariant *spec = G.child(m, 0);
+        GVariant *spec = G.child(m, 0); // connector vendor product serial
         GVariant *conn = G.child(spec, 0);
         snprintf(streams[nstreams].connector, 64, "%s", G.get_string(conn, NULL));
         G.unref(conn);
@@ -183,7 +218,7 @@ static int gnome_init(Backend *b)
         }
         G.unref(modes);
         G.unref(m);
-        if (current) nstreams++;
+        if (current) nstreams++; // no current mode = plugged in but off
     }
     G.unref(mons);
     G.unref(st);
@@ -198,14 +233,17 @@ static int gnome_init(Backend *b)
     G.unref(r);
     for (int i = 0; i < nstreams; i++) {
         r = call("org.gnome.Mutter.ScreenCast", session_path, "org.gnome.Mutter.ScreenCast.Session", "RecordMonitor",
-                 G.new_parsed("(%s, {'cursor-mode': <uint32 0>})", streams[i].connector));
+                 G.new_parsed("(%s, {'cursor-mode': <uint32 0>})", streams[i].connector)); // 0 = hidden
         if (!r) return 0;
         G.variant_get(r, "(&o)", &sp);
         snprintf(streams[i].stream_path, sizeof(streams[i].stream_path), "%s", sp);
         G.unref(r);
-        G.subscribe(bus, "org.gnome.Mutter.ScreenCast", "org.gnome.Mutter.ScreenCast.Stream", "PipeWireStreamAdded",
-                    streams[i].stream_path, NULL, 0, on_stream_added, NULL, NULL);
+        // before Start or the node id can go by before we listen
+        streams[i].sub = G.subscribe(bus, "org.gnome.Mutter.ScreenCast", "org.gnome.Mutter.ScreenCast.Stream",
+                                     "PipeWireStreamAdded", streams[i].stream_path, NULL, 0, on_stream_added, NULL, NULL);
     }
+    session_sub = G.subscribe(bus, "org.gnome.Mutter.ScreenCast", "org.gnome.Mutter.ScreenCast.Session", "Closed",
+                              session_path, NULL, 0, on_change, NULL, NULL);
     r = call("org.gnome.Mutter.ScreenCast", session_path, "org.gnome.Mutter.ScreenCast.Session", "Start", NULL);
     if (!r) return 0;
     G.unref(r);
@@ -219,9 +257,8 @@ static int gnome_init(Backend *b)
             fprintf(stderr, "gnome capture: mutter never sent a pipewire stream\n");
             return 0;
         }
-        if (!G.iteration(NULL, 0)) usleep(10000);
+        if (!G.iteration(NULL, 0)) usleep(10000); // dbus signals only run from the main context
     }
-    G.gst_init(NULL, NULL);
     for (int i = 0; i < nstreams; i++) {
         Stream *s = &streams[i];
         r = call("org.gnome.Mutter.ScreenCast", s->stream_path, "org.freedesktop.DBus.Properties", "Get",
@@ -239,6 +276,7 @@ static int gnome_init(Backend *b)
             G.unref(r);
         }
         char desc[512];
+        // 2 fps max and only the newest buffer, the board doesnt move that fast
         snprintf(desc, sizeof(desc),
                  "pipewiresrc path=%u always-copy=true ! videorate drop-only=true max-rate=2 ! videoconvert ! "
                  "video/x-raw,format=BGRx ! appsink name=sink max-buffers=1 drop=true sync=false",
@@ -257,6 +295,38 @@ static int gnome_init(Backend *b)
     for (int i = 0; i < nstreams; i++)
         b->out[i].logical = (Rect){streams[i].x, streams[i].y, streams[i].w, streams[i].h};
     return 1;
+}
+
+// skip the portal, no share-screen popup every launch
+static int gnome_init(Backend *b)
+{
+    if (!loaded) {
+        if (!load()) return 0;
+        GError *err = NULL;
+        bus = G.bus_get_sync(2, NULL, &err); // G_BUS_TYPE_SESSION
+        if (!bus) return 0;
+        G.gst_init(NULL, NULL);
+        G.subscribe(bus, "org.gnome.Mutter.DisplayConfig", "org.gnome.Mutter.DisplayConfig", "MonitorsChanged",
+                    "/org/gnome/Mutter/DisplayConfig", NULL, 0, on_change, NULL, NULL);
+        loaded = 1;
+    }
+    return start_streams(b);
+}
+
+static void restart(Backend *b)
+{
+    changed = 0;
+    fprintf(stderr, "screens changed, restarting the screen grab\n");
+    stop_streams();
+    for (int i = 0; i < MAX_OUTPUTS; i++) b->out[i].have_frame = 0;
+    b->nout = 0;
+    int ok = 0;
+    for (int tries = 0; tries < 3 && !(ok = start_streams(b)); tries++) {
+        stop_streams();
+        usleep(300000); // mutter can still be mid reconfigure
+    }
+    if (!ok) changed = 1, changed_at = now_ms() + 4000; // so the next try is ~4.7s out
+    b->out_gen++;
 }
 
 static int pull(Stream *s, uint64_t timeout_ns)
@@ -293,18 +363,26 @@ static int pull(Stream *s, uint64_t timeout_ns)
 
 static int gnome_capture(Backend *b)
 {
-    G.iteration(NULL, 0);
+    while (G.iteration(NULL, 0)) {} // run whatever dbus signals came in
+    static int ticks, at = -1;
+    if (at < 0) {
+        const char *e = getenv("OPEN_CHEASE_GNOME_RESTART_AT"); // test hook, fakes a monitor change after n grabs
+        at = 0;
+        while (e && *e >= '0' && *e <= '9') at = at * 10 + *e++ - '0';
+    }
+    if (at && ++ticks == at) changed = 1;
+    if (changed && now_ms() - changed_at > 700) restart(b); // monitor changes come in bursts, let it settle
     int got = 0;
     for (int i = 0; i < nstreams; i++) {
         Stream *s = &streams[i];
-        uint64_t timeout = s->buf ? 0 : 2000000000ULL;
+        uint64_t timeout = s->buf ? 0 : 2000000000ULL; // first frame can take a bit, after that never block
         while (pull(s, timeout)) timeout = 0;
         Output *o = &b->out[i];
         if (!s->buf) {
             o->have_frame = 0;
             continue;
         }
-        if (s->w <= 0 || s->h <= 0) {
+        if (s->w <= 0 || s->h <= 0) { // Parameters had no size
             s->w = s->fw;
             s->h = s->fh;
         }

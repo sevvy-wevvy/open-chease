@@ -5,7 +5,7 @@
 #include "app.h"
 #include "templates_data.h"
 
-#define TPL_MAGIC 0x4f435432
+#define TPL_MAGIC 0x4f435432 // OCT2
 
 static void load_builtin(Templates *t, int set, int k)
 {
@@ -48,7 +48,7 @@ void templates_save(const Templates *t, const char *path)
     unsigned magic = TPL_MAGIC;
     int ok = fwrite(&magic, 4, 1, f) == 1 && fwrite(t->t, sizeof(t->t), 1, f) == 1 &&
              fwrite(&t->color_thr, sizeof(float), 1, f) == 1;
-    if (fclose(f) == 0 && ok) rename(tmp, path);
+    if (fclose(f) == 0 && ok) rename(tmp, path); // no half written file if it dies mid save
 }
 
 static int piece_color(int pc) { return pc / 6; }
@@ -87,7 +87,7 @@ static float similarity(const float *a, const float *b)
 {
     float mn = 0, mx = 0;
     for (int i = 0; i < FEAT_N * FEAT_N; i++) {
-        if (a[i] == 0.5f) continue;
+        if (a[i] == 0.5f) continue; // coordinate labels and our overlay
         float x = a[i], y = b[i];
         mn += x < y ? x : y;
         mx += x > y ? x : y;
@@ -101,7 +101,7 @@ static void type_scores(const Templates *t, const BoardRead *r, int sq, float *o
     for (int ty = 0; ty < 6; ty++) {
         float a = similarity(r->mask[sq], t->t[c][ty]);
         float b = similarity(r->mask[sq], t->t[c ^ 1][ty]);
-        out[ty] = a > b * 0.97f ? a : b * 0.97f;
+        out[ty] = a > b * 0.97f ? a : b * 0.97f; // other colors shape still counts, a bit less
     }
 }
 
@@ -128,7 +128,7 @@ void tracker_start(Tracker *t, int user_color)
     memset(t, 0, sizeof(*t));
     t->user_color = user_color;
     t->white_bottom = user_color == WHITE;
-    for (int k = 0; k < 4; k++) t->promo_ticks[k] = 10;
+    for (int k = 0; k < 4; k++) t->promo_ticks[k] = 10; // 10 = slot free
     pos_startpos(&t->pos);
     t->lock_side = -1;
     snprintf(t->status, sizeof(t->status), "tracking");
@@ -196,9 +196,31 @@ static void diff2(const uint8_t *exp, const uint8_t *obs, int *occ_d, int *col_d
     *col_d = c;
 }
 
-static int promo_type(const Templates *tpl, const BoardRead *r, int sq, float margin)
+static int promo_type(const Templates *tpl, const BoardRead *r, int sq, float margin, const Pos *p, int skip)
 {
-    if (!tpl->have || r->obs[sq] == OBS_EMPTY || r->obs[sq] == OBS_UNKNOWN) return QUEEN;
+    if (r->obs[sq] == OBS_EMPTY || r->obs[sq] == OBS_UNKNOWN) return QUEEN; // still under the popup
+    int c = r->obs[sq] == OBS_WHITE ? WHITE : BLACK, kinds = 0;
+    float ref[6] = {-1, -1, -1, -1, -1, -1};
+    // real pieces on this board beat the templates, same piece set
+    for (int s2 = 0; s2 < 64; s2++) {
+        int pc = p->sq[s2];
+        if (s2 == sq || s2 == skip || pc == EMPTY) continue;
+        int ty = piece_type(pc), pcol = piece_color(pc);
+        if (ty < KNIGHT || ty > QUEEN || r->obs[s2] != (pcol == WHITE ? OBS_WHITE : OBS_BLACK)) continue;
+        float v = similarity(r->mask[sq], r->mask[s2]) * (pcol == c ? 1 : 0.97f);
+        if (ref[ty] < 0) kinds++;
+        if (v > ref[ty]) ref[ty] = v;
+    }
+    if (kinds >= 2) {
+        float best = -1, next = -1;
+        int bt = QUEEN;
+        for (int ty = KNIGHT; ty <= QUEEN; ty++)
+            if (ref[ty] > best) next = best, best = ref[ty], bt = ty;
+            else if (ref[ty] > next) next = ref[ty];
+        if (bt != QUEEN && ref[QUEEN] >= 0 && ref[QUEEN] + 0.07f >= best) return QUEEN; // lean queen, almost everyone promotes to one
+        return best >= 0.75f && best - next >= 0.08f ? bt : QUEEN;
+    }
+    if (!tpl->have) return QUEEN;
     float sc[6];
     type_scores(tpl, r, sq, sc);
     int best = QUEEN;
@@ -225,7 +247,7 @@ static void consider(Match *best, const Move *path, int n, int c, u64 key)
         memcpy(best->seq, path, sizeof(Move) * n);
         return;
     }
-    if (c > best->c || key == best->key) return;
+    if (c > best->c || key == best->key) return; // same cost but other squares = cant tell which
     for (int i = 0; i < n; i++)
         if (!same_squares(path[i], best->seq[i])) {
             best->count++;
@@ -257,7 +279,7 @@ static void dfs(Pos *p, const BoardRead *r, const uint8_t *base, int depth, int 
                 int strict = 0;
                 for (int q = 0; q < 64; q++)
                     if (exp[q] != base[q] && r->obs[q] != OBS_UNKNOWN && exp[q] != r->obs[q]) strict++;
-                if (!strict) consider(best, path, maxd, c + (floating ? 10 : 0), p->key);
+                if (!strict) consider(best, path, maxd, c + (floating ? 10 : 0), p->key); // a clean match always beats a dragged one
             }
         } else {
             dfs(p, r, base, depth + 1, maxd, path, best);
@@ -275,12 +297,12 @@ static int find_line(Pos *start, const BoardRead *r, int maxd, Match *out)
         uint8_t base[64];
         expected_obs(start, base);
         dfs(&p, r, base, 0, d, path, &best);
-        int ok = best.c >= 10 ? best.c - 10 <= 1 : best.c <= (d == 1 ? 2 : 1);
+        int ok = best.c >= 10 ? best.c - 10 <= 1 : best.c <= (d == 1 ? 2 : 1); // a square or two can read the wrong color
         if (best.c < 99 && !best.count && ok) {
             *out = best;
             return 1;
         }
-        if (best.c < 99 && best.count) return 0;
+        if (best.c < 99 && best.count) return 0; // two lines fit, wait for a better frame
     }
     return 0;
 }
@@ -301,7 +323,7 @@ static void play_line(Tracker *t, Pos from, const Match *m, const BoardRead *r, 
         for (int k = 0; k < 4; k++)
             if ((int)M_FROM(mv) == t->promo_sq[k] || (int)M_TO(mv) == t->promo_sq[k]) t->promo_ticks[k] = 10;
         if (M_PROMO(mv)) {
-            int ty = i == m->n - 1 ? promo_type(tpl, r, M_TO(mv), 0.12f) : QUEEN;
+            int ty = i == m->n - 1 ? promo_type(tpl, r, M_TO(mv), 0.12f, &t->pos, M_FROM(mv)) : QUEEN;
             mv = MK_MOVE(M_FROM(mv), M_TO(mv), ty, M_FLAG(mv));
             int slot = 0;
             for (int k = 0; k < 4; k++)
@@ -314,7 +336,7 @@ static void play_line(Tracker *t, Pos from, const Match *m, const BoardRead *r, 
             t->promo_ticks[slot] = 0;
             memset(t->promo_votes[slot], 0, sizeof(t->promo_votes[slot]));
             if (i == m->n - 1) {
-                t->promo_votes[slot][promo_type(tpl, r, M_TO(mv), 0.02f)]++;
+                t->promo_votes[slot][promo_type(tpl, r, M_TO(mv), 0.02f, &t->pos, M_FROM(mv))]++;
                 t->promo_ticks[slot] = 1;
             }
         }
@@ -377,6 +399,7 @@ static int heal_types(Tracker *t, const BoardRead *r, Templates *tpl)
         if (ty == old || !can_reach(p, ty, us, from, to)) continue;
         if (best < 0 || sc[ty] > sc[best]) best = ty;
     }
+    // the move only works as some other piece, so we had its type wrong
     if (best < 0 || sc[best] < sc[old] + 0.03f) return 0;
     Pos fixed = *p;
     pos_put(&fixed, from, us * 6 + best);
@@ -400,12 +423,12 @@ static int apply_matching(Tracker *t, const BoardRead *r, Templates *tpl)
         nb += r->obs[i] == OBS_BLACK;
     }
     int extra = nw > __builtin_popcountll(t->pos.occ[WHITE]) || nb > __builtin_popcountll(t->pos.occ[BLACK]);
-    int depth = changed >= 3 && !extra ? 3 : 2;
+    int depth = changed >= 3 && !extra ? 3 : 2; // missed a frame or two, look deeper
     if (find_line(&t->pos, r, depth, &m)) {
         play_line(t, t->pos, &m, r, tpl);
         return 1;
     }
-    if (t->side_uncertain) {
+    if (t->side_uncertain) { // after a re-read the turn is a guess
         Pos flipped = t->pos;
         flipped.side ^= 1;
         pos_finish_setup(&flipped);
@@ -415,7 +438,7 @@ static int apply_matching(Tracker *t, const BoardRead *r, Templates *tpl)
         }
     }
     if (heal_types(t, r, tpl)) return 1;
-    for (int k = 0; k < t->nprev && !extra; k++) {
+    for (int k = 0; k < t->nprev && !extra; k++) { // takeback, or we followed a wrong move
         Pos back = t->prev[k];
         if (find_line(&back, r, 2, &m) && m.c == 0) {
             Pos keep[3];
@@ -432,7 +455,6 @@ static int apply_matching(Tracker *t, const BoardRead *r, Templates *tpl)
 
 static void verify_promo(Tracker *t, const BoardRead *r, const Templates *tpl)
 {
-    if (!tpl->have) return;
     for (int k = 0; k < 4; k++) {
         if (t->promo_ticks[k] >= 10) continue;
         int sq = t->promo_sq[k];
@@ -446,7 +468,7 @@ static void verify_promo(Tracker *t, const BoardRead *r, const Templates *tpl)
             continue;
         }
         t->promo_ticks[k]++;
-        int ty = promo_type(tpl, r, sq, 0.02f);
+        int ty = promo_type(tpl, r, sq, 0.02f, &t->pos, -1);
         t->promo_votes[k][ty]++;
         int best = QUEEN;
         for (int q = KNIGHT; q <= QUEEN; q++)
@@ -500,7 +522,7 @@ void tracker_resync(Tracker *t, const BoardRead *r, Templates *tpl)
 static const Templates *fit_builtin(Templates *tpl, const BoardRead *r)
 {
     static Templates tmp, pick;
-    float best = tpl->learned ? board_fit(tpl, r) * 1.03f : -1;
+    float best = tpl->learned ? board_fit(tpl, r) * 1.03f : -1; // learned set wins close calls
     int bs = -1, bk = 0;
     for (int set = 0; set < BUILTIN_SETS; set++)
         for (int k = 0; k < BUILTIN_SCALES; k++) {
@@ -579,7 +601,7 @@ static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *ou
                 }
             }
             if (mv_sq < 0) break;
-            if (mv_from == QUEEN && loss > 0.15f) break;
+            if (mv_from == QUEEN && loss > 0.15f) break; // two queens happens, dont force one away
             types[mv_sq] = mv_to;
         }
     }
@@ -594,11 +616,11 @@ static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *ou
             nhl++;
             if (r->obs[sq] == OBS_WHITE || r->obs[sq] == OBS_BLACK) hl_from_color = r->obs[sq] == OBS_WHITE ? WHITE : BLACK;
         }
-    if (nhl >= 1 && nhl <= 3 && hl_from_color >= 0) side = hl_from_color ^ 1;
+    if (nhl >= 1 && nhl <= 3 && hl_from_color >= 0) side = hl_from_color ^ 1; // the highlighted piece just moved
     for (int sq = 0; sq < 64; sq++)
         if (types[sq] >= 0) pos_put(&np, sq, (r->obs[sq] == OBS_WHITE ? 0 : 6) + types[sq]);
     np.side = side;
-    np.castle = 15;
+    np.castle = 15; // cant see castling rights from pixels
     np.ep = -1;
     np.half = 0;
     np.fullmove = 20; // just not the opening
@@ -648,7 +670,8 @@ void tracker_update(Tracker *t, const BoardRead *r, Templates *tpl)
         nb += r->obs[i] == OBS_BLACK;
     }
     int pw = __builtin_popcountll(t->pos.occ[WHITE]), pb = __builtin_popcountll(t->pos.occ[BLACK]);
-    int implausible = nw > pw + 1 || nb > pb + 1 || (nw > pw && nb > pb);
+    int implausible = nw > pw + 1 || nb > pb + 1 || (nw > pw && nb > pb); // pieces dont appear out of nowhere, its mid animation or a drag
+    // has to hold still for one read first
     if (memcmp(t->pending, r->obs, 64)) {
         memcpy(t->pending, r->obs, 64);
         t->pending_count = 1;

@@ -17,7 +17,7 @@ static void print_info(const SearchInfo *in, void *user)
     char mv[8];
     printf("info depth %d seldepth %d ", in->depth, in->seldepth);
     if (in->score > MATE_BOUND)
-        printf("score mate %d ", (MATE - in->score + 1) / 2);
+        printf("score mate %d ", (MATE - in->score + 1) / 2); // plies to moves
     else if (in->score < -MATE_BOUND)
         printf("score mate -%d ", (MATE + in->score) / 2);
     else
@@ -34,7 +34,7 @@ static void print_info(const SearchInfo *in, void *user)
 
 static void *search_thread(void *arg)
 {
-    Pos copy = pos;
+    Pos copy = pos; // so d can still print pos while this runs
     Move best = engine_search(&copy, &limits, NULL);
     char mv[8];
     move_to_uci(best, mv);
@@ -66,7 +66,7 @@ static void handle_position(char *line)
         char *tok = strtok(moves + 7, " \n");
         while (tok) {
             Move m = move_from_uci(&pos, tok);
-            if (!m) break;
+            if (!m) break; // junk move, keep what we have
             Undo u;
             pos_make(&pos, m, &u);
             tok = strtok(NULL, " \n");
@@ -92,7 +92,7 @@ static void handle_go(const char *line)
     int movetime = arg_int(line, " movetime ", 0);
     int wtime = arg_int(line, " wtime ", -1), btime = arg_int(line, " btime ", -1);
     int winc = arg_int(line, " winc ", 0), binc = arg_int(line, " binc ", 0);
-    int mtg = arg_int(line, " movestogo ", 30);
+    int mtg = arg_int(line, " movestogo ", 30); // sudden death, just guess 30 left
     if (movetime) {
         limits.movetime_ms = movetime;
     } else if (!strstr(line, "infinite") && (wtime >= 0 || btime >= 0)) {
@@ -111,6 +111,7 @@ int main(int argc, char **argv)
 {
     engine_init();
     pos_startpos(&pos);
+    // open-chease-engine perft|bench <depth> [fen], not uci, just for testing
     if (argc >= 3 && !strcmp(argv[1], "perft")) {
         int depth = atoi(argv[2]);
         if (argc >= 4) pos_from_fen(&pos, argv[3]);
@@ -134,9 +135,9 @@ int main(int argc, char **argv)
         return 0;
     }
     char line[16384];
-    setvbuf(stdout, NULL, _IOLBF, 0);
+    setvbuf(stdout, NULL, _IOLBF, 0); // a pipe would be fully buffered
     while (fgets(line, sizeof(line), stdin)) {
-        if (!strncmp(line, "uci", 3) && (line[3] == '\n' || line[3] == '\r' || !line[3])) {
+        if (!strncmp(line, "uci", 3) && (line[3] == '\n' || line[3] == '\r' || !line[3])) { // ucinewgame starts with uci too
             printf("id name open-chease 1.0\nid author sevvy-wevvy\n");
             printf("option name Hash type spin default 32 min 1 max 4096\nuciok\n");
         } else if (!strncmp(line, "isready", 7)) {
@@ -160,7 +161,7 @@ int main(int argc, char **argv)
         } else if (!strncmp(line, "quit", 4)) {
             stop_search();
             break;
-        } else if (!strncmp(line, "d", 1) && (line[1] == '\n' || !line[1])) {
+        } else if (!strncmp(line, "d", 1) && (line[1] == '\n' || !line[1])) { // like stockfish d but just the fen
             char fen[128];
             pos_to_fen(&pos, fen);
             printf("%s\n", fen);

@@ -26,7 +26,7 @@ enum {
     ACT_WHITE = 1, ACT_BLACK, ACT_CLOSE, ACT_STOP, ACT_FLIP, ACT_MENU, ACT_DEBUG, ACT_FIX, ACT_RESTART, ACT_UPDATE,
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
-    ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE
+    ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT
 };
 
 typedef struct {
@@ -104,7 +104,7 @@ static const size_t part_off[] = {offsetof(Theme, panel), offsetof(Theme, title)
                                   offsetof(Theme, grid), offsetof(Theme, arrow), offsetof(Theme, menu),
                                   offsetof(Theme, item), offsetof(Theme, item_fg)};
 #define NPARTS 11
-static uint32_t *part(Theme *t, int k) { return (uint32_t *)((char *)t + part_off[k]); }
+static uint32_t *part(Theme *t, int k) { return (uint32_t *)((char *)t + part_off[k]); } // so the theme maker and the settings file can loop the colors
 
 static struct {
     int theme; // index into themes[]
@@ -147,9 +147,11 @@ static struct {
     int material, opening, wgraph, lastmove, checkwarn;
     int taken, timer, report, hanging;
     int movelist, danger, session;
+    int threats, hints, level, second;
+// positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
-         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1},
-  cfg_default;
+         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0},
+  cfg_default; // copied before load_cfg, the reset button goes back to this
 
 static const char *theme_names[NTHEMES];
 static const char *spot_names[] = {"Top", "Bottom", "Left", "Right"};
@@ -219,13 +221,17 @@ static const char *lines_names[] = {"Best only", "Top 2", "Top 3"};
 static const char *threads_names[] = {"Auto", "1", "2", "4", "8"};
 static const int threads_vals[] = {0, 1, 2, 4, 8};
 static const char *hash_names[] = {"64 MB", "128 MB", "256 MB", "512 MB", "1 GB"};
+static const char *threat_names[] = {"Off", "Text", "With arrow"};
+static const char *level_names[] = {"Off", "1400", "1700", "2000", "2400"};
+static const int level_elo[] = {0, 1400, 1700, 2000, 2400};
+static const char *second_names[25] = {"Off"}; // then built in, then the engine list
 static const int hash_vals[] = {64, 128, 256, 512, 1024};
 
 #define MAX_ENGINES 64
 static const char *engine_names[MAX_ENGINES];
 static char engine_paths[MAX_ENGINES][1024], engine_labels[MAX_ENGINES][32];
 static int nengines;
-static char saved_engine[1024];
+static char saved_engine[1024], saved_second[1024]; // by path, the list order moves around when you add one
 static int have_saved_engine;
 
 typedef struct {
@@ -259,6 +265,7 @@ static Setting sets[] = {
     {"Piece to move", "from", &cfg.from, 14, mark_names, NULL},
     {"Where it goes", "to", &cfg.to, 14, mark_names, NULL},
     {"Move name", "label", &cfg.label, 2, onoff, NULL},
+    {"Top moves", "lines", &cfg.lines, 3, lines_names, NULL},
     {"Color", "mcolor", &cfg.mcolor, 11, color_names, NULL},
     {"Show", "hint", &cfg.hint, 3, hint_names, NULL},
     {"Show it", "delay", &cfg.delay, 3, delay_names, NULL},
@@ -266,10 +273,10 @@ static Setting sets[] = {
     {"Get engines", "library", &cfg.library, 1, lib_names, NULL},
     {"Think time", "think", &cfg.think, 5, think_names, NULL},
     {"Updates", "rate", &cfg.rate, 3, rate_names, NULL},
-    {"Lines", "lines", &cfg.lines, 3, lines_names, NULL},
     {"Threads", "threads", &cfg.threads, 5, threads_names, NULL},
     {"Memory", "hash", &cfg.hash, 5, hash_names, NULL},
     {"Their turn too", "theirtoo", &cfg.theirtoo, 2, onoff, NULL},
+    {"Second opinion", "second", &cfg.second, 1, second_names, NULL},
     {"Show", "theirs", &cfg.theirs, 4, theirs_names, "Their move"},
     {"Arrow", "tarrow", &cfg.tarrow, 9, arrow_names, NULL},
     {"Arrow size", "tthick", &cfg.tthick, 4, thick_names, NULL},
@@ -289,6 +296,9 @@ static Setting sets[] = {
     {"Move list", "movelist", &cfg.movelist, 2, onoff, NULL},
     {"Danger alerts", "danger", &cfg.danger, 2, onoff, NULL},
     {"Session score", "session", &cfg.session, 2, onoff, NULL},
+    {"Threats", "threats", &cfg.threats, 3, threat_names, NULL},
+    {"Hint button", "hints", &cfg.hints, 2, onoff, NULL},
+    {"What a ___ plays", "level", &cfg.level, 5, level_names, NULL},
 };
 #define NSET ((int)(sizeof(sets) / sizeof(sets[0])))
 static int dd_open = -1;
@@ -320,12 +330,17 @@ static void load_cfg(void)
         if (!sp) continue;
         *sp = 0;
         int v = 0;
-        for (char *q = sp + 1; *q >= '0' && *q <= '9' && v < 100000; q++) v = v * 10 + *q - '0';
+        for (char *q = sp + 1; *q >= '0' && *q <= '9' && v < 100000; q++) v = v * 10 + *q - '0'; // capped so a junk line cant overflow it
         if (!strcmp(k, "squares")) old_squares = !!v;
         if (!strcmp(k, "enginepath")) {
             snprintf(saved_engine, sizeof(saved_engine), "%s", sp + 1);
             saved_engine[strcspn(saved_engine, "\n")] = 0;
             have_saved_engine = 1;
+            continue;
+        }
+        if (!strcmp(k, "secondpath")) {
+            snprintf(saved_second, sizeof(saved_second), "%s", sp + 1);
+            saved_second[strcspn(saved_second, "\n")] = 0;
             continue;
         }
         if (!strncmp(k, "custom", 6) && k[6] >= '1' && k[6] < '1' + NCUSTOM && !k[7]) {
@@ -336,11 +351,11 @@ static void load_cfg(void)
                 int nd = 0;
                 for (; *q == ' '; q++) {}
                 for (; isxdigit((unsigned char)*q) && nd < 8; q++, nd++) v = v * 16 + (*q <= '9' ? *q - '0' : (*q | 32) - 'a' + 10);
-                if (nd == 8) *part(t, j) = v;
+                if (nd == 8) *part(t, j) = v; // half a color is worse than the old one
             }
             continue;
         }
-        if (!strcmp(k, "engine") || !strcmp(k, "library")) continue;
+        if (!strcmp(k, "engine") || !strcmp(k, "library")) continue; // indexes go stale, enginepath is what counts
         if (!strcmp(k, "from") || !strcmp(k, "to")) has_marks = 1;
         for (int i = 0; i < NSET; i++)
             if (!strcmp(k, sets[i].key) && v >= 0 && v < sets[i].n) *sets[i].v = v;
@@ -354,8 +369,10 @@ static void save_cfg(void)
     FILE *f = fopen(cfg_path, "w");
     if (!f) return;
     for (int i = 0; i < NSET; i++)
-        if (sets[i].v != &cfg.engine && sets[i].v != &cfg.library) fprintf(f, "%s %d\n", sets[i].key, *sets[i].v);
+        if (sets[i].v != &cfg.engine && sets[i].v != &cfg.library && sets[i].v != &cfg.second) // those get saved as paths below
+            fprintf(f, "%s %d\n", sets[i].key, *sets[i].v);
     if (have_saved_engine) fprintf(f, "enginepath %s\n", saved_engine);
+    if (*saved_second) fprintf(f, "secondpath %s\n", saved_second);
     for (int i = 0; i < NCUSTOM; i++) {
         fprintf(f, "custom%d", i + 1);
         for (int j = 0; j < NPARTS; j++) fprintf(f, " %08X", *part(&themes[CUSTOM0 + i], j));
@@ -408,7 +425,7 @@ static int masked_cb(void *ctx, int fx, int fy)
     return 0;
 }
 
-static double kx(int out) { return cap->out[out].logical.w / cap->out[out].frame.w; }
+static double kx(int out) { return cap->out[out].logical.w / cap->out[out].frame.w; } // 0.5 on a 2x screen
 
 static Rect board_logical(const Board *b)
 {
@@ -429,7 +446,7 @@ static void add_hit(Rect r, int action)
 
 static void sq_display(int sq, int white_bottom, int *r, int *c)
 {
-    int rank = sq >> 3, file = sq & 7;
+    int rank = sq >> 3, file = sq & 7; // sq 0 is a1 but row 0 is the top of the screen
     if (white_bottom) {
         *r = 7 - rank;
         *c = file;
@@ -447,7 +464,7 @@ static void move_to_san(Pos *p, Move m, char *out)
         strcpy(o, (to & 7) == 6 ? "O-O" : "O-O-O");
         o += strlen(o);
     } else {
-        int takes = p->sq[to] != EMPTY || M_FLAG(m) == FL_EP;
+        int takes = p->sq[to] != EMPTY || M_FLAG(m) == FL_EP; // en passant lands on an empty square
         if (ty != PAWN) {
             *o++ = "PNBRQK"[ty];
             Move moves[256];
@@ -459,7 +476,7 @@ static void move_to_san(Pos *p, Move m, char *out)
                 if ((int)(M_FROM(x) & 7) == (from & 7)) same_file = 1;
                 if ((int)(M_FROM(x) >> 3) == (from >> 3)) same_rank = 1;
             }
-            if (amb) {
+            if (amb) { // pgn rules, file first and rank only if the file doesnt settle it
                 if (!same_file)
                     *o++ = 'a' + (from & 7);
                 else if (!same_rank)
@@ -495,7 +512,7 @@ static void draw_button(Canvas *c, Rect r, const char *label, uint32_t bg, uint3
 {
     draw_round_rect(c, r, 6, bg);
     double tw = text_lw(c, label, 0);
-    draw_text(c, r.x + (r.w - tw) / 2, r.y + (r.h - 14) / 2 - 1, label, 0, fg);
+    draw_text(c, r.x + (r.w - tw) / 2, r.y + (r.h - 14) / 2 - 1, label, 0, fg); // 14 = small font height
 }
 
 static void draw_close(Canvas *c, Rect r)
@@ -531,7 +548,7 @@ static void draw_gear(Canvas *c, Rect r, int active)
 
 static Rect panel_rect(const Rect *bl, double w, double h, const Rect *outr)
 {
-    if (cfg.spot == 2 || cfg.spot == 3) {
+    if (cfg.spot == 2 || cfg.spot == 3) { // left/right, falls back to the top if its off screen
         double x = cfg.spot == 2 ? bl->x - w - 8 : bl->x + bl->w + 8;
         double y = bl->y;
         if (x >= outr->x + 4 && x + w <= outr->x + outr->w - 4) return (Rect){x, y, w, h};
@@ -548,7 +565,7 @@ static Rect panel_rect(const Rect *bl, double w, double h, const Rect *outr)
     if (x + w > outr->x + outr->w - 4) x = outr->x + outr->w - 4 - w;
     double y = bl->y - h - 8;
     if (y < outr->y + 4) y = bl->y + bl->h + 8;
-    if (y + h > outr->y + outr->h - 4) y = bl->y + 4;
+    if (y + h > outr->y + outr->h - 4) y = bl->y + 4; // fullscreen board, nowhere left but on top of it
     return (Rect){x, y, w, h};
 }
 
@@ -606,7 +623,7 @@ static void mark_square(Canvas *c, Rect r, int style, uint32_t col)
     }
     case 5: {
         double cx = r.x + s / 2, cy = r.y + s / 2, rr = s * 0.36;
-        for (int k = 0; k < 48; k++) {
+        for (int k = 0; k < 48; k++) { // no ring in draw.c, 48 short lines look round enough
             double a0 = k * M_PI / 24, a1 = (k + 1) * M_PI / 24;
             draw_line(c, cx + cos(a0) * rr, cy + sin(a0) * rr, cx + cos(a1) * rr, cy + sin(a1) * rr, s * 0.07, col | 0xFF000000);
         }
@@ -693,7 +710,7 @@ static void draw_move(Canvas *c, Rect bl, Move m, int white_bottom, uint32_t col
         double head = s * 0.42 * (0.7 + 0.3 * tk), hw = s * 0.3 * (0.7 + 0.3 * tk), lw = s * 0.16 * tk;
         double cum[48] = {0};
         for (int k = 1; k < np; k++) cum[k] = cum[k - 1] + len2(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]);
-        double L = cum[np - 1], from_d = s * 0.18, to_d = L - head;
+        double L = cum[np - 1], from_d = s * 0.18, to_d = L - head; // shaft stops where the head starts
         if (L > 1 && to_d > from_d) {
             double Q[48][2], qd[48];
             int nq = 0;
@@ -711,7 +728,7 @@ static void draw_move(Canvas *c, Rect bl, Move m, int white_bottom, uint32_t col
             double span = to_d - from_d;
             if (arrow == 7)
                 for (int k = 0; k + 1 < nq; k++)
-                    draw_line(c, Q[k][0], Q[k][1], Q[k + 1][0], Q[k + 1][1], lw * 3.2, (col & 0xFFFFFF) | ((col >> 26) << 24));
+                    draw_line(c, Q[k][0], Q[k][1], Q[k + 1][0], Q[k + 1][1], lw * 3.2, (col & 0xFFFFFF) | ((col >> 26) << 24)); // quarter alpha
             for (int k = 0; k + 1 < nq; k++) {
                 double x0 = Q[k][0], y0 = Q[k][1], x1 = Q[k + 1][0], y1 = Q[k + 1][1];
                 if (arrow == 4) {
@@ -719,7 +736,7 @@ static void draw_move(Canvas *c, Rect bl, Move m, int white_bottom, uint32_t col
                     draw_line(c, x0, y0, x1, y1, w, col);
                 } else if (arrow == 5) {
                     double seg = s * 0.32, len = qd[k + 1] - qd[k];
-                    for (double d = 0; d < len; d += 1) {
+                    for (double d = 0; d < len; d += 1) { // phase comes off the whole length so dashes carry across curve pieces
                         if (wrap(qd[k] + d, seg) > seg * 0.6) continue;
                         double e = fmin(d + 1, len), ta = d / len, tb = e / len;
                         draw_line(c, x0 + (x1 - x0) * ta, y0 + (y1 - y0) * ta, x0 + (x1 - x0) * tb, y0 + (y1 - y0) * tb, lw, col);
@@ -758,7 +775,7 @@ static void draw_move(Canvas *c, Rect bl, Move m, int white_bottom, uint32_t col
 static uint32_t pick_color(int idx, uint32_t fallback)
 {
     if (idx == 10) {
-        double h = wrap(now_ms() / 6000.0, 1.0) * 6, f = h - floor(h);
+        double h = wrap(now_ms() / 6000.0, 1.0) * 6, f = h - floor(h); // one lap every 6 sec
         int i = (int)h;
         double rgb[6][3] = {{1, f, 0}, {1 - f, 1, 0}, {0, 1, f}, {0, 1 - f, 1}, {f, 0, 1}, {1, 0, 1 - f}};
         return 0xC8000000u | (uint32_t)(rgb[i][0] * 255) << 16 | (uint32_t)(rgb[i][1] * 255) << 8 | (uint32_t)(rgb[i][2] * 255);
@@ -793,7 +810,7 @@ static void draw_evalbar(Canvas *c, Rect bl, const Analysis *a, int white_bottom
     int sc = side == WHITE ? a->score : -a->score, mate = side == WHITE ? a->mate : -a->mate;
     double target = mate > 0 ? 1 : mate < 0 ? 0 : 1 / (1 + exp(-0.00368208 * sc));
     static double wp = 0.5;
-    wp += (target - wp) * 0.3;
+    wp += (target - wp) * 0.3; // slides instead of jumping, bar_moving keeps the frames coming till its there
     if (fabs(target - wp) < 0.003) wp = target;
     bar_moving = wp != target;
     double wh = bl.h * wp;
@@ -833,7 +850,7 @@ static int lib_matches(int i)
     if (!has_ci(e->name, lib_query) && !has_ci(e->about, lib_query) && !has_ci(e->tags, lib_query)) return 0;
     switch (lib_filter) {
     case 1: return e->tier == 1;
-    case 2: return e->mb < 10 || strstr(e->tags, "small");
+    case 2: return e->mb < 10 || strstr(e->tags, "small"); // under 10 MB counts even without the tag
     case 3: return strstr(e->tags, "fun") || strstr(e->tags, "variants");
     case 4: return strstr(e->tags, "old") != NULL;
     }
@@ -903,7 +920,7 @@ static double anim_force = -1;
 
 static double ease(long since, int ms)
 {
-    if (anim_force >= 0) return anim_force;
+    if (anim_force >= 0) return anim_force; // OPEN_CHEASE_ANIM_AT, freezes every animation for screenshots
     double t = (now_ms() - since) / (double)ms;
     if (t >= 1) return 1;
     if (t <= 0) return 0;
@@ -913,6 +930,7 @@ static double ease(long since, int ms)
 static int animating(void)
 {
     long n = now_ms();
+    // a bit longer than each ease() so the last frame lands at 1
     return n - menu_t < 200 || n - menu_shut < 140 || n - set_t < 220 || n - set_shut < 140 || n - lib_t < 240 ||
            n - conf_t < 200 || n - tab_t < 200 || n - dd_t < 170 || n - tog_t < 170 || n - pick_t < 240 || bar_moving;
 }
@@ -953,12 +971,12 @@ static uint32_t mix(uint32_t a, uint32_t b, double t)
     return o;
 }
 
-static Canvas lays[3];
+static Canvas lays[3]; // popup, tab slide, dropdown. each fades on its own so they cant share
 static size_t lay_cap[3];
 
 static Canvas *layer(int k, const Canvas *c, Rect r)
 {
-    double pad = 16;
+    double pad = 16; // room for the drop shadow and the slide in
     int w = (int)ceil((r.w + 2 * pad) * c->scale) + 2, h = (int)ceil((r.h + 2 * pad) * c->scale) + 2;
     size_t need = (size_t)w * h;
     if (need > lay_cap[k]) {
@@ -975,7 +993,7 @@ static Canvas *layer(int k, const Canvas *c, Rect r)
 
 static void panel_bg(Canvas *c, Rect m, double rad, uint32_t fill)
 {
-    for (int k = 4; k >= 1; k--)
+    for (int k = 4; k >= 1; k--) // fake soft shadow, 4 faint rects stacked and pushed down a bit
         draw_round_rect(c, (Rect){m.x - k + 1, m.y - k + 4, m.w + 2 * k - 2, m.h + 2 * k - 2}, rad + k, 0x16000000);
     draw_round_rect(c, (Rect){m.x - 1, m.y - 1, m.w + 2, m.h + 2}, rad + 1, (TH->btn & 0xFFFFFF) | 0xC0000000);
     draw_round_rect(c, m, rad, fill);
@@ -1019,6 +1037,7 @@ static void draw_library(Canvas *dst, Rect outr, Rect bl, int hit)
     snprintf(q, sizeof(q), "search: %s_", lib_query);
     draw_text(c, sb.x + 10, sb.y + 6, q, 0, TH->item_fg);
     y += 36;
+    // clickable keys too, not every backend can grab the keyboard
     static const char *rows[4] = {"1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"};
     for (int r = 0; r < 4; r++) {
         int n = (int)strlen(rows[r]) + (r == 3 ? 2 : 0);
@@ -1082,7 +1101,7 @@ static void draw_library(Canvas *dst, Rect outr, Rect bl, int hit)
             if (getting && dl_percent(e->mb) >= 0) snprintf(pct, sizeof(pct), "%d%%", dl_percent(e->mb));
             const char *bt = getting ? pct : using ? "Using" : got ? "Use" : "Get";
             draw_button(c, b1, bt, using ? TH->title : TH->btn, using ? 0xFF181818 : TH->btn_fg);
-            if (hit && !getting && !using) add_hit_arg(b1, got ? ACT_LIB_USE : ACT_LIB_GET, got ? -1 - i : i);
+            if (hit && !getting && !using) add_hit_arg(b1, got ? ACT_LIB_USE : ACT_LIB_GET, got ? -1 - i : i); // negative = library index, the installed tab sends engine indexes
         } else {
             char info[160];
             struct stat st;
@@ -1099,7 +1118,7 @@ static void draw_library(Canvas *dst, Rect outr, Rect bl, int hit)
             if (hit && !using) add_hit_arg(b1, ACT_LIB_USE, i);
             if (mine(i)) {
                 Rect b2 = {b1.x, b1.y + 26, 84, 22};
-                int sure = lib_del == i;
+                int sure = lib_del == i; // two clicks to delete
                 draw_button(c, b2, sure ? "Sure?" : "Delete", sure ? 0xFFD03A3A : TH->btn, 0xFFFFFFFF);
                 if (hit) add_hit_arg(b2, ACT_LIB_DEL, i);
             }
@@ -1206,20 +1225,20 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
                             "click one, pick whats there", "", "if it got lost", "get, pick or delete them", "", "",
                             "pulls the newest version", ""};
     int acts[10] = {ACT_MODE, ACT_DEBUG, ACT_FIX, ACT_TURN, ACT_RESCAN, ACT_LIB_OPEN, ACT_FLIP, ACT_RESTART, ACT_UPDATE, ACT_QUIT};
-    int icons[10] = {9, 0, 1, 2, 3, 4, 5, 6, 7, 8};
-    int group[10] = {0, 1, 1, 1, 1, 2, 2, 3, 3, 4};
-    double mw = 236, ih = 42, gap = 9, mh = 10 * ih + 4 * gap + 12;
+    int icons[10] = {9, 0, 1, 2, 3, 4, 5, 6, 7, 8}; // 9 is the switch, flips to 10 when its on
+    int group[10] = {0, 1, 1, 1, 1, 2, 2, 3, 3, 4}; // divider line wherever this changes
+    double mw = 236, ih = 42, gap = 9, mh = 10 * ih + 4 * gap + 12; // 4 dividers
     Rect m = {p.x + p.w - mw, p.y + p.h + 6, mw, mh};
-    if (m.y + mh > outr.y + outr.h) m.y = p.y - mh - 6;
+    if (m.y + mh > outr.y + outr.h) m.y = p.y - mh - 6; // box at the bottom, open upwards
     if (m.y < outr.y) m.y = outr.y + 4;
     if (m.x < outr.x + 4) m.x = outr.x + 4;
     int closing = !menu_open;
     double an = closing ? ease(menu_shut, 130) : ease(menu_t, 190);
     Canvas *c = layer(0, dst, m);
     if (!c) return;
-    if (!closing) covers(m, bl);
+    if (!closing) covers(m, bl); // a closing menu shouldnt pause tracking
     panel_bg(c, m, 14, TH->menu);
-    if (hit) add_hit(m, ACT_BLOCK);
+    if (hit) add_hit(m, ACT_BLOCK); // goes first, clicks check hits newest first so the rows win
     double y = m.y + 6;
     for (int k = 0; k < 10; k++) {
         if (k && group[k] != group[k - 1]) {
@@ -1254,7 +1273,7 @@ static int set_tab, cslot, cpart;
 static int tab_of(int i)
 {
     int t = 0;
-    for (int k = 0; k <= i; k++)
+    for (int k = 0; k <= i; k++) // the last section header above it, sets[] is in tab order
         if (sets[k].section)
             for (int j = 0; j < NTABS; j++)
                 if (!strcmp(sets[k].section, tab_names[j])) t = j;
@@ -1263,7 +1282,7 @@ static int tab_of(int i)
 
 static uint32_t swatch(int i)
 {
-    if (i >= 60) {
+    if (i >= 60) { // 12 hues x 5 shades, then a row of greys
         uint32_t g = (uint32_t)(255 * (i - 60) / 11);
         return 0xFF000000u | g << 16 | g << 8 | g;
     }
@@ -1319,14 +1338,14 @@ static double themes_tab(Canvas *c, Rect m, double y, double pad, int draw, int 
     }
     const char *cpl = cfg.theme >= CUSTOM0 ? "Start from Dark" : "Copy current theme";
     Rect cp = {bx, y, text_lw(c, cpl, 0) + 22, 26};
-    if (cp.x + cp.w > x0 + w) cp.x = x0, cp.y = y += 32;
+    if (cp.x + cp.w > x0 + w) cp.x = x0, cp.y = y += 32; // one column panel, wont fit next to the slots
     if (draw) {
         draw_button(c, cp, cpl, TH->btn, TH->btn_fg);
         if (hit) add_hit(cp, ACT_CCOPY);
     }
     y += 34;
     double lw = 150, sw = 22, sg = 4, pw = 12 * (sw + sg);
-    int side = w >= lw + 12 + pw;
+    int side = w >= lw + 12 + pw; // swatches beside the parts list, or under it on narrow screens
     for (int k = 0; k < NPARTS; k++) {
         Rect r = {x0, y + k * 24, lw, 22};
         if (draw) {
@@ -1374,13 +1393,13 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     int per = (n + ncol - 1) / ncol;
     Rect m = {0, 0, mw, 0};
     if (set_tab == TAB_THEMES)
-        body = themes_tab(c, m, top, pad, 0, 0) - top;
+        body = themes_tab(c, m, top, pad, 0, 0) - top; // draw 0 = just measure it
     else
         body = per * rh + 40;
     double mh = top + body + pad;
     static double from_h, to_h;
     static long h_t = -99999;
-    if (mh != to_h) {
+    if (mh != to_h) { // tabs are different heights, grow from wherever it is right now
         from_h = to_h ? from_h + (to_h - from_h) * ease(h_t, 200) : mh;
         to_h = mh, h_t = now_ms();
     }
@@ -1397,7 +1416,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     if (!closing) covers(m, bl);
     panel_bg(c, m, 14, TH->menu);
     if (hit) add_hit(m, ACT_BLOCK);
-    set_text_zoom(1);
+    set_text_zoom(1); // box size shouldnt blow up the settings too
     draw_text(c, m.x + pad, m.y + 10, "Settings", 1, TH->title);
     Rect x = {m.x + m.w - pad - 26, m.y + 10, 26, 26};
     draw_close(c, x);
@@ -1413,6 +1432,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         if (hit) add_hit_arg(r, ACT_TAB, k);
     }
     draw_round_rect(c, pill, 13, TH->title);
+    // labels go on after the pill, dark text only where the pill is under it mid slide
     for (int k = 0; k < NTABS; k++) {
         Rect r = tabr[k];
         r.x += m.x, r.y += m.y;
@@ -1422,7 +1442,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     }
     Canvas *panel = c;
     Rect area = {m.x, m.y + top - 6, m.w, m.h - top + 6};
-    if (tq < 1 && (c = layer(1, panel, area)) == NULL) c = panel;
+    if (tq < 1 && (c = layer(1, panel, area)) == NULL) c = panel; // only needs its own layer while it slides
     Rect ddbox = {0};
     if (set_tab == TAB_THEMES) themes_tab(c, m, m.y + top, pad, 1, hit);
     for (int j = 0; set_tab != TAB_THEMES && j < n; j++) {
@@ -1435,7 +1455,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         if (st->names == onoff) {
             int on = *st->v;
             Rect sw = {row.x + row.w - 46, row.y + 3.5, 38, 18};
-            double d = 14, q = i == tog_i ? ease(tog_t, 160) : 1, v = on ? q : 1 - q;
+            double d = 14, q = i == tog_i ? ease(tog_t, 160) : 1, v = on ? q : 1 - q; // only the one you just clicked slides
             draw_round_rect(c, sw, 9, mix(TH->btn, TH->title, v));
             draw_round_rect(c, (Rect){sw.x + 2 + (sw.w - d - 4) * v, sw.y + 2, d, d}, d / 2, mix(0xFFE8E8E8, 0xFF181818, v));
         } else {
@@ -1454,7 +1474,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
                 draw_text(c, tx2 + 1, box.y + 1, ">", 0, fg);
             else
                 draw_triangle(c, tx2, ty2, tx2 + 9, ty2, tx2 + 4.5, ty2 + 5, fg);
-            if (dd_open == i) ddbox = box;
+            if (dd_open == i) ddbox = box; // list gets drawn after the panel so it can hang off the bottom
         }
         if (hit) add_hit_arg(row, ACT_SET, i);
     }
@@ -1498,9 +1518,9 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             } else {
                 draw_text(c, it.x + 8, it.y + 3, st->names[k], 0, TH->item_fg);
             }
-            if (hit) add_hit_arg(it, ACT_PICK, dd_open * 64 + k);
+            if (hit) add_hit_arg(it, ACT_PICK, dd_open * 64 + k); // setting and choice in one int, no list has 64 things
         }
-        if (c != base) canvas_blit(base, c, fmin(1, dq * 1.5), 0, -5 * (1 - dq), 18 + l.h * dq);
+        if (c != base) canvas_blit(base, c, fmin(1, dq * 1.5), 0, -5 * (1 - dq), 18 + l.h * dq); // clip_h unrolls it top down
     }
 }
 
@@ -1532,7 +1552,7 @@ static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
         if (fix_sq >= 0) {
             double h = 78;
             Rect pk = {bl.x, bl.y + bl.h + 8, bl.w, h};
-            if (pk.y + h > outr.y + outr.h) pk.y = bl.y + bl.h - h - 4;
+            if (pk.y + h > outr.y + outr.h) pk.y = bl.y + bl.h - h - 4; // covers the bottom rank but thats fine while fixing
             draw_round_rect(c, pk, 10, 0xF8181818);
             if (hit) add_hit(pk, ACT_BLOCK);
             double bw = (pk.w - 8 * 6) / 7, bh = 30;
@@ -1544,7 +1564,7 @@ static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
                     int act = ACT_PIECE, arg;
                     if (k < 6) {
                         snprintf(lab, sizeof(lab), "%c", piece_letters[k]);
-                        arg = row * 6 + k;
+                        arg = row * 6 + k; // same codes as pos.sq, white row then black
                     } else if (row == 0) {
                         snprintf(lab, sizeof(lab), "Empty");
                         arg = EMPTY;
@@ -1563,7 +1583,7 @@ static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
                 }
         }
     }
-    if (menu_open || now_ms() - menu_shut < 130) draw_menu(c, p, bl, outr, menu_open && hit);
+    if (menu_open || now_ms() - menu_shut < 130) draw_menu(c, p, bl, outr, menu_open && hit); // keep drawing it while it fades out, but no clicks
     if (settings_open || now_ms() - set_shut < 130) draw_settings(c, p, bl, outr, settings_open && hit);
     if (confirm_quit) {
         Rect q = {p.x + p.w - 250, p.y + p.h + 6, 250, 74};
@@ -1587,7 +1607,7 @@ static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
             c = dst;
         }
     }
-    if (lib_open) draw_library(c, outr, bl, hit);
+    if (lib_open) draw_library(c, outr, bl, hit); // last so its on top of everything
 }
 
 static int qs(Pos *p, int alpha, int beta, int d)
@@ -1598,7 +1618,7 @@ static int qs(Pos *p, int alpha, int beta, int d)
     Move ms[256];
     int n = pos_gen_legal(p, ms);
     for (int i = 0; i < n && alpha < beta; i++) {
-        if (p->sq[M_TO(ms[i])] == EMPTY && M_FLAG(ms[i]) != FL_EP) continue;
+        if (p->sq[M_TO(ms[i])] == EMPTY && M_FLAG(ms[i]) != FL_EP) continue; // captures only, so a trade isnt scored halfway
         Undo u;
         if (!pos_make(p, ms[i], &u)) continue;
         int sc = -qs(p, -beta, -alpha, d - 1);
@@ -1610,7 +1630,7 @@ static int qs(Pos *p, int alpha, int beta, int d)
 
 static int quick(Pos *p, int depth, int alpha, int beta) // own stack, doesnt touch the shared tables
 {
-    if (!depth) return qs(p, alpha, beta, 4);
+    if (!depth) return qs(p, alpha, beta, 4); // 4 captures deep is plenty for these picks
     Move ms[256];
     int n = pos_gen_legal(p, ms);
     if (!n) return pos_in_check(p, p->side) ? -30000 : 0;
@@ -1630,7 +1650,7 @@ static Move fun_pick(const Analysis *an)
     static int cmode = -1;
     static Move cm;
     if (!cfg.chaos || !an->best) return an->best;
-    if (ck == tracker.pos.key && cmode == cfg.chaos) return cm;
+    if (ck == tracker.pos.key && cmode == cfg.chaos) return cm; // same spot same pick, or the arrow jumps around every redraw
     Pos p = tracker.pos;
     Move ms[256];
     int sc[256], n = pos_gen_legal(&p, ms);
@@ -1639,7 +1659,7 @@ static Move fun_pick(const Analysis *an)
     for (int i = 0; i < n; i++) {
         Undo u;
         pos_make(&p, ms[i], &u);
-        sc[i] = -quick(&p, 1, -99999, 99999);
+        sc[i] = -quick(&p, 1, -99999, 99999); // the engine only scores its top lines, this needs every move
         pos_unmake(&p, &u);
         if (sc[i] > best) best = sc[i];
         if (sc[i] < worst) worst = sc[i];
@@ -1650,7 +1670,7 @@ static Move fun_pick(const Analysis *an)
     switch (cfg.chaos) {
     case 1:
         for (int i = 0; i < n; i++)
-            if (sc[i] >= best - 60) pool[np++] = ms[i];
+            if (sc[i] >= best - 60) pool[np++] = ms[i]; // within 0.6 of the best
         break;
     case 2:
         for (int k = 0; k < 3 && k < n; k++) {
@@ -1678,7 +1698,7 @@ static Move fun_pick(const Analysis *an)
     case 6:
         for (int i = 0; i < n; i++)
             if (sc[i] <= best - 200) pool[np++] = ms[i];
-        if (!np)
+        if (!np) // every move is about equal, so just the worst
             for (int i = 0; i < n; i++)
                 if (sc[i] == worst) pool[np++] = ms[i];
         break;
@@ -1688,19 +1708,19 @@ static Move fun_pick(const Analysis *an)
         int last_to = tracker.last_move ? (int)M_TO(tracker.last_move) : -1;
         for (int i = 0; i < n; i++) {
             w[i] = 0;
-            if (sc[i] < best - 120) continue;
+            if (sc[i] < best - 120) continue; // over a pawn worse, nobody decent plays that
             int from = M_FROM(ms[i]), to = M_TO(ms[i]), ty = p.sq[from] % 6, cap = p.sq[to] != EMPTY;
-            double x = exp((sc[i] - best) / 60.0);
+            double x = exp((sc[i] - best) / 60.0); // every 0.6 worse is e times less likely
             if (cap) x *= to == last_to ? 2.5 : 1.6; // people always look at recaptures first
             if (M_FLAG(ms[i]) == FL_CASTLE) x *= 1.8;
-            if (pos_is_attacked(&p, from, them) && ty != PAWN) x *= 1.5;
+            if (pos_is_attacked(&p, from, them) && ty != PAWN) x *= 1.5; // moving the piece thats being hit
             if (early && (ty == KNIGHT || ty == BISHOP) && (from >> 3) == (us == WHITE ? 0 : 7)) x *= 1.4;
-            if (early && ty == QUEEN) x *= 0.6;
+            if (early && ty == QUEEN) x *= 0.6; // everyone gets told not to bring the queen out early
             if (ty == KING && M_FLAG(ms[i]) != FL_CASTLE && !early && p.fullmove < 40) x *= 0.5;
-            if (ty == PAWN && !cap && ((to & 7) == 0 || (to & 7) == 7)) x *= 0.7;
+            if (ty == PAWN && !cap && ((to & 7) == 0 || (to & 7) == 7)) x *= 0.7; // a and h pawn pushes look random
             Undo u;
             pos_make(&p, ms[i], &u);
-            if (pos_in_check(&p, p.side)) x *= 1.4;
+            if (pos_in_check(&p, p.side)) x *= 1.4; // checks get looked at
             pos_unmake(&p, &u);
             w[i] = x, total += x;
         }
@@ -1736,9 +1756,9 @@ static const char *quip(u64 key)
                                 "you asked for chaos", "chess is a social game anyway", "for science",
                                 "i saw it in a dream", "they'll be too confused", "sorry in advance", "yolo",
                                 "let him cook", "statistically a move", "your friend is gonna laugh"};
-    const char **list = cfg.chaos >= 4 ? bad : good;
+    const char **list = cfg.chaos >= 4 ? bad : good; // random move and down, human-like lands in here too
     size_t n = cfg.chaos >= 4 ? sizeof(bad) / sizeof(*bad) : sizeof(good) / sizeof(*good);
-    return list[(key * 2654435761u >> 7) % n];
+    return list[(key * 2654435761u >> 7) % n]; // off the position key so it doesnt change every frame
 }
 
 static const char *roast(int mine, int grade)
@@ -1781,7 +1801,7 @@ static void draw_sqnames(Canvas *c, Rect bl, int white_bottom)
 static void draw_confetti(Canvas *c, Rect bl)
 {
     static const uint32_t cols[] = {0xFFFF4D4D, 0xFFFFC400, 0xFF2BD957, 0xFF3D9BFF, 0xFFFF5FC8, 0xFFA86BFF};
-    unsigned seed = (unsigned)(now_ms() / 300);
+    unsigned seed = (unsigned)(now_ms() / 300); // no particles to keep track of, it just reshuffles every 300ms
     for (int i = 0; i < 120; i++) {
         seed = seed * 1103515245u + 12345u;
         double x = bl.x + (seed >> 8) % (unsigned)bl.w;
@@ -1802,11 +1822,11 @@ static uint32_t badge_col;
 
 static int user_score(const Analysis *a, int user_to_move)
 {
-    int sc = a->mate ? (a->mate > 0 ? 1000 : -1000) : a->score;
+    int sc = a->mate ? (a->mate > 0 ? 1000 : -1000) : a->score; // mate counts as 10 pawns so the rating math stays sane
     return user_to_move ? sc : -sc;
 }
 
-static const char *openings[][2] = {
+static const char *openings[][2] = { // matched by position, so other move orders still get the name
     {"e2e4", "King's Pawn"},
     {"d2d4", "Queen's Pawn"},
     {"c2c4", "English Opening"},
@@ -1902,7 +1922,7 @@ static void init_openings(void)
             Undo u;
             if (!m || !pos_make(&p, m, &u)) break;
         }
-        open_keys[i] = tok ? 0 : p.key;
+        open_keys[i] = tok ? 0 : p.key; // a bad move in the table just never matches
     }
 }
 
@@ -1917,7 +1937,7 @@ static Pos san_prev;
 static u64 san_key, counted_key;
 static double acc_sum[2];
 
-static double win_pct(int cp) { return 100 / (1 + exp(-0.00368208 * cp)); }
+static double win_pct(int cp) { return 100 / (1 + exp(-0.00368208 * cp)); } // same curve lichess uses
 
 static void helper_track(const Analysis *an, int have_an, int my_turn)
 {
@@ -1948,9 +1968,9 @@ static void helper_track(const Analysis *an, int have_an, int my_turn)
         for (int i = 0; i < NOPEN; i++)
             if (open_keys[i] == k) open_name = openings[i][1];
     }
-    if (!have_an || an->depth < 6) return;
+    if (!have_an || an->depth < 6) return; // shallow scores jump all over the graph
     float w = an->mate ? (user_score(an, my_turn) > 0 ? 100 : 0) : win_pct(user_score(an, my_turn));
-    if (whist_key == k && nwhist) {
+    if (whist_key == k && nwhist) { // same spot, deeper search, just fix the last point
         whist[nwhist - 1] = w;
         return;
     }
@@ -1996,7 +2016,7 @@ static const char *phase_name(void)
         total += val[pc % 6];
         queens += pc % 6 == QUEEN;
     }
-    if (total <= 26 || (!queens && total <= 36)) return "Endgame";
+    if (total <= 26 || (!queens && total <= 36)) return "Endgame"; // full set is 62, pawns dont count
     if (hplies < 16 && total >= 56) return "Opening";
     return "Middlegame";
 }
@@ -2056,17 +2076,143 @@ static void danger_text(char *out, size_t n, const Analysis *an, int have_an, in
     static const int val[] = {1, 3, 3, 5, 9, 0};
     static Pos t;
     t = tracker.pos;
-    t.side = me ^ 1;
+    t.side = me ^ 1; // what could they grab if it was their move
     Move ms[256];
     int nm = pos_gen_legal(&t, ms), worst = -1;
     for (int q = 0; q < nm; q++) {
         int vic = tracker.pos.sq[M_TO(ms[q])], att = tracker.pos.sq[M_FROM(ms[q])];
-        if (vic == EMPTY || vic / 6 != me || vic % 6 == PAWN || vic % 6 == KING) continue;
+        if (vic == EMPTY || vic / 6 != me || vic % 6 == PAWN || vic % 6 == KING) continue; // a pawn isnt worth yelling about
         int cheap = val[att % 6] < val[vic % 6], loose = !pos_is_attacked(&tracker.pos, M_TO(ms[q]), me);
         if ((cheap || loose) && (worst < 0 || val[vic % 6] > val[worst])) worst = vic % 6;
     }
     static const char *nm6[] = {"pawn", "knight", "bishop", "rook", "queen", "king"};
     if (worst >= 0) snprintf(out, n, "your %s is in danger", nm6[worst]);
+}
+
+static u64 piece_hits(const Pos *p, int sq)
+{
+    static const int kn[8][2] = {{1, 2}, {2, 1}, {2, -1}, {1, -2}, {-1, -2}, {-2, -1}, {-2, 1}, {-1, 2}};
+    static const int dirs[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+    int pc = p->sq[sq], ty = pc % 6, f = sq & 7, r = sq >> 3;
+    u64 out = 0;
+    if (pc == EMPTY) return 0;
+    if (ty == PAWN) {
+        int dr = pc / 6 == WHITE ? 1 : -1;
+        for (int df = -1; df <= 1; df += 2)
+            if (f + df >= 0 && f + df < 8 && r + dr >= 0 && r + dr < 8) out |= 1ULL << ((r + dr) * 8 + f + df);
+        return out;
+    }
+    if (ty == KNIGHT || ty == KING) {
+        for (int k = 0; k < 8; k++) {
+            int ff = f + (ty == KNIGHT ? kn[k][0] : dirs[k][0]), rr = r + (ty == KNIGHT ? kn[k][1] : dirs[k][1]);
+            if (ff >= 0 && ff < 8 && rr >= 0 && rr < 8) out |= 1ULL << (rr * 8 + ff);
+        }
+        return out;
+    }
+    for (int k = ty == BISHOP ? 4 : 0; k < (ty == ROOK ? 4 : 8); k++)
+        for (int ff = f + dirs[k][0], rr = r + dirs[k][1]; ff >= 0 && ff < 8 && rr >= 0 && rr < 8; ff += dirs[k][0], rr += dirs[k][1]) {
+            out |= 1ULL << (rr * 8 + ff);
+            if (p->sq[rr * 8 + ff] != EMPTY) break; // the blocker still counts, thats what gets hit
+        }
+    return out;
+}
+
+static Move threat_mv;
+static char threat_txt[96];
+
+static void find_threat(void)
+{
+    static u64 done_key;
+    static int done_side = -1;
+    if (done_key == tracker.pos.key && done_side == tracker.user_color) return;
+    done_key = tracker.pos.key, done_side = tracker.user_color;
+    threat_mv = 0, threat_txt[0] = 0;
+    int me = tracker.user_color;
+    if (tracker.pos.side != me || pos_in_check(&tracker.pos, me)) return;
+    // pretend we pass and see what they would do with a free move
+    static Pos t;
+    t = tracker.pos;
+    t.side = me ^ 1;
+    t.ep = -1; // that ep square was ours to take, not theirs
+    Move ms[256];
+    int n = pos_gen_legal(&t, ms), best = -99999, base = evaluate(&t);
+    Move bm = 0;
+    for (int i = 0; i < n; i++) {
+        Undo u;
+        if (!pos_make(&t, ms[i], &u)) continue;
+        int sc = -quick(&t, 1, -99999, 99999);
+        pos_unmake(&t, &u);
+        if (sc > best) best = sc, bm = ms[i];
+    }
+    if (!bm || best - base < 90) return; // less than about a pawn isnt a threat, its noise
+    static const char *pn[] = {"pawn", "knight", "bishop", "rook", "queen", "king"};
+    char san[16];
+    Pos s2 = t;
+    move_to_san(&s2, bm, san);
+    threat_mv = bm;
+    int vic = t.sq[M_TO(bm)];
+    if (best >= 20000) { // quick() gives 30000 for mate
+        snprintf(threat_txt, sizeof(threat_txt), "they threaten mate with %s", san);
+        return;
+    }
+    if (vic != EMPTY) {
+        snprintf(threat_txt, sizeof(threat_txt), "they can take your %s with %s", pn[vic % 6], san);
+        return;
+    }
+    Undo u;
+    pos_make(&t, bm, &u);
+    u64 hit = piece_hits(&t, M_TO(bm));
+    int seen[2], ns = 0;
+    for (int ty = KING; ty >= KNIGHT && ns < 2; ty--) // biggest first, forking two pawns isnt news
+        for (u64 b = t.bb[me * 6 + ty] & hit; b && ns < 2; b &= b - 1) seen[ns++] = ty;
+    pos_unmake(&t, &u);
+    if (ns == 2)
+        snprintf(threat_txt, sizeof(threat_txt), "%s would fork your %s and %s", san, pn[seen[0]], pn[seen[1]]);
+    else
+        snprintf(threat_txt, sizeof(threat_txt), "watch out for %s", san);
+}
+
+static int hint_lv;
+static u64 hint_key;
+
+static void engine_bin(char *out, size_t n)
+{
+    char exe[4096];
+    ssize_t l = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    exe[l > 0 ? l : 0] = 0;
+    char *slash = strrchr(exe, '/');
+    if (slash) *slash = 0;
+    snprintf(out, n, "%.1000s/open-chease-engine", exe); // mine as a uci exe, it sits next to us in bin/
+}
+
+static void keep_second(void)
+{
+    if (!cfg.second) saved_second[0] = 0;
+    else if (cfg.second == 1) snprintf(saved_second, sizeof(saved_second), "builtin");
+    else snprintf(saved_second, sizeof(saved_second), "%.1000s", engine_paths[cfg.second - 1]);
+}
+
+static void sync_seconds(int my_turn)
+{
+    char p0[1100] = "", p1[1100] = "";
+    if (cfg.second == 1) engine_bin(p0, sizeof(p0));
+    else if (cfg.second > 1 && cfg.second - 1 < nengines) snprintf(p0, sizeof(p0), "%s", engine_paths[cfg.second - 1]);
+    if (cfg.mode == 1 && cfg.level) {
+        if (cfg.engine > 0) snprintf(p1, sizeof(p1), "%s", engine_paths[cfg.engine]);
+        else engine_bin(p1, sizeof(p1));
+    }
+    static char was0[1100] = "-", was1[1100] = "-";
+    static int welo = -1, wms = -1;
+    int ms = think_secs[cfg.think] * 1000 > 3000 ? 3000 : think_secs[cfg.think] * 1000; // its a second opinion, 3s is plenty
+    if (strcmp(was0, p0) || wms != ms) second_set(0, p0, 0, ms), snprintf(was0, sizeof(was0), "%s", p0), wms = ms;
+    if (strcmp(was1, p1) || welo != level_elo[cfg.level]) {
+        welo = level_elo[cfg.level];
+        second_set(1, p1, welo, 1000);
+        snprintf(was1, sizeof(was1), "%s", p1);
+    }
+    if (state != TRACKING) return;
+    if (*p0 && (my_turn || cfg.theirtoo)) second_ask(0, &tracker.pos);
+    if (*p1 && my_turn) second_ask(1, &tracker.pos);
 }
 
 static void game_report(char *out, size_t n)
@@ -2191,10 +2337,13 @@ static void redraw(void)
     int have_an = state == TRACKING && analyzer_get(&an) && an.key == tracker.pos.key;
     snprintf(engine_name, sizeof(engine_name), "%s", an.engine);
     if (cfg.engine > 0 && cfg.engine < nengines && *an.engine_base && strcmp(an.engine_base, "open-chease") &&
-        strcmp(engine_labels[cfg.engine], an.engine_base)) {
+        strcmp(engine_labels[cfg.engine], an.engine_base)) { // swap the file name for what the engine calls itself
         snprintf(engine_labels[cfg.engine], sizeof(engine_labels[0]), "%.31s", an.engine_base);
         remember_name(engine_paths[cfg.engine], an.engine_base);
     }
+    // one canvas per monitor, only the first real one adds hitboxes
+    int lead = 0;
+    while (lead < ov->ncanvas - 1 && !ov->canvas(ov, lead)) lead++;
     for (int i = 0; i < ov->ncanvas; i++) {
         Canvas *c = ov->canvas(ov, i);
         if (!c) continue;
@@ -2210,7 +2359,7 @@ static void redraw(void)
             draw_button(c, bb, "Black", 0xFF000000, 0xFFF2F2F2);
             draw_frame(c, bb, 1.2, 0xFF6A6A6A);
             draw_close(c, bx);
-            if (i == 0) {
+            if (i == lead) {
                 add_hit(bw, ACT_WHITE);
                 add_hit(bb, ACT_BLACK);
                 add_hit(bx, ACT_CLOSE);
@@ -2219,10 +2368,12 @@ static void redraw(void)
             int wb = tracker.user_color == WHITE;
             int bottom = tracker.white_bottom;
             int my_turn = tracker.pos.side == tracker.user_color;
-            if (i == 0) {
+            if (i == lead) {
                 if (tracker.pos.key != seen_key) seen_key = tracker.pos.key, pos_since = now_ms();
                 rate_moves(&an, have_an, my_turn);
                 helper_track(&an, have_an, my_turn);
+                sync_seconds(my_turn);
+                if (cfg.mode == 1 && cfg.threats) find_threat();
             }
             draw_helper_board(c, bl, bottom);
             char extra[96];
@@ -2237,16 +2388,67 @@ static void redraw(void)
             Move moves[256];
             Pos tmp = tracker.pos;
             int nlegal = pos_gen_legal(&tmp, moves);
-            if (!nlegal && i == 0 && counted_key != tracker.pos.key) {
+            if (!nlegal && i == lead && counted_key != tracker.pos.key) { // redraw runs a lot, count the game once
                 counted_key = tracker.pos.key;
                 if (!pos_in_check(&tracker.pos, tracker.pos.side)) draws++;
                 else if (my_turn) losses++;
                 else wins++;
             }
-            char alert[64] = "", mvs[96] = "";
+            char alert[64] = "", mvs[96] = "", tips[3][100];
+            int ntips = 0;
+            uint32_t tipc[3];
+            Opinion o0, o1;
+            int have0 = second_get(0, &o0) && o0.key == tracker.pos.key && o0.best;
+            int have1 = second_get(1, &o1) && o1.key == tracker.pos.key && o1.best;
             if (cfg.mode == 1 && nlegal) {
                 danger_text(alert, sizeof(alert), &an, have_an, my_turn);
                 if (cfg.movelist) moves_text(mvs, sizeof(mvs), 8);
+                if (my_turn && cfg.threats && threat_mv) {
+                    if (cfg.threats == 2)
+                        draw_move(c, bl, threat_mv, bottom, faded(0xB0FF4D4D), 5, arrow_tk(cfg.thick) * 0.75, 0, 0, NULL);
+                    snprintf(tips[ntips], 100, "%s", threat_txt), tipc[ntips++] = 0xFFFF7A5A;
+                }
+                if (my_turn && cfg.hints && hint_key == tracker.pos.key && hint_lv && have_an && an.best) {
+                    static const char *pn[] = {"pawn", "knight", "bishop", "rook", "queen", "king"};
+                    char hs[16];
+                    Pos t2 = tracker.pos;
+                    move_to_san(&t2, an.best, hs);
+                    uint32_t hc = pick_color(cfg.mcolor, TH->arrow);
+                    int f = M_FROM(an.best), to = M_TO(an.best);
+                    if (hint_lv == 1)
+                        snprintf(tips[ntips], 100, "hint: look at your %s", pn[tracker.pos.sq[f] % 6]);
+                    else if (hint_lv == 2)
+                        snprintf(tips[ntips], 100, "hint: your %s goes to %c%c", pn[tracker.pos.sq[f] % 6], 'a' + (to & 7), '1' + (to >> 3));
+                    else
+                        snprintf(tips[ntips], 100, "hint: %s", hs);
+                    tipc[ntips++] = TH->title;
+                    draw_move(c, bl, an.best, bottom, hc, hint_lv == 3 ? (cfg.arrow ? cfg.arrow : 1) : 0, arrow_tk(cfg.thick),
+                              5, hint_lv >= 2 ? 4 : 0, NULL);
+                }
+                if (my_turn && cfg.level && have1) {
+                    char ls2[16];
+                    Pos t2 = tracker.pos;
+                    move_to_san(&t2, o1.best, ls2);
+                    snprintf(tips[ntips], 100, "a %s would play %s", level_names[cfg.level], ls2);
+                    tipc[ntips++] = TH->title_off;
+                }
+                if (ntips < 3 && have0 && have_an && an.best && an.depth >= 10 && o0.best != an.best && (my_turn || cfg.theirtoo))
+                    snprintf(tips[ntips], 100, "the engines dont agree on this one"), tipc[ntips++] = TH->title_off;
+            } else if (nlegal && have0 && have_an && an.best && (my_turn || cfg.theirtoo)) {
+                char ss[16], osc[24] = "";
+                Pos t2 = tracker.pos;
+                move_to_san(&t2, o0.best, ss);
+                Analysis fake = an;
+                fake.score = o0.score, fake.mate = o0.mate;
+                format_score(&fake, my_turn, osc, sizeof(osc));
+                if (o0.best == an.best)
+                    snprintf(tips[ntips], 100, "%s agrees", o0.name);
+                else {
+                    snprintf(tips[ntips], 100, "%s says %s (%s)", o0.name, ss, osc);
+                    if (my_turn && !cfg.chaos && !cfg.hint)
+                        draw_move(c, bl, o0.best, bottom, faded(0xB01FE0E0), 6, arrow_tk(cfg.thick) * 0.7, 0, 0, NULL);
+                }
+                tipc[ntips++] = TH->title_off;
             }
             if (!nlegal) {
                 char rep[160];
@@ -2260,7 +2462,7 @@ static void redraw(void)
                 if (have_an) {
                     int us = user_score(&an, my_turn);
                     snprintf(wbuf, sizeof(wbuf), "   %.0f%% to win", win_pct(us));
-                    if (nwhist >= 2 && whist_key == tracker.pos.key && fabs(whist[nwhist - 1] - whist[nwhist - 2]) >= 3) {
+                    if (nwhist >= 2 && whist_key == tracker.pos.key && fabs(whist[nwhist - 1] - whist[nwhist - 2]) >= 3) { // +1s are just noise
                         size_t l = strlen(wbuf);
                         snprintf(wbuf + l, sizeof(wbuf) - l, " (%+.0f)", whist[nwhist - 1] - whist[nwhist - 2]);
                     }
@@ -2272,13 +2474,13 @@ static void redraw(void)
                          checked ? (my_turn ? "   You're in check!" : "   They're in check") : "", wbuf, *extra ? "   " : "", extra);
             } else if (my_turn) {
                 Move pick = have_an && an.best ? fun_pick(&an) : 0;
-                int waiting = now_ms() - pos_since < delay_secs[cfg.delay] * 1000L;
+                int waiting = now_ms() - pos_since < delay_secs[cfg.delay] * 1000L; // instant moves every turn look like a bot
                 if (pick && !waiting) {
                     char psan[16];
                     Pos t2 = tracker.pos;
                     move_to_san(&t2, pick, psan);
                     static Move shown;
-                    if (pick != shown && i == 0) shown = pick, pick_t = now_ms();
+                    if (pick != shown && i == lead) shown = pick, pick_t = now_ms();
                     uint32_t mc = pick_color(cfg.mcolor, TH->arrow);
                     mc = (mc & 0xFFFFFF) | (uint32_t)((mc >> 24) * ease(pick_t, 220)) << 24;
                     static const char *names[] = {"Best move", "Close enough", "Chaos pick", "Coin says", "Random move",
@@ -2295,7 +2497,7 @@ static void redraw(void)
                             if (!an.alt[k]) continue;
                             char num[12];
                             snprintf(num, sizeof(num), "%d", k + 2);
-                            draw_move(c, bl, an.alt[k], bottom, (mc & 0xFFFFFF) | ((mc >> 25) << 24), cfg.arrow ? cfg.arrow : 1,
+                            draw_move(c, bl, an.alt[k], bottom, (mc & 0xFFFFFF) | ((mc >> 25) << 24), cfg.arrow ? cfg.arrow : 1, // half alpha
                                       arrow_tk(cfg.thick) * 0.7, 0, 0, num);
                         }
                         draw_move(c, bl, pick, bottom, mc, cfg.arrow, arrow_tk(cfg.thick), cfg.from, cfg.to, cfg.label ? psan : NULL);
@@ -2340,6 +2542,11 @@ static void redraw(void)
                 snprintf(tmp, sizeof(tmp), "%s%s%s%s%s", alert, *alert ? "  |  " : "", mvs, *mvs ? "  |  " : "", line2);
                 snprintf(line2, sizeof(line2), "%s", tmp);
             }
+            for (int k = ntips - 1; k >= 0; k--) {
+                char tmp[320];
+                snprintf(tmp, sizeof(tmp), "%s  |  %s", tips[k], line2);
+                snprintf(line2, sizeof(line2), "%s", tmp);
+            }
             if (cfg.mode == 0 && *extra && nlegal) {
                 size_t l = strlen(line2);
                 snprintf(line2 + l, sizeof(line2) - l, "  |  %s", extra);
@@ -2347,14 +2554,15 @@ static void redraw(void)
             }
             int t1big = cfg.size > 0, t1zoom = cfg.size == 2 ? 2 : 1, t2big = cfg.size == 2;
             double bs = cfg.size == 0 ? 22 : (cfg.size == 1 ? 26 : 34);
-            Rect p, gb, mb, bx;
+            Rect p, gb, mb, bx, hb = {0, 0, 0, 0};
+            int show_hint = cfg.mode == 1 && cfg.hints && my_turn && nlegal, nbt = 3 + show_hint;
             double vw = cfg.size == 0 ? 190 : (cfg.size == 1 ? 220 : 270);
             int side = (cfg.spot == 2 && bl.x - vw - 8 >= outr.x + 4) ||
                        (cfg.spot == 3 && bl.x + bl.w + 8 + vw <= outr.x + outr.w - 4);
             if (side) {
-                const char *ls[16];
-                int big[16], zoom[16], nl = 0;
-                uint32_t lc[16];
+                const char *ls[32];
+                int big[32], zoom[32], nl = 0;
+                uint32_t lc[32];
                 char movebuf[64], scbuf[48], theirbuf[64], st[3][128];
                 int plain = cfg.mode || cfg.chaos || cfg.hint || cfg.trash || now_ms() - pos_since < delay_secs[cfg.delay] * 1000L;
                 char parts[8][128];
@@ -2398,6 +2606,7 @@ static void redraw(void)
                     }
                 }
                 if (*alert) ls[nl] = alert, big[nl] = 0, zoom[nl] = 1, lc[nl++] = 0xFFFF7A5A;
+                for (int k = 0; k < ntips && nl < 15; k++) ls[nl] = tips[k], big[nl] = 0, zoom[nl] = 1, lc[nl++] = tipc[k];
                 char few[48];
                 moves_text(few, sizeof(few), 4);
                 if (*mvs) ls[nl] = few, big[nl] = 0, zoom[nl] = 1, lc[nl++] = TH->title_off;
@@ -2418,6 +2627,7 @@ static void redraw(void)
                     set_text_zoom(1);
                     y += (big[k] ? 24 : 19) * zoom[k] + 2;
                 }
+                hb = (Rect){p.x + p.w - 4 * (bs + 4) - 4, p.y + 8, bs, bs};
                 gb = (Rect){p.x + p.w - 3 * (bs + 4) - 4, p.y + 8, bs, bs};
                 mb = (Rect){p.x + p.w - 2 * (bs + 4) - 4, p.y + 8, bs, bs};
                 bx = (Rect){p.x + p.w - (bs + 4) - 4, p.y + 8, bs, bs};
@@ -2429,13 +2639,13 @@ static void redraw(void)
                     bs = ph - 10;
                 }
                 double y2 = cfg.size == 0 ? 26 : (cfg.size == 1 ? 34 : 54);
-                double room = outr.w - 8 - 28 - 3 * (bs + 4);
+                double room = outr.w - 8 - 28 - nbt * (bs + 4);
                 set_text_zoom(t1zoom);
                 cut_to(line1, room, t1big);
                 double w1 = text_width(line1, t1big);
                 set_text_zoom(1);
                 cut_to(line2, room, t2big);
-                double w = fmax(w1, text_width(line2, t2big)) + 28 + 3 * (bs + 4);
+                double w = fmax(w1, text_width(line2, t2big)) + 28 + nbt * (bs + 4);
                 if (w < 300) w = 300;
                 p = panel_rect(&bl, w, ph, &outr);
                 panel_bg(c, p, 12, TH->panel);
@@ -2444,20 +2654,30 @@ static void redraw(void)
                 set_text_zoom(1);
                 draw_text(c, p.x + 14, p.y + y2, line2, t2big, TH->sub);
                 double by = p.y + (ph - bs) / 2;
+                hb = (Rect){p.x + p.w - 4 * (bs + 4) - 4, by, bs, bs};
                 gb = (Rect){p.x + p.w - 3 * (bs + 4) - 4, by, bs, bs};
                 mb = (Rect){p.x + p.w - 2 * (bs + 4) - 4, by, bs, bs};
                 bx = (Rect){p.x + p.w - (bs + 4) - 4, by, bs, bs};
             }
             draw_wgraph(c, p, bl, outr);
+            if (show_hint) {
+                int lv = hint_key == tracker.pos.key ? hint_lv : 0;
+                draw_round_rect(c, hb, 5, lv ? (TH->btn | 0xFF000000) + 0x00202020 : TH->btn);
+                char q[4] = "?";
+                if (lv) q[0] = (char)('0' + lv);
+                double tw = text_lw(c, q, 1);
+                draw_text(c, hb.x + (hb.w - tw) / 2, hb.y + (hb.h - 22) / 2, q, 1, TH->btn_fg);
+                if (i == lead) add_hit(hb, ACT_HINT);
+            }
             draw_gear(c, gb, settings_open);
             draw_dots(c, mb, menu_open);
             draw_close(c, bx);
-            if (i == 0) {
+            if (i == lead) {
                 add_hit(gb, ACT_SETTINGS);
                 add_hit(mb, ACT_MENU);
                 add_hit(bx, ACT_STOP);
             }
-            draw_extras(c, bl, p, outr, i == 0);
+            draw_extras(c, bl, p, outr, i == lead);
         }
     }
     Rect hr[MAX_HITS];
@@ -2471,7 +2691,7 @@ static void ignore_board(void)
         if (!ignores[i].active) {
             ignores[i].active = 1;
             ignores[i].out = board.out;
-            ignores[i].frame_rect = (Rect){board.x - board.s, board.y - board.s, board.s * 10, board.s * 10};
+            ignores[i].frame_rect = (Rect){board.x - board.s, board.y - board.s, board.s * 10, board.s * 10}; // a square of slack each side
             ignores[i].b = board;
             ignores[i].until_ms = now_ms() + 4000;
             return;
@@ -2486,7 +2706,7 @@ static void refresh_ignores(int out)
         if (!g->active || g->out != out) continue;
         MaskCtx mc = {o};
         if (o->have_frame && vision_verify(&o->frame, &g->b, masked_cb, &mc))
-            g->until_ms = now_ms() + 3000;
+            g->until_ms = now_ms() + 3000; // closed boards stay closed while theyre still on screen
         else if (now_ms() > g->until_ms)
             g->active = 0;
     }
@@ -2508,6 +2728,58 @@ static int is_ignored(int out, const Board *b)
 static int colors_close(const uint8_t *a, const uint8_t *b)
 {
     return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2]) < 40;
+}
+
+static int hexv(const char *h, int n)
+{
+    int v = 0;
+    for (int i = 0; i < n; i++) {
+        char ch = h[i];
+        int d = ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 : -1;
+        if (d < 0) return -1;
+        v = v * 16 + d;
+    }
+    return v;
+}
+
+static void profile_save(const Board *b)
+{
+    char dir[1100], path[1200];
+    snprintf(dir, sizeof(dir), "%s/pieces", data_dir);
+    mkdir(dir, 0700);
+    snprintf(path, sizeof(path), "%s/%02x%02x%02x-%02x%02x%02x.bin", dir, b->light[0], b->light[1], b->light[2], b->dark[0],
+             b->dark[1], b->dark[2]);
+    templates_save(&tpl, path);
+}
+
+static int profile_load(const Board *b)
+{
+    char dir[1100];
+    snprintf(dir, sizeof(dir), "%s/pieces", data_dir);
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    struct dirent *e;
+    char best[300] = "";
+    int bd = 40; // further off than this is some other site, keep what we have
+    while ((e = readdir(d))) {
+        if (strlen(e->d_name) != 17 || strcmp(e->d_name + 13, ".bin") || e->d_name[6] != '-') continue; // rrggbb-rrggbb.bin from profile_save
+        int dist = 0;
+        for (int k = 0; k < 3 && dist >= 0; k++) {
+            int l = hexv(e->d_name + k * 2, 2), dk = hexv(e->d_name + 7 + k * 2, 2);
+            if (l < 0 || dk < 0) dist = -1;
+            else dist += abs(l - b->light[k]) + abs(dk - b->dark[k]);
+        }
+        if (dist >= 0 && dist < bd) bd = dist, snprintf(best, sizeof(best), "%s", e->d_name);
+    }
+    closedir(d);
+    if (!*best) return 0;
+    char path[1500];
+    snprintf(path, sizeof(path), "%s/%s", dir, best);
+    Templates t = tpl;
+    if (!templates_load(&t, path)) return 0;
+    tpl = t;
+    if (verbose) fprintf(stderr, "using the piece set saved for this board (%s)\n", best);
+    return 1;
 }
 
 static void read_and_track(int first)
@@ -2539,13 +2811,13 @@ static void read_and_track(int first)
     }
     if (first > 0 || tracker.flip_pending) {
         int sc = orientation_score(r);
-        if (sc < -2 || (tracker.flip_pending && sc < 0)) {
+        if (sc < -2 || (tracker.flip_pending && sc < 0)) { // only flip on a clear read unless the tracker already thinks it rotated
             tracker.white_bottom ^= 1;
             vision_read(&o->frame, &board, tracker.white_bottom, tpl.color_thr, r, masked_cb, &mc);
         }
         tracker.flip_pending = 0;
     }
-    if (first == -1) {
+    if (first == -1) { // already resynced up there
     } else if (first) {
         int start = 1;
         for (int i = 0; i < 64; i++) {
@@ -2573,6 +2845,7 @@ static void read_and_track(int first)
             templates_learn(&tpl, r, &tracker.pos);
             learned_here = 1;
             templates_save(&tpl, tpl_path);
+            profile_save(&board);
             if (verbose) fprintf(stderr, "learned piece set from starting position\n");
         }
     }
@@ -2618,7 +2891,7 @@ static void dump_frame(void)
         }
         free(row);
         fclose(f);
-        rename(tmp, path);
+        rename(tmp, path); // whatever reads these never sees half a frame
     }
 }
 
@@ -2654,6 +2927,19 @@ static void scan_log(int grabbed, const int *scores)
     fprintf(stderr, " (needs 52)\n");
 }
 
+static void lose_board(void)
+{
+    if (verbose) fprintf(stderr, "board lost\n");
+    if (state == TRACKING) { // scrolling or a quick tab switch shouldnt throw the game away
+        saved_tracker = tracker;
+        saved_board = board;
+        saved_at = now_ms();
+        have_saved = 1;
+        analyzer_stop();
+    }
+    state = SCANNING;
+}
+
 static void tick(void)
 {
     check_download();
@@ -2680,16 +2966,18 @@ static void tick(void)
             scores[i] = b.score;
             if (hit && !is_ignored(i, &b)) {
                 b.out = i;
-                if (fabs(b.s - board.s) > 1 || b.out != board.out || !colors_close(b.light, board.light)) learned_here = 0;
+                if (fabs(b.s - board.s) > 1 || b.out != board.out || !colors_close(b.light, board.light)) { // not the board we had, pieces get relearned
+                    learned_here = 0;
+                    if (!colors_close(b.light, board.light) || !colors_close(b.dark, board.dark)) profile_load(&b);
+                }
                 board = b;
                 miss_ticks = 0;
                 if (verbose)
                     fprintf(stderr, "board found on %s at %.0f,%.0f square %.1fpx score %d, popup goes at %.0f,%.0f\n",
                             o->name, b.x, b.y, b.s, b.score, o->logical.x + b.x * o->logical.w / o->frame.w,
                             o->logical.y + b.y * o->logical.h / o->frame.h);
-                if (have_saved && now_ms() - saved_at < 15000 && saved_board.out == i &&
-                    colors_close(saved_board.light, b.light) && colors_close(saved_board.dark, b.dark) &&
-                    fabs(saved_board.s - b.s) < b.s * 0.15) {
+                if (have_saved && now_ms() - saved_at < 15000 && colors_close(saved_board.light, b.light) && colors_close(saved_board.dark, b.dark) &&
+                    fabs(saved_board.s - b.s) < b.s * 0.15) { // same board back soon, pick up where we were. zoom can change the size a bit
                     tracker = saved_tracker;
                     have_saved = 0;
                     state = TRACKING;
@@ -2708,8 +2996,15 @@ static void tick(void)
         return;
     }
     Output *o = &cap->out[board.out];
-    if (!o->have_frame) return;
-    static int was_paused;
+    static int was_paused, no_frame;
+    if (!o->have_frame) {
+        if (++no_frame >= 10 && (board.out >= cap->nout || o->logical.w <= 0)) { // monitor unplugged, not just a late frame
+            no_frame = 0;
+            lose_board();
+        }
+        return;
+    }
+    no_frame = 0;
     if (state == TRACKING && ui_over_board) { // cant see under our own menu
         snprintf(note, sizeof(note), "paused, menu open");
         note_until = now_ms() + 1200;
@@ -2718,17 +3013,7 @@ static void tick(void)
     }
     MaskCtx mc = {o};
     if (!vision_verify(&o->frame, &board, masked_cb, &mc)) {
-        if (++miss_ticks >= 3) {
-            if (verbose) fprintf(stderr, "board lost\n");
-            if (state == TRACKING) {
-                saved_tracker = tracker;
-                saved_board = board;
-                saved_at = now_ms();
-                have_saved = 1;
-                analyzer_stop();
-            }
-            state = SCANNING;
-        }
+        if (++miss_ticks >= 3) lose_board(); // one bad frame from an animation or popup isnt a lost board
         return;
     }
     miss_ticks = 0;
@@ -2801,7 +3086,7 @@ static int in_path(const char *name, char *out, size_t n)
 {
     const char *pth = getenv("PATH");
     char buf[4096];
-    snprintf(buf, sizeof(buf), "%s:/usr/games", pth ? pth : "/usr/bin");
+    snprintf(buf, sizeof(buf), "%s:/usr/games", pth ? pth : "/usr/bin"); // debian/ubuntu put stockfish in /usr/games
     char *sv;
     for (char *d = strtok_r(buf, ":", &sv); d; d = strtok_r(NULL, ":", &sv)) {
         snprintf(out, n, "%s/%s", d, name);
@@ -2823,7 +3108,7 @@ static void scan_engines(const char *extra)
     DIR *d = opendir(p);
     if (d) {
         struct dirent *e;
-        while ((e = readdir(d)) && !sf) {
+        while ((e = readdir(d)) && !sf) { // first stockfish in there wins
             char f[4096];
             snprintf(f, sizeof(f), "%s/%s", p, e->d_name);
             if (!strncmp(e->d_name, "stockfish", 9) && access(f, X_OK) == 0) add_engine("Stockfish", f), sf = 1;
@@ -2848,8 +3133,17 @@ static void scan_engines(const char *extra)
         const char *b = strrchr(extra, '/');
         add_engine(b ? b + 1 : extra, extra);
     }
-    for (int i = 0; i < NSET; i++)
+    int ns = nengines < 24 ? nengines : 24; // second_names has 25 slots and "Off" is one
+    for (int i = 0; i < ns; i++) second_names[i + 1] = engine_labels[i];
+    for (int i = 0; i < NSET; i++) {
         if (sets[i].v == &cfg.engine) sets[i].n = nengines;
+        if (sets[i].v == &cfg.second) sets[i].n = ns + 1;
+    }
+    cfg.second = 0;
+    if (!strcmp(saved_second, "builtin")) cfg.second = 1;
+    else if (*saved_second)
+        for (int i = 1; i < ns; i++)
+            if (same_file(engine_paths[i], saved_second)) cfg.second = i + 1;
 }
 
 static void cached_name(const char *path, char *out, size_t n)
@@ -2859,7 +3153,7 @@ static void cached_name(const char *path, char *out, size_t n)
     FILE *fp = fopen(f, "r");
     if (!fp) return;
     size_t pl = strlen(path);
-    while (fgets(line, sizeof(line), fp))
+    while (fgets(line, sizeof(line), fp)) // remember_name only appends, so the last line wins
         if (!strncmp(line, path, pl) && line[pl] == '|') {
             snprintf(out, n, "%.31s", line + pl + 1);
             out[strcspn(out, "\n")] = 0;
@@ -2907,6 +3201,41 @@ static void lib_out_path(int i, char *out, size_t n)
     snprintf(out, n, "%s/engines/%s", data_dir, slug);
 }
 
+static char lc0_bin[1024];
+
+static int nvidia_gpu(void)
+{
+    if (access("/proc/driver/nvidia/version", R_OK)) return 0;
+    DIR *d = opendir("/sys/class/drm");
+    struct dirent *e;
+    int found = 0;
+    while (d && (e = readdir(d)) && !found) {
+        if (strncmp(e->d_name, "card", 4) || strchr(e->d_name, '-')) continue; // card0-HDMI-A-1 and co are ports
+        char p[600], v[16] = "";
+        snprintf(p, sizeof(p), "/sys/class/drm/%.200s/device/vendor", e->d_name);
+        FILE *f = fopen(p, "r");
+        if (f) {
+            if (fgets(v, sizeof(v), f) && !strncmp(v, "0x10de", 6)) found = 1; // nvidias pci vendor id
+            fclose(f);
+        }
+    }
+    if (d) closedir(d);
+    return found;
+}
+
+static int find_lc0(char *out, size_t n)
+{
+    if (in_path("lc0", out, n)) return 1;
+    const char *home = getenv("HOME");
+    const char *spots[] = {"/home/linuxbrew/.linuxbrew/bin/lc0", "%s/.linuxbrew/bin/lc0", "%s/lc0/build/release/lc0"};
+    for (int i = 0; i < 3; i++) {
+        if (strchr(spots[i], '%') && !home) continue;
+        snprintf(out, n, spots[i], home);
+        if (access(out, X_OK) == 0) return 1;
+    }
+    return 0;
+}
+
 static void load_library(void)
 {
     char path[1100], *text = NULL;
@@ -2918,7 +3247,7 @@ static void load_library(void)
         text[got] = 0;
         fclose(f);
     }
-    const char *src = text && strchr(text, '|') ? text : builtin_library;
+    const char *src = text && strchr(text, '|') ? text : builtin_library; // no list yet or a junk one, use the copy baked in
     nlib = 0;
     for (const char *ln = src; *ln && nlib < MAX_LIB;) {
         const char *end = strchr(ln, '\n');
@@ -2957,6 +3286,23 @@ static void load_library(void)
         nlib++;
     }
     free(text);
+    static int gpu = -1;
+    if (gpu < 0) gpu = nvidia_gpu() && find_lc0(lc0_bin, sizeof(lc0_bin)); // we only fetch the net, lc0 itself has to be installed already
+    if (gpu && nlib < MAX_LIB) {
+        LibEngine *e = &lib[nlib];
+        snprintf(e->name, sizeof(e->name), "Lc0 (GPU)");
+        snprintf(e->url, sizeof(e->url), "https://storage.lczero.org/files/networks-contrib/t1-256x10-distilled-swa-2432500.pb.gz");
+        snprintf(e->kind, sizeof(e->kind), "lc0");
+        snprintf(e->tags, sizeof(e->tags), "gpu");
+        snprintf(e->about, sizeof(e->about), "leela, a neural net engine. runs your lc0 on the nvidia card, this grabs its net");
+        e->mb = 35.4;
+        e->tier = 1;
+        char out[1200];
+        lib_out_path(nlib, out, sizeof(out));
+        snprintf(lib_labels[nlib], sizeof(lib_labels[0]), "%s%s", e->name, access(out, X_OK) == 0 ? " (got it)" : "");
+        lib_names[nlib] = lib_labels[nlib];
+        nlib++;
+    }
     for (int i = 0; i < NSET; i++)
         if (sets[i].v == &cfg.library) sets[i].n = nlib ? nlib : 1;
     if (!nlib) lib_names[0] = "nothing to get";
@@ -2966,16 +3312,74 @@ static void fetch_library(void)
 {
     lib_pid = fork();
     if (lib_pid == 0) {
-        for (int fd = 3; fd < 1024; fd++) close(fd);
+        for (int fd = 3; fd < 1024; fd++) close(fd); // dont hand the wayland socket and engine pipes to curl
         setenv("D", data_dir, 1);
+        // the grep for | is so a captive portal page or a 404 cant replace a good list
         execl("/bin/sh", "sh", "-c",
-              "u=https://raw.githubusercontent.com/sevvy-wevvy/open-chease/main/engines.txt; "
-              "(curl -fsL --max-time 15 \"$u\" -o \"$D/engines.txt.new\" || wget -q -T 15 -O \"$D/engines.txt.new\" \"$u\") "
-              "&& grep -q '|' \"$D/engines.txt.new\" && mv \"$D/engines.txt.new\" \"$D/engines.txt\"; rm -f \"$D/engines.txt.new\"",
+              "for n in engines.txt engines-cpu.txt; do u=https://raw.githubusercontent.com/sevvy-wevvy/open-chease/main/$n; "
+              "(curl -fsL --max-time 15 \"$u\" -o \"$D/$n.new\" || wget -q -T 15 -O \"$D/$n.new\" \"$u\") "
+              "&& grep -q '|' \"$D/$n.new\" && mv \"$D/$n.new\" \"$D/$n\"; rm -f \"$D/$n.new\"; done",
               (char *)NULL);
         _exit(127);
     }
     if (lib_pid < 0) lib_pid = 0;
+}
+
+static int cpu_level(int *zen12)
+{
+    static int lvl = -1, zen;
+    if (lvl >= 0) return *zen12 = zen, lvl;
+    lvl = 0;
+    FILE *f = fopen("/proc/cpuinfo", "r");
+    char line[4096];
+    int amd = 0, fam = 0, flags = 0;
+    while (f && fgets(line, sizeof(line), f)) {
+        if (!strncmp(line, "vendor_id", 9) && strstr(line, "AuthenticAMD")) amd = 1;
+        if (!strncmp(line, "cpu family", 10)) {
+            char *c = strchr(line, ':');
+            fam = 0;
+            for (c = c ? c + 1 : line; *c == ' '; c++) {}
+            while (c && *c >= '0' && *c <= '9') fam = fam * 10 + *c++ - '0';
+        }
+        if (!strncmp(line, "flags", 5) && !flags) {
+            flags = 1;
+            line[strcspn(line, "\n")] = ' '; // so HAS() finds the last flag too
+#define HAS(x) (strstr(line, " " x " ") != NULL)
+            if (HAS("sse4_2") && HAS("popcnt")) lvl = 1;
+            if (lvl && HAS("avx2")) lvl = 2;
+            if (lvl == 2 && HAS("bmi2")) lvl = 3;
+            if (lvl == 3 && HAS("avx512f") && HAS("avx512bw") && HAS("avx512vl") && HAS("avx512dq")) lvl = 4;
+#undef HAS
+        }
+    }
+    if (f) fclose(f);
+    zen = amd && fam == 23; // family 17h = zen 1 and 2, pext/pdep are microcoded there and really slow
+    return *zen12 = zen, lvl;
+}
+
+static const char *cpu_build(const char *name, char *url, size_t n)
+{
+    static const char *levels[] = {"v2", "avx2", "bmi2", "avx512"};
+    int zen12, have = cpu_level(&zen12), best = 0;
+    char path[1100], line[1200];
+    snprintf(path, sizeof(path), "%s/engines-cpu.txt", data_dir);
+    FILE *f = fopen(path, "r");
+    if (!f) return NULL;
+    size_t nl = strlen(name);
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, name, nl) || line[nl] != '|') continue;
+        char *lv = line + nl + 1, *u = strchr(lv, '|');
+        if (!u) continue;
+        *u++ = 0;
+        u[strcspn(u, "\r\n")] = 0;
+        for (int k = 0; k < 4; k++)
+            if (!strcmp(lv, levels[k]) && k + 1 <= have && k + 1 > best && !(zen12 && k == 2) && !strncmp(u, "https://", 8)) { // avx2 beats bmi2 on old zen
+                best = k + 1;
+                snprintf(url, n, "%s", u);
+            }
+    }
+    fclose(f);
+    return best ? levels[best - 1] : NULL;
 }
 
 static void start_download(int i)
@@ -2989,18 +3393,41 @@ static void start_download(int i)
     dl_index = i;
     snprintf(dl_out, sizeof(dl_out), "%s", out);
     snprintf(dl_name, sizeof(dl_name), "%s", lib[i].name);
+    char url[512], kind[8];
+    snprintf(url, sizeof(url), "%s", lib[i].url);
+    snprintf(kind, sizeof(kind), "%s", lib[i].kind);
+    const char *build = cpu_build(lib[i].name, url, sizeof(url));
+    if (build) {
+        size_t ul = strcspn(url, "#"); // the #part isnt sent, its which file to pull out of the archive
+        snprintf(kind, sizeof(kind), "bin");
+        if (ul > 7 && !strncmp(url + ul - 7, ".tar.gz", 7)) snprintf(kind, sizeof(kind), "tgz");
+        else if (ul > 4 && !strncmp(url + ul - 4, ".tgz", 4)) snprintf(kind, sizeof(kind), "tgz");
+        else if (ul > 4 && !strncmp(url + ul - 4, ".tar", 4)) snprintf(kind, sizeof(kind), "tar");
+        else if (ul > 4 && !strncmp(url + ul - 4, ".zip", 4)) snprintf(kind, sizeof(kind), "zip");
+    }
     dl_pid = fork();
     if (dl_pid == 0) {
         for (int fd = 3; fd < 1024; fd++) close(fd);
-        char url[512];
-        snprintf(url, sizeof(url), "%s", lib[i].url);
         char *pick = strchr(url, '#');
         if (pick) *pick++ = 0;
         setenv("U", url, 1);
-        setenv("K", lib[i].kind, 1);
-        setenv("P", pick ? pick : "", 1);
+        setenv("K", kind, 1);
+        setenv("P", pick ? pick : "", 1); // matched on the end of the path, releases nest it in a versioned folder
         setenv("O", out, 1);
         setenv("D", data_dir, 1);
+        // lc0 needs --weights and a backend, engines cant get args so it gets a wrapper
+        if (!strcmp(kind, "lc0")) {
+            if (strpbrk(lc0_bin, "'\\") || strpbrk(out, "'\\")) _exit(1); // these end up inside single quotes in that script
+            setenv("L", lc0_bin, 1);
+            execl("/bin/sh", "sh", "-c",
+                  "set -e; mkdir -p \"$O.files\"; cd \"$O.files\"; "
+                  "if command -v curl >/dev/null; then curl -fsL \"$U\" -o net.tmp; else wget -qO net.tmp \"$U\"; fi; "
+                  "mv net.tmp net.pb.gz; printf '#!/bin/sh\\nexec '\\''%s'\\'' --backend=cuda-auto --weights='\\''%s'\\'' \"$@\"\\n' "
+                  "\"$L\" \"$O.files/net.pb.gz\" > \"$O.tmp\"; chmod +x \"$O.tmp\"; mv \"$O.tmp\" \"$O\"",
+                  (char *)NULL);
+            _exit(127);
+        }
+        // biggest elf that matches wins, the rest of the archive (nets etc) stays next to it in .files
         execl("/bin/sh", "sh", "-c",
               "set -e; mkdir -p \"$D/engines\"; t=$(mktemp -d \"$D/dl.XXXXXX\"); trap 'rm -rf \"$t\"' EXIT; cd \"$t\"; "
               "if command -v curl >/dev/null; then curl -fsL \"$U\" -o got; else wget -qO got \"$U\"; fi; "
@@ -3008,7 +3435,7 @@ static void start_download(int i)
               "if [ \"$K\" = bin ]; then chmod +x got; rm -rf \"$O.files\"; mv got \"$O\"; exit 0; fi; "
               "b=$(find . -type f -printf '%s %p\\n' | sort -rn | while read -r n f; do "
               "[ \"$(head -c4 \"$f\" | od -An -tx1 | tr -d ' \\n')\" = 7f454c46 ] || continue; "
-              "case \"$f\" in *\"$P\"*) echo \"$f\"; break;; esac; done); "
+              "case \"$f\" in *\"$P\") echo \"$f\"; break;; esac; done); "
               "[ -n \"$b\" ]; chmod +x \"$b\"; rm -rf \"$O.files\" \"$O\"; mkdir \"$O.files\"; cp -R . \"$O.files/\"; "
               "ln -s \"$O.files/${b#./}\" \"$O\"",
               (char *)NULL);
@@ -3020,7 +3447,8 @@ static void start_download(int i)
         return;
     }
     char msg[96];
-    snprintf(msg, sizeof(msg), "downloading %s...", lib[i].name);
+    if (build) snprintf(msg, sizeof(msg), "downloading %s (%s build for your cpu)...", lib[i].name, build);
+    else snprintf(msg, sizeof(msg), "downloading %s...", lib[i].name);
     set_note(msg);
 }
 
@@ -3069,11 +3497,12 @@ static void relaunch(void)
     state = SCANNING;
     redraw();
     analyzer_stop();
+    second_quit();
     if (dl_pid > 0) kill(dl_pid, SIGKILL), waitpid(dl_pid, NULL, 0);
     if (lib_pid > 0) kill(lib_pid, SIGKILL), waitpid(lib_pid, NULL, 0);
-    usleep(150000);
+    usleep(150000); // let the overlay clear and the engines die before we exec
     for (int fd = 3; fd < 1024; fd++) close(fd);
-    const char *home = getenv("OPEN_CHEASE_HOME");
+    const char *home = getenv("OPEN_CHEASE_HOME"); // run.sh rebuilds if needed, so go back through it
     char path[1024];
     if (home) {
         snprintf(path, sizeof(path), "%s/run.sh", home);
@@ -3137,7 +3566,7 @@ static void handle_key(int ch)
 static void sync_keyboard(void) // the game needs the keys when the library's closed
 {
     static int on, hook = 1;
-    if (hook && state == TRACKING && getenv("OPEN_CHEASE_OPEN_LIBRARY")) lib_open = 1, hook = 0;
+    if (hook && state == TRACKING && getenv("OPEN_CHEASE_OPEN_LIBRARY")) lib_open = 1, hook = 0; // test hook for library shots
     if (lib_open != on && ov->keyboard) ov->keyboard(ov, lib_open);
     on = lib_open;
 }
@@ -3198,6 +3627,10 @@ static void handle_click(double x, double y)
             }
             break;
         }
+        case ACT_HINT:
+            if (hint_key != tracker.pos.key) hint_key = tracker.pos.key, hint_lv = 0;
+            if (hint_lv < 3) hint_lv++;
+            break;
         case ACT_MODE:
             cfg.mode ^= 1;
             save_cfg();
@@ -3239,10 +3672,11 @@ static void handle_click(double x, double y)
         case ACT_RESET:
             for (int k = 0; k < NSET; k++) {
                 if (tab_of(k) != set_tab || sets[k].v == &cfg.engine || sets[k].v == &cfg.library) continue;
-                *sets[k].v = *(int *)((char *)&cfg_default + ((char *)sets[k].v - (char *)&cfg));
+                *sets[k].v = *(int *)((char *)&cfg_default + ((char *)sets[k].v - (char *)&cfg)); // same field in the defaults copy
             }
             debug_on = cfg.debug;
             dd_open = -1;
+            keep_second();
             analyzer_set_think_ms(think_secs[cfg.think] * 1000);
             analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.lines + 1);
             analyzer_set_elo(strength_elo[cfg.strength]);
@@ -3277,7 +3711,7 @@ static void handle_click(double x, double y)
             start_download(hits[i].arg);
             break;
         case ACT_LIB_USE:
-            if (hits[i].arg < 0) {
+            if (hits[i].arg < 0) { // "use" on a library row we already got
                 char out[1200];
                 lib_out_path(-1 - hits[i].arg, out, sizeof(out));
                 scan_engines(NULL);
@@ -3288,7 +3722,7 @@ static void handle_click(double x, double y)
             break;
         case ACT_LIB_DEL: {
             int k = hits[i].arg;
-            if (lib_del != k) {
+            if (lib_del != k) { // first click arms it, second one deletes
                 lib_del = k;
                 break;
             }
@@ -3329,6 +3763,7 @@ static void handle_click(double x, double y)
                 analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.lines + 1);
             if (st->v == &cfg.engine) choose_engine(cfg.engine);
             if (st->v == &cfg.strength) analyzer_set_elo(strength_elo[cfg.strength]);
+            if (st->v == &cfg.second) keep_second();
             if (st->v == &cfg.library && nlib) {
                 char out[1200];
                 lib_out_path(cfg.library, out, sizeof(out));
@@ -3452,10 +3887,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "%s isnt a folder you own, delete it or point OPEN_CHEASE_DATA somewhere else\n", data);
         return 1;
     }
-    if (dst.st_mode & 022) chmod(data, 0700);
+    if (dst.st_mode & 022) chmod(data, 0700); // ours but group/world writable, same problem
     snprintf(tpl_path, sizeof(tpl_path), "%s/pieces.bin", data);
     snprintf(cfg_path, sizeof(cfg_path), "%s/settings", data);
-    cfg_default = cfg;
+    cfg_default = cfg; // before load_cfg, reset needs the shipped values
     load_cfg();
     for (int i = 0; i < NTHEMES; i++) theme_names[i] = themes[i].name;
     char real_data[4096];
@@ -3463,7 +3898,7 @@ int main(int argc, char **argv)
     snprintf(data_dir, sizeof(data_dir), "%.1023s", dd);
     load_library();
     scan_engines(engine);
-    if (!replay_dir) fetch_library();
+    if (!replay_dir) fetch_library(); // tests stay offline
     if (!engine_cli && have_saved_engine && (!*saved_engine || access(saved_engine, X_OK) == 0))
         engine = *saved_engine ? saved_engine : NULL;
     cfg.engine = engine_index(engine);
@@ -3494,7 +3929,7 @@ int main(int argc, char **argv)
         }
         int open_a = -1, open_b = -1;
         const char *so = getenv("OPEN_CHEASE_SETTINGS_OPEN"); // "100-200"
-        const char *af = getenv("OPEN_CHEASE_ANIM_AT");
+        const char *af = getenv("OPEN_CHEASE_ANIM_AT"); // "0.5" = everything stuck halfway
         if (af && af[0] == '0' && af[1] == '.') {
             double v = 0, sc = 0.1;
             for (const char *q = af + 2; *q >= '0' && *q <= '9'; q++, sc /= 10) v += (*q - '0') * sc;
@@ -3522,9 +3957,10 @@ int main(int argc, char **argv)
             }
             char fen[128];
             pos_to_fen(&tracker.pos, fen);
-            printf("%d %s %s\n", replay_frame() - 1, state == TRACKING ? "T" : (state == ASKING ? "A" : "S"), fen);
+            printf("%d %s %s\n", replay_frame() - 1, state == TRACKING ? "T" : (state == ASKING ? "A" : "S"), fen); // tests/track_sim.py reads this
             replay_ticks++;
         }
+        second_quit();
         fflush(stdout);
         fflush(stderr);
         _exit(0); // plain exit locks every FILE and the engine reader is stuck in fgets on one
@@ -3584,7 +4020,7 @@ int main(int argc, char **argv)
         int rainbow = state == TRACKING && (cfg.mcolor == 10 || cfg.tcolor == 10 || cfg.gcolor == 10 || (lib_open && dl_pid > 0));
         int wait = (int)(next - t), busy = animating();
         if (rainbow && wait > 80) wait = 80; // rainbow fades instead of jumping
-        if (busy && wait > 15) wait = 15;
+        if (busy && wait > 15) wait = 15; // ~60fps while something slides
         int r = ov->wait_events(ov, wait, &cx, &cy);
         if (r < 0) break;
         if (r == 1) handle_click(cx, cy);
@@ -3596,8 +4032,9 @@ int main(int argc, char **argv)
     state = SCANNING;
     redraw();
     analyzer_stop();
+    second_quit();
     usleep(100000);
     fflush(stdout);
     fflush(stderr);
-    _exit(0);
+    _exit(0); // same reason as the replay one
 }

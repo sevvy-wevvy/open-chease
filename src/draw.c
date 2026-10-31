@@ -4,6 +4,7 @@
 #include "app.h"
 #include "font_data.h"
 
+// the canvas is premultiplied argb, thats what wayland wants
 static inline uint32_t premul(uint32_t argb, double cover)
 {
     double a = ((argb >> 24) & 255) / 255.0 * cover;
@@ -24,7 +25,7 @@ static inline void blend(uint32_t *dst, uint32_t src)
         return;
     }
     uint32_t d = *dst, inv = 255 - sa;
-    uint32_t a = sa + (((d >> 24) & 255) * inv + 127) / 255;
+    uint32_t a = sa + (((d >> 24) & 255) * inv + 127) / 255; // +127 rounds, otherwise fades go dark
     uint32_t r = ((src >> 16) & 255) + (((d >> 16) & 255) * inv + 127) / 255;
     uint32_t g = ((src >> 8) & 255) + (((d >> 8) & 255) * inv + 127) / 255;
     uint32_t b = (src & 255) + ((d & 255) * inv + 127) / 255;
@@ -33,7 +34,7 @@ static inline void blend(uint32_t *dst, uint32_t src)
 
 static inline void mark(Canvas *c, int x0, int y0, int x1, int y1)
 {
-    if (c->dx1 <= c->dx0) {
+    if (c->dx1 <= c->dx0) { // nothing marked yet
         c->dx0 = x0, c->dy0 = y0, c->dx1 = x1, c->dy1 = y1;
         return;
     }
@@ -61,7 +62,7 @@ static void fill_span(Canvas *c, int y, int xa, int xb, uint32_t src)
 
 void canvas_clear(Canvas *c)
 {
-    c->cx0 = c->dx0, c->cy0 = c->dy0, c->cx1 = c->dx1, c->cy1 = c->dy1;
+    c->cx0 = c->dx0, c->cy0 = c->dy0, c->cx1 = c->dx1, c->cy1 = c->dy1; // wiped stuff still has to go out as damage
     if (c->dx1 > c->dx0) {
         int x0 = c->dx0 < 0 ? 0 : c->dx0, x1 = c->dx1 > c->w ? c->w : c->dx1;
         int y0 = c->dy0 < 0 ? 0 : c->dy0, y1 = c->dy1 > c->h ? c->h : c->dy1;
@@ -90,12 +91,12 @@ int canvas_damage(const Canvas *c, int *x0, int *y0, int *x1, int *y1)
 
 void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double dy, double clip_h)
 {
-    int a = (int)(alpha * 256 + 0.5);
+    int a = (int)(alpha * 256 + 0.5); // out of 256 so >> 8 works, 256 is a straight copy
     if (a <= 0) return;
     if (a > 256) a = 256;
     int ox = (int)lround((src->ox + dx - dst->ox) * dst->scale), oy = (int)lround((src->oy + dy - dst->oy) * dst->scale);
     int h = src->h;
-    if (clip_h >= 0 && clip_h * src->scale < h) h = (int)(clip_h * src->scale);
+    if (clip_h >= 0 && clip_h * src->scale < h) h = (int)(clip_h * src->scale); // clip_h is logical
     if (src->dx1 <= src->dx0) return;
     mark(dst, ox + src->dx0, oy + src->dy0, ox + src->dx1, oy + (src->dy1 < h ? src->dy1 : h));
     if (dst->dx0 < 0) dst->dx0 = 0;
@@ -139,7 +140,7 @@ void draw_rect(Canvas *c, Rect r, uint32_t argb)
         int fa = (int)ceil(x0), fb = (int)floor(x1);
         if (fa < ix0) fa = ix0;
         if (fb > ix1) fb = ix1;
-        if (cy >= 1 && fb > fa) {
+        if (cy >= 1 && fb > fa) { // full rows, only the two ends need coverage
             for (int x = ix0; x < fa; x++) plot(c, x, y, argb, fmin(x + 1, x1) - fmax(x, x0));
             fill_span(c, y, fa, fb, solid);
             for (int x = fb; x < ix1; x++) plot(c, x, y, argb, fmin(x + 1, x1) - fmax(x, x0));
@@ -166,7 +167,7 @@ void draw_round_rect(Canvas *c, Rect r, double rad, uint32_t argb)
     to_px(c, r.x, r.y, &x0, &y0);
     to_px(c, r.x + r.w, r.y + r.h, &x1, &y1);
     rad *= c->scale;
-    if (!isfinite(x0) || !isfinite(y0) || !isfinite(x1) || !isfinite(y1)) return;
+    if (!isfinite(x0) || !isfinite(y0) || !isfinite(x1) || !isfinite(y1)) return; // nan turns into garbage ints below
     int ya = (int)fmax(0, floor(y0)), yb = (int)fmin(c->h, ceil(y1)), xa = (int)fmax(0, floor(x0)), xb = (int)fmin(c->w, ceil(x1));
     uint32_t solid = premul(argb, 1);
     for (int y = ya; y < yb; y++) {
@@ -219,7 +220,7 @@ void draw_line(Canvas *c, double lx0, double ly0, double lx1, double ly1, double
     for (int y = by0; y < by1; y++)
         for (int x = bx0; x < bx1; x++) {
             double d = seg_dist(x + 0.5, y + 0.5, x0, y0, x1, y1);
-            double cov = hw + 0.5 - d;
+            double cov = hw + 0.5 - d; // ~1px soft edge, plot clamps it
             plot(c, x, y, argb, cov);
         }
 }
@@ -234,7 +235,7 @@ void draw_triangle(Canvas *c, double ax, double ay, double bx, double by, double
     to_px(c, ax, ay, &ax, &ay);
     to_px(c, bx, by, &bx, &by);
     to_px(c, cx, cy, &cx, &cy);
-    if (edge(ax, ay, bx, by, cx, cy) < 0) {
+    if (edge(ax, ay, bx, by, cx, cy) < 0) { // same winding every time so the edge tests agree
         double tx = bx, ty = by;
         bx = cx;
         by = cy;
@@ -247,7 +248,7 @@ void draw_triangle(Canvas *c, double ax, double ay, double bx, double by, double
     for (int y = y0; y < y1; y++)
         for (int x = x0; x < x1; x++) {
             int in = 0;
-            for (int s = 0; s < 4; s++) {
+            for (int s = 0; s < 4; s++) { // 4 samples is enough for arrow heads
                 double px = x + (s & 1 ? 0.75 : 0.25), py = y + (s & 2 ? 0.75 : 0.25);
                 if (edge(ax, ay, bx, by, px, py) >= 0 && edge(bx, by, cx, cy, px, py) >= 0 &&
                     edge(cx, cy, ax, ay, px, py) >= 0)
@@ -296,7 +297,7 @@ double draw_text(Canvas *c, double lx, double ly, const char *s, int big, uint32
                         plot(c, (int)x + (g->x + gx) * sc + dx, (int)y + (g->y + gy) * sc + dy, argb, a / 255.0);
             }
         x += g->adv * sc;
-        lx += g->adv * sc / c->scale;
+        lx += g->adv * sc / c->scale; // whole px steps, so track logical x separately
     }
     return lx - start;
 }
