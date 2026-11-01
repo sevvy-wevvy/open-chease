@@ -399,6 +399,14 @@ static int mac_pointer(Overlay *ov, double *x, double *y)
     return 1;
 }
 
+static int mac_held(Overlay *ov, double *x, double *y)
+{
+    if (!([NSEvent pressedMouseButtons] & 1)) return 0;
+    NSPoint p = [NSEvent mouseLocation];
+    *x = p.x, *y = main_h() - p.y;
+    return 1;
+}
+
 static void mac_keyboard(Overlay *ov, int on)
 {
     if (on && !kb_on) before_kb = [[NSWorkspace sharedWorkspace] frontmostApplication];
@@ -416,5 +424,5 @@ static void mac_keyboard(Overlay *ov, int on)
     }
 }
 
-static Overlay mac_overlay = {"nswindow", mac_ov_init, mac_canvas, 0, mac_commit, mac_wait, NULL, mac_keyboard, 0, mac_pointer};
+static Overlay mac_overlay = {"nswindow", mac_ov_init, mac_canvas, 0, mac_commit, mac_wait, NULL, mac_keyboard, 0, mac_pointer, mac_held};
 Overlay *overlay_mac(void) { return &mac_overlay; }

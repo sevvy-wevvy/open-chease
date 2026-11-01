@@ -162,7 +162,7 @@ static struct {
 static const char *theme_names[NTHEMES];
 static const char *spot_names[] = {"Top", "Bottom", "Left", "Right"};
 static const char *size_names[] = {"Small", "Normal", "Big"};
-static const char *fade_names[19]; // 0% to 90%, filled in at startup
+static const char *fade_names[21]; // 0% to 100%, filled in at startup
 static const char *onoff[] = {"Off", "On"};
 static const char *grid_names[] = {"Off", "Lines", "Outline", "Corners"};
 static const char *arrow_names[] = {"Off", "Straight", "Knight bends", "Curve", "Swoosh", "Dashed", "Dotted", "Glow", "Double"};
@@ -323,9 +323,9 @@ static Setting sets[] = {
     {"Theme", "theme", &cfg.theme, NTHEMES, theme_names, "Look", "the colors for the whole thing, the Themes tab has more and lets you make your own"},
     {"Box spot", "spot", &cfg.spot, 4, spot_names, NULL, "where the info box sits around the board, move it if its covering something"},
     {"Box size", "size", &cfg.size, 3, size_names, NULL, "how big the info box and its text are"},
-    {"Fade box", "fadebox", &cfg.fade, 19, fade_names, NULL, "makes the info box and the other extras see-through so you can still see the game under them"},
-    {"Fade moves", "fademove", &cfg.fade_move, 19, fade_names, NULL, "makes the move arrows, marks and move names see-through"},
-    {"Fade outlines", "fadeline", &cfg.fade_line, 19, fade_names, NULL, "makes the grid, last move squares, hanging piece marks and the check ring see-through"},
+    {"Fade box", "fadebox", &cfg.fade, 21, fade_names, NULL, "makes the info box and the other extras see-through so you can still see the game under them"},
+    {"Fade moves", "fademove", &cfg.fade_move, 21, fade_names, NULL, "makes the move arrows, marks and move names see-through"},
+    {"Fade outlines", "fadeline", &cfg.fade_line, 21, fade_names, NULL, "makes the grid, last move squares, hanging piece marks and the check ring see-through"},
     {"Grid", "grid", &cfg.grid, 4, grid_names, NULL, "draws lines on the squares, handy to check it found the board right"},
     {"Grid color", "gcolor", &cfg.gcolor, 12, color_names, NULL, "what color the grid is"},
     {"Status line", "status", &cfg.status, 2, onoff, NULL, "the small line with your team, the engine and what its doing"},
@@ -3972,6 +3972,41 @@ static void pick_setting(const Setting *st, int k)
     save_cfg();
 }
 
+static int slide_i = -1, slide_k0;
+static Rect slide_r;
+
+static int slide_value(const Setting *st, Rect r, double x)
+{
+    double f = (x - (r.x + 8)) / (r.w - 16);
+    return (int)lround(fmin(1, fmax(0, f)) * (st->n - 1));
+}
+
+static void end_slide(void)
+{
+    const Setting *st = &sets[slide_i];
+    int k = *st->v;
+    slide_i = -1;
+    if (k == slide_k0) return;
+    *st->v = slide_k0; // pick_setting does the engine and save stuff once, not on every step
+    pick_setting(st, k);
+}
+
+// 1 while a slider is being dragged
+static int drag_slide(void)
+{
+    if (slide_i < 0) return 0;
+    double x, y;
+    if (!settings_open || !ov->held || !ov->held(ov, &x, &y)) {
+        end_slide();
+        redraw();
+        return 0;
+    }
+    const Setting *st = &sets[slide_i];
+    int k = slide_value(st, slide_r, x);
+    if (k != *st->v) *st->v = k, redraw();
+    return 1;
+}
+
 static void handle_click(double x, double y)
 {
     hov_t = now_ms();
@@ -4174,10 +4209,11 @@ static void handle_click(double x, double y)
         }
         case ACT_SLIDE: {
             const Setting *st = &sets[hits[i].arg];
-            double f = (x - (r.x + 8)) / (r.w - 16);
-            int k = (int)lround(fmin(1, fmax(0, f)) * (st->n - 1));
             dd_open = -1;
-            if (k != *st->v) pick_setting(st, k);
+            slide_k0 = *st->v;
+            *st->v = slide_value(st, r, x);
+            slide_i = hits[i].arg, slide_r = r; // keeps following the mouse while the button is down
+            if (!ov->held) end_slide();
             break;
         }
         case ACT_PICK:
@@ -4297,8 +4333,8 @@ int main(int argc, char **argv)
     }
     snprintf(tpl_path, sizeof(tpl_path), "%s/pieces.bin", data);
     snprintf(cfg_path, sizeof(cfg_path), "%s/settings", data);
-    static char pct[19][8];
-    for (int i = 0; i < 19; i++) snprintf(pct[i], sizeof(pct[i]), "%d%%", i * 5), fade_names[i] = pct[i];
+    static char pct[21][8];
+    for (int i = 0; i < 21; i++) snprintf(pct[i], sizeof(pct[i]), "%d%%", i * 5), fade_names[i] = pct[i];
     cfg.thick = cfg.tthick = cfg.ththick = 3;
     cfg_default = cfg; // before load_cfg, reset needs the shipped values
     load_cfg();
@@ -4385,6 +4421,7 @@ int main(int argc, char **argv)
             redraw();
             double cx, cy;
             int ev;
+            drag_slide();
             while ((ev = ov->wait_events(ov, 0, &cx, &cy)) > 0) {
                 if (ev == 1) handle_click(cx, cy);
                 else if (ev == 2) handle_key(ov->key);
@@ -4482,9 +4519,11 @@ int main(int argc, char **argv)
         if (rainbow && wait > 80) wait = 80; // rainbow fades instead of jumping
         if (busy && wait > 15) wait = 15; // ~60fps while something slides
         if (settings_open && ov->pointer && wait > 100) wait = 100; // keeps an eye on the mouse for the tooltips
+        if (slide_i >= 0 && wait > 16) wait = 16;
         int r = ov->wait_events(ov, wait, &cx, &cy);
         if (r < 0) break;
         int tipr = settings_open && hover_moved();
+        if (drag_slide()) continue;
         if (r == 1) handle_click(cx, cy);
         else if (r == 2) handle_key(ov->key), redraw();
         else if (r == 3 && lib_open) lib_scroll += ov->key, redraw();
