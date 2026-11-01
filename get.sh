@@ -49,9 +49,9 @@ export OPEN_CHEASE_BRANCH="$branch" # the app reads its engine lists from the sa
 
 dl() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fL --progress-bar "$1" -o "$2"
+    curl -fL --connect-timeout 15 --speed-time 30 --speed-limit 1000 --progress-bar "$1" -o "$2" # dead wifi shouldnt hang it forever
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --show-progress -O "$2" "$1"
+    wget -q -T 30 --show-progress -O "$2" "$1"
   else
     echo "you need curl or wget for this" >&2
     return 1
@@ -76,7 +76,10 @@ if [ ! -x "$app/run.sh" ] || [ "$update" = 1 ]; then
   rm -rf "$app"
   mv "$tmp/app" "$app"
   rm -rf "$tmp"
-  rm -rf "$data/build" # makes run.sh rebuild from the new source when theres no prebuilt for this pc
+  if [ -d "$data/build" ]; then # makes run.sh rebuild from the new source, the old build stays as a fallback
+    rm -rf "$data/build.old"
+    mv "$data/build" "$data/build.old"
+  fi
 fi
 
 if [ "$want_sf" = 1 ] && { [ "$os" = Darwin ] || [ "$(uname -m)" = "x86_64" ]; } && ! ls "$sf_dir"/stockfish* >/dev/null 2>&1; then

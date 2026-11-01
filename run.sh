@@ -27,7 +27,13 @@ if [ "$os" = Linux ] && [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; 
 fi
 
 export OPEN_CHEASE_HOME="$here"
-if [ -d "$here/.git" ]; then export OPEN_CHEASE_UPDATE=git; else export OPEN_CHEASE_UPDATE=get; fi
+if [ -d "$here/.git" ]; then
+  export OPEN_CHEASE_UPDATE=git
+elif [ "$here" = "$(cd "$data/app" 2>/dev/null && pwd)" ]; then # get.sh only ever updates this copy
+  export OPEN_CHEASE_UPDATE=get
+else
+  unset OPEN_CHEASE_UPDATE
+fi
 
 # prebuilt is x86_64 linux only, macs always build it the first time
 bin="$here/bin/open-chease"
@@ -45,7 +51,17 @@ if [ "$os" = Darwin ] || [ "$(uname -m)" != "x86_64" ] || ! "$bin" --version >/d
       exit 1
     fi
     echo "building open-chease for your system, one sec..."
-    "$here/build.sh" "$data/build" >/dev/null
+    rm -rf "$data/build.new"
+    if "$here/build.sh" "$data/build.new" >/dev/null; then
+      rm -rf "$data/build"
+      mv "$data/build.new" "$data/build"
+      rm -rf "$data/build.old"
+    elif "$data/build.old/open-chease" --version >/dev/null 2>&1; then
+      echo "couldnt build the new version, running the one you had" >&2
+      bin="$data/build.old/open-chease"
+    else
+      exit 1
+    fi
   fi
 fi
 

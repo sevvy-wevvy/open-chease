@@ -70,10 +70,15 @@ static u64 tt_mask;
 
 void engine_tt_resize(int mb)
 {
+    if (mb < 1) mb = 1;
+    if (mb > 4096) mb = 4096;
     u64 n = 1;
     while (n * 2 * sizeof(TTEntry) <= (u64)mb * 1024 * 1024) n *= 2; // power of 2 so the index is just key & mask
+    TTEntry *t2 = NULL;
+    while (n > 1 && !(t2 = calloc(n, sizeof(TTEntry)))) n /= 2; // not enough ram, take a smaller one
+    if (!t2) return;
     free(tt);
-    tt = calloc(n, sizeof(TTEntry));
+    tt = t2;
     tt_mask = n - 1;
 }
 
@@ -206,6 +211,12 @@ void pos_finish_setup(Pos *p)
         if (p->sq[56] == PC(BLACK, ROOK)) c |= 8;
     }
     p->castle &= c; // fens love to claim rights the board cant have
+    if (p->ep >= 0) { // same for en passant, and a turn flip or piece fix can leave an old one behind
+        int e = p->ep, ok = e < 64 && p->sq[e] == EMPTY;
+        if (ok && p->side == WHITE) ok = e >> 3 == 5 && p->sq[e - 8] == PC(BLACK, PAWN);
+        else if (ok) ok = e >> 3 == 2 && p->sq[e + 8] == PC(WHITE, PAWN);
+        if (!ok) p->ep = -1;
+    }
     p->key = compute_key(p);
     p->nhist = 0;
 }
@@ -242,12 +253,11 @@ int pos_from_fen(Pos *p, const char *fen)
         if (*c == 'q') p->castle |= 8;
     }
     while (*c == ' ') c++;
-    if (*c && *c != '-' && c[1]) {
+    if (*c >= 'a' && *c <= 'h' && c[1] >= '1' && c[1] <= '8') {
         p->ep = (c[1] - '1') * 8 + (c[0] - 'a');
         c += 2;
-    } else if (*c) {
-        c++;
     }
+    while (*c && *c != ' ') c++;
     p->half = 0;
     p->fullmove = 1;
     sscanf(c, "%d %d", &p->half, &p->fullmove);

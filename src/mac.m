@@ -1,12 +1,18 @@
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define Rect OCRect // carbon has its own Rect
 #include "app.h"
+
+typedef struct {
+    CGImageRef img;
+    atomic_int state; // 1 callback done, 2 we stopped waiting
+} Shot;
 
 typedef struct {
     CGDirectDisplayID id;
@@ -46,6 +52,7 @@ static double main_h(void) { return CGDisplayBounds(CGMainDisplayID()).size.heig
 @end
 @implementation OCView
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { return YES; }
+- (BOOL)acceptsFirstResponder { return YES; } // or keyDown goes to the window and it just beeps
 - (BOOL)isOpaque { return NO; }
 - (void)drawRect:(NSRect)dirty
 {
@@ -237,21 +244,34 @@ static int grab(Mon *m)
     cfg.height = m->ph;
     cfg.showsCursor = NO;
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
-    __block CGImageRef shot = NULL;
+    // shared with the callback, whoever finishes last frees it. a late shot after we gave up would leak a whole screen otherwise
+    Shot *st = calloc(1, sizeof(Shot));
+    if (!st) return 0;
     if (@available(macOS 14.0, *)) {
         [SCScreenshotManager captureImageWithFilter:filter
                                       configuration:cfg
                                   completionHandler:^(CGImageRef img, NSError *err) {
-                                      if (img) shot = CGImageRetain(img);
-                                      dispatch_semaphore_signal(done);
+                                      st->img = img ? CGImageRetain(img) : NULL;
+                                      if (atomic_exchange(&st->state, 1) == 2) {
+                                          if (st->img) CGImageRelease(st->img);
+                                          free(st);
+                                      } else
+                                          dispatch_semaphore_signal(done);
                                   }];
-    } else
+    } else {
+        free(st);
         return 0;
+    }
     int waited = 0;
     while (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_MSEC))) {
         track_mouse();
-        if ((waited += 5) > 2000) return 0;
+        if ((waited += 5) > 2000) {
+            if (atomic_exchange(&st->state, 2) == 1) break; // it landed right as we gave up
+            return 0;
+        }
     }
+    CGImageRef shot = st->img;
+    free(st);
     if (!shot) return 0;
     CGContextRef ctx = CGBitmapContextCreate(m->cap, m->pw, m->ph, 8, m->pw * 4, rgb, kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little);
     if (ctx) {
@@ -302,6 +322,10 @@ static void mac_commit(Overlay *ov, const Rect *h, int nh)
     nhits = nh < 256 ? nh : 256;
     memcpy(hits, h, sizeof(Rect) * nhits);
     @autoreleasepool {
+        static int tries;
+        if (++tries % 60 == 0) // a just plugged in screen can show up in CG before NSScreen knows it
+            for (int i = 0; i < nmons; i++)
+                if (!wins[i]) add_win(i);
         for (int i = 0; i < nmons; i++) {
             int x0, y0, x1, y1;
             if (!wins[i] || !canvas_damage(&mons[i].canvas, &x0, &y0, &x1, &y1)) continue;
@@ -382,7 +406,10 @@ static void mac_keyboard(Overlay *ov, int on)
     nkeys = 0;
     if (on) {
         [NSApp activateIgnoringOtherApps:YES];
-        if (hot >= 0 && wins[hot]) [wins[hot] makeKeyAndOrderFront:nil];
+        if (hot >= 0 && wins[hot]) {
+            [wins[hot] makeKeyAndOrderFront:nil];
+            [wins[hot] makeFirstResponder:[wins[hot] contentView]];
+        }
     } else if (before_kb) {
         [before_kb activateWithOptions:0];
         before_kb = nil;

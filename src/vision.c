@@ -655,7 +655,7 @@ static int display_to_sq(int r, int c, int white_bottom)
 
 // a white piece on a light square only shows its outline, on a dark one its solid.
 // fill the inside so both look the same, the built in shapes are solid too
-static void fill_holes(float *m)
+void vision_fill_holes(float *m)
 {
     uint8_t wall[FEAT_N * FEAT_N] = {0}, out[FEAT_N * FEAT_N] = {0};
     int stack[FEAT_N * FEAT_N], n = 0;
@@ -905,7 +905,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                     out->occ_frac[sq] = 0;
                 }
             }
-            if (occ[sq]) fill_holes(out->mask[sq]);
+            if (occ[sq]) vision_fill_holes(out->mask[sq]);
             lums[sq] = out->lum[sq];
         }
     double vals[64];

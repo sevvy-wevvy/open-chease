@@ -451,7 +451,9 @@ static void load_cfg(void)
 
 static void save_cfg(void)
 {
-    FILE *f = fopen(cfg_path, "w");
+    char tmp[1100];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", cfg_path); // a crash mid write shouldnt wipe every setting
+    FILE *f = fopen(tmp, "w");
     if (!f) return;
     for (int i = 0; i < NSET; i++)
         if (!is_button(sets[i].v)) // engine and second get saved as paths below
@@ -463,7 +465,7 @@ static void save_cfg(void)
         for (int j = 0; j < NPARTS; j++) fprintf(f, " %08X", *part(&themes[CUSTOM0 + i], j));
         fputc('\n', f);
     }
-    fclose(f);
+    if (fclose(f) == 0) replace_file(tmp, cfg_path);
 }
 static char note[128];
 static long note_until;
@@ -487,7 +489,10 @@ static long now_ms(void)
     if (replay_ticks >= 0) return replay_ticks * 500; // replay: every frame is 500ms apart
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
-    return t.tv_sec * 1000 + t.tv_nsec / 1000000;
+    static time_t t0;
+    static int have_t0;
+    if (!have_t0) t0 = t.tv_sec - 1000, have_t0 = 1; // long is 32 bit on windows, ms since boot wraps after 24 days
+    return (long)(t.tv_sec - t0) * 1000 + t.tv_nsec / 1000000;
 }
 
 typedef struct {
@@ -954,7 +959,11 @@ static int engine_index(const char *path);
 static void cached_name(const char *path, char *out, size_t n);
 static void remember_name(const char *path, const char *name);
 
-static int mine(int i) { return !strncmp(engine_paths[i], data_dir, strlen(data_dir)) && *data_dir; } // only delete stuff we downloaded or you dropped in
+static int mine(int i) // only delete stuff we downloaded or you dropped in
+{
+    size_t n = strlen(data_dir);
+    return n && !strncmp(engine_paths[i], data_dir, n) && (engine_paths[i][n] == '/' || engine_paths[i][n] == '\\');
+}
 
 static const char *fit_text(Canvas *c, const char *t, double maxw)
 {
@@ -1720,7 +1729,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
 static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
 {
     double s = bl.w / 8;
-    if (debug_on || fix_mode) {
+    if ((debug_on || fix_mode) && !hushed()) { // on small boards these cover enough to make rescan and teach fail
         for (int sq = 0; sq < 64; sq++) {
             int pc = tracker.pos.sq[sq];
             if (pc == EMPTY) continue;
@@ -2164,6 +2173,7 @@ static char sans[96][8];
 static Pos san_prev;
 static u64 san_key, counted_key;
 static double acc_sum[2];
+static int new_stats; // picking a team or flipping starts the graph and report over even mid game
 
 static double win_pct(int cp) { return 100 / (1 + exp(-0.00368208 * cp)); } // same curve lichess uses
 
@@ -2171,7 +2181,7 @@ static void helper_track(const Analysis *an, int have_an, int my_turn)
 {
     static u64 last;
     u64 k = tracker.pos.key;
-    if (k != last) {
+    if (k != last || new_stats) {
         last = k;
         hplies++;
         if (san_key && tracker.last_move && san_prev.key == san_key) {
@@ -2186,7 +2196,8 @@ static void helper_track(const Analysis *an, int have_an, int my_turn)
             }
         }
         san_prev = tracker.pos, san_key = k;
-        if (k == start_key) {
+        if (k == start_key || new_stats) {
+            new_stats = 0;
             nsan = 0, counted_key = 0;
             open_name = NULL, nwhist = 0, whist_key = 0, hplies = 0;
             memset(grades, 0, sizeof(grades));
@@ -2502,7 +2513,7 @@ static void draw_wgraph(Canvas *c, Rect p, Rect bl, Rect outr)
     if (over || g.y + h > outr.y + outr.h - 4) g.y = p.y - h - 6;
     over = g.x < bl.x + bl.w && bl.x < g.x + g.w && g.y < bl.y + bl.h && bl.y < g.y + h;
     if (over || g.y < outr.y + 4) return;
-    panel_bg(c, g, 10, TH->panel);
+    panel_bg(c, g, 10, faded(TH->panel));
     double x0 = g.x + 8, w = g.w - 16, y0 = g.y + 5, gh = h - 10;
     draw_line(c, x0, y0 + gh / 2, x0 + w, y0 + gh / 2, 1, faded(0x60FFFFFF));
     for (int k = 1; k < nwhist; k++) {
@@ -2569,7 +2580,7 @@ static void redraw(void)
     int have_an = state == TRACKING && analyzer_get(&an) && an.key == tracker.pos.key;
     snprintf(engine_name, sizeof(engine_name), "%s", an.engine);
     if (cfg.engine > 0 && cfg.engine < nengines && *an.engine_base && strcmp(an.engine_base, "open-chease") &&
-        strcmp(engine_labels[cfg.engine], an.engine_base)) { // swap the file name for what the engine calls itself
+        strncmp(engine_labels[cfg.engine], an.engine_base, 31)) { // labels only keep 31 chars // swap the file name for what the engine calls itself
         snprintf(engine_labels[cfg.engine], sizeof(engine_labels[0]), "%.31s", an.engine_base);
         remember_name(engine_paths[cfg.engine], an.engine_base);
     }
@@ -2678,11 +2689,14 @@ static void redraw(void)
                 Analysis fake = an;
                 fake.score = o0.score, fake.mate = o0.mate;
                 format_score(&fake, my_turn, osc, sizeof(osc));
+                int hide = my_turn && (cfg.hint || cfg.chaos || now_ms() - pos_since < delay_secs[cfg.delay] * 1000L); // dont give away what the main box is hiding
                 if (o0.best == an.best)
                     snprintf(tips[ntips], 100, "%s agrees", o0.name);
+                else if (hide)
+                    snprintf(tips[ntips], 100, "%s has a different idea", o0.name);
                 else {
                     snprintf(tips[ntips], 100, "%s says %s (%s)", o0.name, ss, osc);
-                    if (my_turn && !cfg.chaos && !cfg.hint)
+                    if (my_turn)
                         draw_move(c, bl, o0.best, bottom, faded(0xB01FE0E0), 6, arrow_tk(cfg.thick) * 0.7, 0, 0, NULL);
                 }
                 tipc[ntips++] = TH->title_off;
@@ -2857,7 +2871,7 @@ static void redraw(void)
                 double h = bs + 16;
                 for (int k = 0; k < nl; k++) h += (big[k] ? 24 : 19) * zoom[k] + 2;
                 p = (Rect){cfg.spot == 2 ? bl.x - vw - 8 : bl.x + bl.w + 8, bl.y, vw, h};
-                panel_bg(c, p, 12, TH->panel);
+                panel_bg(c, p, 12, faded(TH->panel));
                 double y = p.y + bs + 14;
                 for (int k = 0; k < nl; k++) {
                     set_text_zoom(zoom[k]);
@@ -2886,7 +2900,7 @@ static void redraw(void)
                 double w = fmax(w1, text_width(line2, t2big)) + 28 + nbt * (bs + 4);
                 if (w < 300) w = 300;
                 p = panel_rect(&bl, w, ph, &outr);
-                panel_bg(c, p, 12, TH->panel);
+                panel_bg(c, p, 12, faded(TH->panel));
                 set_text_zoom(t1zoom);
                 draw_text(c, p.x + 14, p.y + 6, line1, t1big, my_turn ? TH->title : TH->title_off);
                 set_text_zoom(1);
@@ -3196,7 +3210,7 @@ static void dump_frame(void)
         }
         free(row);
         fclose(f);
-        rename(tmp, path); // whatever reads these never sees half a frame
+        replace_file(tmp, path); // whatever reads these never sees half a frame
     }
 }
 
@@ -3255,6 +3269,8 @@ static int overlay_empty(void)
 static void lose_board(void)
 {
     want_rescan = rescan_hush = 0;
+    want_teach = teach_hush = teach_tries = 0;
+    lib_open = 0; // it grabs the keyboard, dont leave that on with nothing showing
     if (verbose) fprintf(stderr, "board lost\n");
     if (state == TRACKING) { // scrolling or a quick tab switch shouldnt throw the game away
         saved_tracker = tracker;
@@ -3377,6 +3393,7 @@ static void fix_piece(int action, int arg)
         fix_sq = -1;
     }
     pos_finish_setup(&p);
+    tracker.last_move = 0; // a fix isnt a move, dont grade it
     if (!p.bb[KING] || !p.bb[6 + KING] || __builtin_popcountll(p.bb[KING]) > 1 || __builtin_popcountll(p.bb[6 + KING]) > 1) {
         set_note("each side needs exactly one king");
         for (int sq = 0; sq < 64; sq++) // dont keep re-applying a fix that broke the kings
@@ -3449,9 +3466,12 @@ static int in_path(const char *name, char *out, size_t n)
 static void scan_engines(const char *extra)
 {
     static char keep[1024];
+    char using[1024] = "";
+    if (cfg.engine > 0 && cfg.engine < nengines) snprintf(using, sizeof(using), "%s", engine_paths[cfg.engine]); // the order can shift, keep pointing at the same file
     if (extra) snprintf(keep, sizeof(keep), "%s", extra);
     extra = keep;
     nengines = 0;
+    lib_del = -1;
     add_engine("Built-in", "");
     char p[2048];
     int sf = 0;
@@ -3481,6 +3501,7 @@ static void scan_engines(const char *extra)
         if (sets[i].v == &cfg.engine) sets[i].n = nengines;
         if (sets[i].v == &cfg.second) sets[i].n = ns + 1;
     }
+    if (*using) cfg.engine = engine_index(using);
     cfg.second = 0;
     if (!strcmp(saved_second, "builtin")) cfg.second = 1;
     else if (*saved_second)
@@ -3507,7 +3528,7 @@ static void remember_name(const char *path, const char *name)
 {
     char have[48] = "";
     cached_name(path, have, sizeof(have));
-    if (!*path || !strcmp(have, name)) return;
+    if (!*path || !strncmp(have, name, 31)) return;
     char f[1100];
     snprintf(f, sizeof(f), "%s/engine-names", data_dir);
     FILE *fp = fopen(f, "a");
@@ -3538,7 +3559,7 @@ static void lib_slug(const char *name, char *out, size_t n) // names come off th
 
 static void lib_out_path(int i, char *out, size_t n)
 {
-    char slug[40];
+    char slug[48]; // same size the download job uses, or long names install somewhere we dont look
     lib_slug(lib[i].name, slug, sizeof(slug));
     engine_path_for(data_dir, slug, out, n);
 }
@@ -3817,7 +3838,7 @@ static void update_and_relaunch(void)
 {
     const char *mode = getenv("OPEN_CHEASE_UPDATE"), *home = getenv("OPEN_CHEASE_HOME");
     if (!mode || !home) {
-        set_note("cant update this copy, start it with run.sh or get.sh");
+        set_note("cant update this copy, use a git clone or the one line install from the readme");
         return;
     }
     char getsh[1100];
@@ -3885,6 +3906,7 @@ static void handle_click(double x, double y)
         case ACT_BLACK:
             tracker_start(&tracker, hits[i].action == ACT_WHITE ? WHITE : BLACK);
             state = TRACKING;
+            new_stats = 1;
             read_and_track(1);
             break;
         case ACT_BLOCK:
@@ -3892,6 +3914,7 @@ static void handle_click(double x, double y)
         case ACT_CLOSE:
         case ACT_STOP:
             lib_open = menu_open = settings_open = confirm_quit = fix_mode = 0;
+            want_teach = teach_hush = teach_tries = 0;
             dd_open = -1;
             ignore_board();
             analyzer_stop();
@@ -3901,6 +3924,7 @@ static void handle_click(double x, double y)
         case ACT_FLIP:
             menu_open = 0;
             tracker_start(&tracker, tracker.user_color ^ 1);
+            new_stats = 1;
             read_and_track(1);
             break;
         case ACT_MENU:
@@ -4211,7 +4235,9 @@ int main(int argc, char **argv)
     const char *dd = full_path(data, real_data) && strlen(real_data) < sizeof(data_dir) ? real_data : data;
     snprintf(data_dir, sizeof(data_dir), "%.1023s", dd);
     load_library();
-    scan_engines(engine);
+    if (!engine_cli && have_saved_engine && (!*saved_engine || is_exec(saved_engine)))
+        engine = *saved_engine ? saved_engine : NULL;
+    scan_engines(engine); // after picking it, a saved engine outside the usual folders still has to get a row
     if (!replay_dir) fetch_library(); // tests stay offline
     const char *want = getenv("OPEN_CHEASE_GET"); // test hook: download one engine from the library, start it, exit
     if (want) {
@@ -4240,8 +4266,6 @@ int main(int argc, char **argv)
         fflush(stdout);
         _exit(ok ? 0 : 1);
     }
-    if (!engine_cli && have_saved_engine && (!*saved_engine || is_exec(saved_engine)))
-        engine = *saved_engine ? saved_engine : NULL;
     cfg.engine = engine_index(engine);
     analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.chaos >= 10 && cfg.lines < 2 ? 3 : cfg.lines + 1);
     analyzer_set_elo(strength_elo[cfg.strength]);
@@ -4398,6 +4422,8 @@ int main(int argc, char **argv)
     redraw();
     analyzer_stop();
     second_quit();
+    job_kill(dl_pid); // a download finishing after we quit would install stuff behind your back
+    job_kill(lib_pid);
     usleep(100000);
     fflush(stdout);
     fflush(stderr);

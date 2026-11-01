@@ -32,6 +32,7 @@ int proc_start(const char *path, int quiet, proc_t *p, int *to_fd, int *from_fd)
     }
     if (pid == 0) {
         setpgid(0, 0);
+        signal(SIGPIPE, SIG_DFL); // we ignore it, engines shouldnt
         dup2(to[0], 0);
         dup2(from[1], 1);
         if (quiet) {
@@ -126,6 +127,7 @@ int run_wait(char *const argv[])
 {
     pid_t pid = fork();
     if (pid == 0) {
+        signal(SIGPIPE, SIG_DFL);
         int nul = open("/dev/null", O_WRONLY);
         if (nul >= 0) dup2(nul, 1), dup2(nul, 2);
         for (int fd = 3; fd < 1024; fd++) close(fd);
@@ -170,6 +172,7 @@ int spawn_detached(char *const argv[])
     pid_t pid = fork();
     if (pid == 0) {
         setsid();
+        signal(SIGPIPE, SIG_DFL);
         for (int fd = 3; fd < 1024; fd++) close(fd);
         execvp(argv[0], argv);
         _exit(127);
@@ -188,11 +191,16 @@ static pid_t sh_job(const char *script, const char *const *env)
 {
     pid_t pid = fork();
     if (pid == 0) {
+        setpgid(0, 0); // own group so job_kill gets curl too, not just sh
+        signal(SIGPIPE, SIG_DFL);
         for (int fd = 3; fd < 1024; fd++) close(fd); // dont hand the wayland socket and engine pipes to curl
         for (; *env; env += 2) setenv(env[0], env[1], 1);
-        execl("/bin/sh", "sh", "-c", script, (char *)NULL);
+        char full[8192];
+        snprintf(full, sizeof(full), "trap 'exit 1' INT TERM HUP; %s", script); // so the EXIT trap still cleans up when we get killed
+        execl("/bin/sh", "sh", "-c", full, (char *)NULL);
         _exit(127);
     }
+    if (pid > 0) setpgid(pid, pid); // both sides, whoever runs first
     return pid < 0 ? 0 : pid;
 }
 
@@ -235,14 +243,22 @@ int job_done(intptr_t h, int *ok)
 
 void job_kill(intptr_t h)
 {
-    if (h > 0) kill((pid_t)h, SIGKILL), waitpid((pid_t)h, NULL, 0);
+    if (h <= 0) return;
+    kill(-(pid_t)h, SIGTERM);
+    for (int i = 0; i < 20; i++) { // a moment for the trap to clean up its temp folder
+        if (waitpid((pid_t)h, NULL, WNOHANG) == (pid_t)h) return;
+        usleep(25000);
+    }
+    kill(-(pid_t)h, SIGKILL);
+    waitpid((pid_t)h, NULL, 0);
 }
 
 void engine_path_for(const char *data, const char *slug, char *out, size_t n) { snprintf(out, n, "%s/engines/%s", data, slug); }
 
 void engine_remove(const char *data, const char *path)
 {
-    if (strncmp(path, data, strlen(data))) return;
+    size_t dl = strlen(data);
+    if (!dl || strncmp(path, data, dl) || path[dl] != '/') return; // not ours, or a folder that just starts with the same name
     unlink(path);
     char dir[1300];
     snprintf(dir, sizeof(dir), "%s.files", path);

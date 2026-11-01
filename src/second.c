@@ -92,6 +92,7 @@ static int wait_for(Slot *s, const char *token, int ms)
             spent += 200;
             continue;
         }
+        spent += 2; // lines count too, or one that never stops talking hangs us here
         if (!strncmp(line, "id name ", 8)) {
             char *by = strstr(line + 8, " by ");
             if (by) *by = 0;
@@ -237,11 +238,12 @@ static void *slot_thread(void *arg)
                 break;
             }
         }
-        pthread_mutex_lock(&s->mu);
         if (dead) {
-            stop_engine(s);
+            stop_engine(s); // not under the lock, reaping can take seconds on windows
+            pthread_mutex_lock(&s->mu);
             continue;
         }
+        pthread_mutex_lock(&s->mu);
         if (!stopped && o.best && o.key == s->asked) { // a stopped search is half done, dont show it
             memcpy(o.name, s->name, sizeof(o.name));
             o.done = 1;

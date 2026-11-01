@@ -4,6 +4,15 @@
 #include <stdint.h>
 
 #include "engine.h"
+#include <stdio.h>
+
+static inline int replace_file(const char *tmp, const char *dst)
+{
+#ifdef _WIN32
+    remove(dst); // windows rename wont overwrite
+#endif
+    return rename(tmp, dst);
+}
 
 #define MAX_OUTPUTS 8
 
@@ -110,6 +119,7 @@ int canvas_alpha_at(Canvas *c, double lx, double ly);
 int vision_find_board(const Frame *f, Board *b, const Rect *ignore, int nignore,
                       int (*masked)(void *, int, int), void *mctx);
 int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), void *mctx);
+void vision_fill_holes(float *m); // fills enclosed piece outlines in a FEAT_N grid
 void vision_read(const Frame *f, const Board *b, int white_bottom, float color_thr, BoardRead *r,
                  int (*masked)(void *, int, int), void *mctx);
 
