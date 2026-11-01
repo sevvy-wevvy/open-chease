@@ -31,29 +31,19 @@ This is the <b>dev</b> branch, the newest stuff lands here first and some of it 
 </p>
 
 <details>
-<summary align="center"><b>✅ Easy Install ✅</b></summary>
+<summary align="center"><b>⬇️ Install ⬇️</b></summary>
+
+<br>
 
 <p align="center">
 Find your computer below and paste its one command into a terminal. It downloads everything once, so running it again just starts it, and your settings stick around after a reboot.
 </p>
 
-<h3 align="center">🍎 Mac</h3>
+<br>
 
-<p align="center">
-Open <b>Terminal</b> (Cmd + Space, type terminal, hit enter) and paste this:
-</p>
+---
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/sevvy-wevvy/open-chease/dev/get.sh | bash
-```
-
-<p align="center">
-It builds itself on your mac the first time, so you need apples command line tools. If you dont have them run <code>xcode-select --install</code> first.<br>
-macOS will ask you to let Terminal record the screen. Turn it on in System Settings > Privacy & Security > Screen Recording, then paste the command again.<br>
-Everything goes in <code>~/Library/Application Support/open-chease</code>
-</p>
-
-<h3 align="center">🐧 Linux</h3>
+<h2 align="center">🐧 Linux</h2>
 
 <p align="center">
 Open a terminal and paste this, works the same in bash, zsh and fish:
@@ -75,7 +65,11 @@ wget -qO- https://raw.githubusercontent.com/sevvy-wevvy/open-chease/dev/get.sh |
 Everything goes in <code>~/.local/share/open-chease</code>
 </p>
 
-<h3 align="center">🪟 Windows</h3>
+<br>
+
+---
+
+<h2 align="center">🪟 Windows</h2>
 
 <p align="center">
 Open <b>PowerShell</b> (start menu, type powershell, NOT cmd) and paste this:
@@ -86,26 +80,67 @@ irm https://raw.githubusercontent.com/sevvy-wevvy/open-chease/dev/get.ps1 | iex
 ```
 
 <p align="center">
-Its not signed, so SmartScreen might say "Windows protected your PC" the first time. Click More info > Run anyway.<br>
-Some engines in the library need the <a href="https://aka.ms/vs/17/release/vc_redist.x64.exe">Visual C++ runtime</a>, it says so next to them.<br>
+Its not signed, so SmartScreen might say "Windows protected your PC" the first time. Click More info > Run anyway.
+</p>
+
+<p align="center">
+Some engines in the library need the <a href="https://aka.ms/vs/17/release/vc_redist.x64.exe">Visual C++ runtime</a>, it says so next to them.
+</p>
+
+<p align="center">
 Everything goes in <code>%LOCALAPPDATA%\open-chease</code>
 </p>
 
-<h3 align="center">⚙️ Options</h3>
+<br>
+
+---
+
+<h2 align="center">🍎 Mac</h2>
+
+<p align="center">
+Open <b>Terminal</b> (Cmd + Space, type terminal, hit enter) and paste this:
+</p>
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sevvy-wevvy/open-chease/dev/get.sh | bash
+```
+
+<p align="center">
+It builds itself on your mac the first time, so you need apples command line tools. If you dont have them run <code>xcode-select --install</code> first.
+</p>
+
+<p align="center">
+macOS will ask you to let Terminal record the screen. Turn it on in System Settings > Privacy & Security > Screen Recording, then paste the command again.
+</p>
+
+<p align="center">
+Everything goes in <code>~/Library/Application Support/open-chease</code>
+</p>
+
+<br>
+
+---
+
+<h2 align="center">⚙️ Options</h2>
 
 <p align="center">
 The first run also grabs Stockfish (about 80 MB) so the moves are way stronger. Add <code>--no-stockfish</code> if you dont want it, or <code>--update</code> to get the newest open-chease.
 </p>
 
+<p align="center"><b>Linux and mac</b></p>
+
 ```sh
-# mac and linux
 curl -fsSL https://raw.githubusercontent.com/sevvy-wevvy/open-chease/dev/get.sh | bash -s -- --update
 ```
 
+<p align="center"><b>Windows</b></p>
+
 ```powershell
-# windows
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/sevvy-wevvy/open-chease/dev/get.ps1))) --update
 ```
+
+<br>
+
 </details>
 
 <details>
