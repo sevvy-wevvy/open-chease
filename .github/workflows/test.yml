@@ -29,7 +29,7 @@ jobs:
         run: |
           tests/fetch_pieces.sh cburnett staunty alpha maestro merida
           python3 tests/run_vision.py 9 40 2>&1 | grep "^total" | tee vision.txt
-          grep -q "total 40  board-geometry 40  colors/occupancy 36  full-pieces 36" vision.txt
+          grep -q "total 40  board-geometry 40  colors/occupancy 37  full-pieces 37" vision.txt
       - name: sims
         run: |
           mkdir -p rec

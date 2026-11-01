@@ -210,6 +210,7 @@ typedef struct {
     int promo_sq[4], promo_ticks[4], promo_color[4]; // fresh promotions still getting voted on, ticks >= 10 = free slot
     int promo_votes[4][6];
     Pos prev[3];
+    u64 sure, prev_sure[3]; // pieces we followed from the start, their type is known so dont let shapes argue
     int nprev;
     int synced;
     uint8_t pending[64]; // obs has to sit still a few ticks before we act on it
