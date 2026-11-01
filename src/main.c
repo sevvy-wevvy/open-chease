@@ -2917,7 +2917,7 @@ static void draw_ghosts(Canvas *c, Rect bl, int bottom, const Analysis *an)
         uint32_t a = (uint32_t)(0xE0 - k * 0x16) << 24;
         uint32_t fill = cfg.ghostcolor ? (pick_color(cfg.ghostcolor, 0) & 0xFFFFFF) | a : white ? (0xF2F2F2 | a) : (0x1E1E1E | a);
         uint32_t ink = white && !cfg.ghostcolor ? 0xFF111111 : 0xFFF5F5F5;
-        char num[4];
+        char num[12];
         snprintf(num, sizeof(num), "%d", k + 1);
         Rect q = sq_rect(bl, M_TO(m), bottom);
         double cx = q.x + s / 2, cy = q.y + s / 2;
