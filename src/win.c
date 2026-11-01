@@ -322,6 +322,14 @@ static void track_mouse(void)
     hot = want;
 }
 
+static int win_pointer(Overlay *ov, double *x, double *y)
+{
+    POINT p;
+    if (!GetCursorPos(&p) || !on_hit(p.x / scale, p.y / scale)) return 0;
+    *x = p.x / scale, *y = p.y / scale;
+    return 1;
+}
+
 static int win_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
 {
     DWORD end = GetTickCount() + (DWORD)(timeout_ms > 0 ? timeout_ms : 0);
@@ -370,5 +378,5 @@ static void win_keyboard(Overlay *ov, int on)
     if (!on) before_kb = NULL;
 }
 
-static Overlay win_overlay = {"layered window", win_ov_init, win_canvas, 0, win_commit, win_wait, NULL, win_keyboard, 0};
+static Overlay win_overlay = {"layered window", win_ov_init, win_canvas, 0, win_commit, win_wait, NULL, win_keyboard, 0, win_pointer};
 Overlay *overlay_win(void) { return &win_overlay; }

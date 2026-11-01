@@ -171,5 +171,28 @@ static int ro_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
     return 0;
 }
 
-static Overlay ro_overlay = {"replay", ro_init, ro_canvas, 0, ro_commit, ro_wait, NULL, NULL, 0};
+static int num(const char **p)
+{
+    int v = 0;
+    while (**p >= '0' && **p <= '9' && v < 100000) v = v * 10 + *(*p)++ - '0';
+    return v;
+}
+
+static int ro_pointer(Overlay *ov, double *x, double *y)
+{
+    const char *p = getenv("OPEN_CHEASE_HOVER"); // "frame:x,y ...", the mouse sits there from that frame on
+    int got = 0;
+    while (p && *p) {
+        int n = num(&p);
+        if (*p++ != ':') break;
+        int hx = num(&p);
+        if (*p++ != ',') break;
+        int hy = num(&p);
+        if (n <= frame_no - 1) *x = hx, *y = hy, got = 1;
+        while (*p == ' ') p++;
+    }
+    return got;
+}
+
+static Overlay ro_overlay = {"replay", ro_init, ro_canvas, 0, ro_commit, ro_wait, NULL, NULL, 0, ro_pointer};
 Overlay *overlay_replay(void) { return &ro_overlay; }

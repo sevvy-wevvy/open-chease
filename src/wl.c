@@ -722,6 +722,16 @@ static int wl_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
     }
 }
 
+static int wl_pointer_at(Overlay *ov, double *x, double *y)
+{
+    for (int i = 0; ptr_surface && i < nouts; i++)
+        if (outs[i].surface == ptr_surface) {
+            *x = outs[i].lx + ptr_x, *y = outs[i].ly + ptr_y;
+            return 1;
+        }
+    return 0;
+}
+
 static void wl_keyboard_mode(Overlay *ov, int on)
 {
     kb_on = on;
@@ -734,5 +744,5 @@ static void wl_keyboard_mode(Overlay *ov, int on)
     wl_display_flush(dpy);
 }
 
-static Overlay wl_overlay = {"layer-shell", wl_ov_init, wl_canvas, 0, wl_commit, wl_wait, NULL, wl_keyboard_mode, 0};
+static Overlay wl_overlay = {"layer-shell", wl_ov_init, wl_canvas, 0, wl_commit, wl_wait, NULL, wl_keyboard_mode, 0, wl_pointer_at};
 Overlay *overlay_wl(void) { return &wl_overlay; }
