@@ -429,19 +429,24 @@ static void set_note(const char *msg);
 static char cfg_path[1024];
 
 enum { K_HIDE, K_RESCAN, K_MODE, K_HINT, K_SETTINGS, K_FLIP, K_SHEET, K_LOCK, K_MENU, K_DEBUG, NHK };
+#ifdef __APPLE__
+#define HK_DEF (HK_CTRL | HK_ALT) // option+letter types stuff like ˙ on a mac and a global monitor cant eat it
+#else
+#define HK_DEF HK_ALT
+#endif
 static const struct {
     const char *name, *label;
     int def;
     const char *tip;
 } hk_acts[NHK] = {
-    {"hide", "Hide everything", HK_ALT | 'h', "hides every drawing and the box, press it again or click the little eye to get it back"},
-    {"rescan", "Rescan board", HK_ALT | 'r', "reads the whole board again from scratch if it got lost"},
-    {"mode", "Switch mode", HK_ALT | 'm', "goes cheats, helper, both and around again"},
-    {"hint", "Hint", HK_ALT | 'i', "same as the hint button, each press shows a bit more of the best move"},
-    {"settings", "Settings", HK_ALT | 's', "opens or closes this panel"},
-    {"flip", "Switch team", HK_ALT | 'f', "flips you to the other team, for when it guessed wrong"},
-    {"keys", "Hotkey list", HK_ALT | HK_SHIFT | '/', "pops up a little list of these, press it again or click to close it"},
-    {"lock", "Lock board", HK_ALT | 'l', "keeps the board where it is"},
+    {"hide", "Hide everything", HK_DEF | 'h', "hides every drawing and the box, press it again or click the little eye to get it back"},
+    {"rescan", "Rescan board", HK_DEF | 'r', "reads the whole board again from scratch if it got lost"},
+    {"mode", "Switch mode", HK_DEF | 'm', "goes cheats, helper, both and around again"},
+    {"hint", "Hint", HK_DEF | 'i', "same as the hint button, each press shows a bit more of the best move"},
+    {"settings", "Settings", HK_DEF | 's', "opens or closes this panel"},
+    {"flip", "Switch team", HK_DEF | 'f', "flips you to the other team, for when it guessed wrong"},
+    {"keys", "Hotkey list", HK_DEF | HK_SHIFT | '/', "pops up a little list of these, press it again or click to close it"},
+    {"lock", "Lock board", HK_DEF | 'l', "keeps the board where it is"},
     {"menu", "Menu", 0, "opens or closes the ... menu"},
     {"debug", "What it sees", 0, "tags every square with what it thinks is there"},
 };
@@ -4358,7 +4363,12 @@ static void update_and_relaunch(void)
 #endif
 }
 
-static void toggle_lock_board(void) {} // stub, the board lock goes in here
+static void toggle_lock_board(void)
+{
+    cfg.lockboard = !cfg.lockboard;
+    save_cfg();
+    set_note(cfg.lockboard ? "board locked, other boards cant steal it now" : "board unlocked");
+}
 
 static void draw_eye(Canvas *c, Rect r, int slash, uint32_t col)
 {
