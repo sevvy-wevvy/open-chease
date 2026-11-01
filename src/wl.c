@@ -655,10 +655,10 @@ static void add_layer(WlOut *o)
     o->layer = zwlr_layer_shell_v1_get_layer_surface(layer_shell, o->surface, o->output,
                                                      ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "open-chease");
     zwlr_layer_surface_v1_add_listener(o->layer, &ls_listener, o);
-    zwlr_layer_surface_v1_set_anchor(o->layer, 15); // all 4 edges
+    zwlr_layer_surface_v1_set_anchor(o->layer, 15);
     zwlr_layer_surface_v1_set_exclusive_zone(o->layer, -1); // or waybar pushes it around
-    zwlr_layer_surface_v1_set_keyboard_interactivity(o->layer, kb_on); // 1 = exclusive, eats every key
-    zwlr_layer_surface_v1_set_size(o->layer, 0, 0); // 0x0 + anchors = whole output
+    zwlr_layer_surface_v1_set_keyboard_interactivity(o->layer, kb_on);
+    zwlr_layer_surface_v1_set_size(o->layer, 0, 0);
     struct wl_region *empty = wl_compositor_create_region(compositor);
     wl_surface_set_input_region(o->surface, empty);
     wl_region_destroy(empty);

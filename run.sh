@@ -5,19 +5,19 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$(uname -s)" = Darwin ]; then
   data="${OPEN_CHEASE_DATA:-$HOME/Library/Application Support/open-chease}"
 else
-  data="${OPEN_CHEASE_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/open-chease}" # used to be /tmp, gone every reboot
+  data="${OPEN_CHEASE_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/open-chease}"
   old="${TMPDIR:-/tmp}/open-chease-$(id -u)"
   case "$here" in "$old"/*) old=/nonexistent ;; esac # dont move the folder were running from
   if [ -z "${OPEN_CHEASE_DATA:-}" ] && [ ! -e "$data" ] && [ -d "$old" ] && [ ! -L "$old" ] && [ -O "$old" ]; then
-    if mkdir -p "$(dirname "$data")" && mv "$old" "$data" 2>/dev/null; then # bring your settings and engines along
-      for f in "$data/settings" "$data/engine-names" "$data"/engines/*; do # these have the old path baked in
+    if mkdir -p "$(dirname "$data")" && mv "$old" "$data" 2>/dev/null; then
+      for f in "$data/settings" "$data/engine-names" "$data"/engines/*; do
         [ -f "$f" ] && [ "$(wc -c <"$f")" -lt 65536 ] && grep -qF "$old" "$f" 2>/dev/null && sed -i "s#$old#$data#g" "$f"
       done
     fi
   fi
 fi
 mkdir -p "$data"
-if [ -L "$data" ] || [ ! -O "$data" ]; then # someone else made it first, dont run their stuff
+if [ -L "$data" ] || [ ! -O "$data" ]; then
   echo "$data isnt a folder you own, delete it or set OPEN_CHEASE_DATA to somewhere else" >&2
   exit 1
 fi
@@ -92,7 +92,7 @@ if [ "$pick_engine" = 1 ]; then
   if [ -z "$engine" ] && command -v stockfish >/dev/null 2>&1; then
     engine="$(command -v stockfish)"
   fi
-  if [ -n "$engine" ]; then export OPEN_CHEASE_ENGINE="$engine"; fi # just the default, whatever you pick in settings wins
+  if [ -n "$engine" ]; then export OPEN_CHEASE_ENGINE="$engine"; fi # settings still win
 fi
 
 exec "$bin" ${args[@]+"${args[@]}"} "$@"

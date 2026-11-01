@@ -8,10 +8,10 @@ branch="${OPEN_CHEASE_BRANCH:-dev}"
 if [ "$(uname -s)" = Darwin ]; then
   data="${OPEN_CHEASE_DATA:-$HOME/Library/Application Support/open-chease}" # macs clean out $TMPDIR after a few days
 else
-  data="${OPEN_CHEASE_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/open-chease}" # used to be /tmp, gone every reboot
+  data="${OPEN_CHEASE_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/open-chease}" # was /tmp before, reboots wiped it
   old="${TMPDIR:-/tmp}/open-chease-$(id -u)"
   if [ -z "${OPEN_CHEASE_DATA:-}" ] && [ ! -e "$data" ] && [ -d "$old" ] && [ ! -L "$old" ] && [ -O "$old" ]; then
-    if mkdir -p "$(dirname "$data")" && mv "$old" "$data" 2>/dev/null; then # bring your settings and engines along
+    if mkdir -p "$(dirname "$data")" && mv "$old" "$data" 2>/dev/null; then
       for f in "$data/settings" "$data/engine-names" "$data"/engines/*; do # these have the old path baked in
         [ -f "$f" ] && [ "$(wc -c <"$f")" -lt 65536 ] && grep -qF "$old" "$f" 2>/dev/null && sed -i "s#$old#$data#g" "$f"
       done
@@ -46,14 +46,14 @@ case "$os" in
 esac
 
 mkdir -p "$data"
-trap 'rm -rf "${tmp:-}"' EXIT # a failed download or tar shouldnt leave junk behind
+trap 'rm -rf "${tmp:-}"' EXIT
 if [ -L "$data" ] || [ ! -O "$data" ]; then # someone else made it first, dont run their stuff
   echo "$data isnt a folder you own, delete it or set OPEN_CHEASE_DATA to somewhere else" >&2
   exit 1
 fi
 chmod 700 "$data"
 export OPEN_CHEASE_DATA="$data"
-export OPEN_CHEASE_BRANCH="$branch" # the app reads its engine lists from the same branch
+export OPEN_CHEASE_BRANCH="$branch"
 
 dl() {
   if command -v curl >/dev/null 2>&1; then
