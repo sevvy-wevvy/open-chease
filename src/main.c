@@ -29,7 +29,7 @@ enum {
     ACT_WHITE = 1, ACT_BLACK, ACT_CLOSE, ACT_STOP, ACT_FLIP, ACT_MENU, ACT_DEBUG, ACT_FIX, ACT_RESTART, ACT_UPDATE,
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
-    ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND
+    ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE
 };
 
 typedef struct {
@@ -153,19 +153,20 @@ static struct {
     int threats, hints, level, second;
     int hcolor, hstyle;
     int tharrow, thcolor, ththick; // threat and danger arrows
+    int fade_move, fade_line; // fade is the box and everything else, in 5% steps like these
 // positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
-         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5, 4, 1},
+         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5, 4, 1, 0, 0},
   cfg_default; // copied before load_cfg, the reset button goes back to this
 
 static const char *theme_names[NTHEMES];
 static const char *spot_names[] = {"Top", "Bottom", "Left", "Right"};
 static const char *size_names[] = {"Small", "Normal", "Big"};
-static const char *fade_names[] = {"0%", "25%", "50%", "75%"};
+static const char *fade_names[19]; // 0% to 90%, filled in at startup
 static const char *onoff[] = {"Off", "On"};
 static const char *grid_names[] = {"Off", "Lines", "Outline", "Corners"};
 static const char *arrow_names[] = {"Off", "Straight", "Knight bends", "Curve", "Swoosh", "Dashed", "Dotted", "Glow", "Double"};
-static const char *thick_names[] = {"Thin", "Normal", "Thick", "Huge"};
+static const char *thick_names[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
 static const char *mark_names[] = {"Off", "Outline", "Filled", "Corners", "Dot", "Ring", "Big dot",
                                    "Cross", "Triangles", "Brackets", "Dashed", "Double", "Glow", "Underline"};
 static const char *color_names[] = {"Theme", "Gold", "Green", "Blue", "Red", "Pink", "Purple", "White", "Orange", "Cyan", "Rainbow", "Black"}; // black goes last so old saves dont shift
@@ -282,7 +283,6 @@ static const char *think_names[] = {"2 sec", "5 sec", "8 sec", "15 sec", "30 sec
 static const int think_secs[] = {2, 5, 8, 15, 30};
 static const char *rate_names[] = {"1x a sec", "2x a sec", "4x a sec"};
 static const int rate_hz[] = {1, 2, 4};
-static const int fade_pct[] = {0, 25, 50, 75};
 static const char *scorefmt_names[] = {"Pawns", "Centipawns", "Win %"};
 static const char *evalbar_names[] = {"Off", "Left", "Right"};
 static const char *lines_names[] = {"Best only", "Top 2", "Top 3"};
@@ -304,6 +304,11 @@ static int have_saved_engine;
 static int btn_teach, btn_forget, btn_rescan; // buttons, not settings, never saved
 
 static int is_action(const int *v) { return v == &btn_teach || v == &btn_forget || v == &btn_rescan; }
+static int is_slider(const int *v) // a bar you click along instead of a dropdown
+{
+    return v == &cfg.fade || v == &cfg.fade_move || v == &cfg.fade_line || v == &cfg.size || v == &cfg.thick || v == &cfg.tthick ||
+           v == &cfg.ththick || v == &cfg.think || v == &cfg.rate || v == &cfg.threads || v == &cfg.hash || v == &cfg.strength;
+}
 static int is_button(const int *v) { return v == &cfg.library || v == &cfg.engine || v == &cfg.second || is_action(v); }
 
 typedef struct {
@@ -318,7 +323,9 @@ static Setting sets[] = {
     {"Theme", "theme", &cfg.theme, NTHEMES, theme_names, "Look", "the colors for the whole thing, the Themes tab has more and lets you make your own"},
     {"Box spot", "spot", &cfg.spot, 4, spot_names, NULL, "where the info box sits around the board, move it if its covering something"},
     {"Box size", "size", &cfg.size, 3, size_names, NULL, "how big the info box and its text are"},
-    {"See-through", "fade", &cfg.fade, 4, fade_names, NULL, "makes the box and arrows see-through so you can still see the game under them"},
+    {"Fade box", "fadebox", &cfg.fade, 19, fade_names, NULL, "makes the info box and the other extras see-through so you can still see the game under them"},
+    {"Fade moves", "fademove", &cfg.fade_move, 19, fade_names, NULL, "makes the move arrows, marks and move names see-through"},
+    {"Fade outlines", "fadeline", &cfg.fade_line, 19, fade_names, NULL, "makes the grid, last move squares, hanging piece marks and the check ring see-through"},
     {"Grid", "grid", &cfg.grid, 4, grid_names, NULL, "draws lines on the squares, handy to check it found the board right"},
     {"Grid color", "gcolor", &cfg.gcolor, 12, color_names, NULL, "what color the grid is"},
     {"Status line", "status", &cfg.status, 2, onoff, NULL, "the small line with your team, the engine and what its doing"},
@@ -332,7 +339,7 @@ static Setting sets[] = {
     {"Rate my moves", "rateme", &cfg.rateme, 2, onoff, NULL, "grades every move after you play it, from ! to ??"},
     {"Confetti", "confetti", &cfg.confetti, 2, onoff, NULL, "confetti on the board when you checkmate them"},
     {"Arrow", "arrow", &cfg.arrow, 9, arrow_names, "Yours", "how the arrow for your best move looks, or off for no arrow"},
-    {"Arrow size", "thick", &cfg.thick, 4, thick_names, NULL, "how thick your move arrow is"},
+    {"Arrow size", "arrowsize", &cfg.thick, 10, thick_names, NULL, "how thick your move arrow is"},
     {"Piece to move", "from", &cfg.from, 14, mark_names, NULL, "marks the piece you should move"},
     {"Where it goes", "to", &cfg.to, 14, mark_names, NULL, "marks the square it should go to"},
     {"Move name", "label", &cfg.label, 2, onoff, NULL, "writes the move like Nf3 on the board"},
@@ -350,7 +357,7 @@ static Setting sets[] = {
     {"Second opinion", "second", &cfg.second, 1, second_names, NULL, "a second engine checks the first one and tells you when they disagree"},
     {"Show", "theirs", &cfg.theirs, 4, theirs_names, "Theirs", "shows what they will probably play, as text, on the board or both"},
     {"Arrow", "tarrow", &cfg.tarrow, 9, arrow_names, NULL, "how the arrow for their move looks"},
-    {"Arrow size", "tthick", &cfg.tthick, 4, thick_names, NULL, "how thick their move arrow is"},
+    {"Arrow size", "tarrowsize", &cfg.tthick, 10, thick_names, NULL, "how thick their move arrow is"},
     {"Piece to move", "tfrom", &cfg.tfrom, 14, mark_names, NULL, "marks the piece theyll probably move"},
     {"Where it goes", "tto", &cfg.tto, 14, mark_names, NULL, "marks where theyll probably move it"},
     {"Move name", "tlabel", &cfg.tlabel, 2, onoff, NULL, "writes their move like Nf3 on the board"},
@@ -372,7 +379,7 @@ static Setting sets[] = {
     {"Threats", "threats", &cfg.threats, 3, threat_names, NULL, "shows what theyd do if they got a free move, like a fork. with arrow draws it too"},
     {"Threat arrow", "threatarrow", &cfg.tharrow, 9, arrow_names, NULL, "how the threat and danger arrows look"},
     {"Threat color", "threatcolor", &cfg.thcolor, 12, color_names, NULL, "color of the threat and danger arrows"},
-    {"Threat size", "threatsize", &cfg.ththick, 4, thick_names, NULL, "how thick the threat and danger arrows are"},
+    {"Threat size", "threatsz", &cfg.ththick, 10, thick_names, NULL, "how thick the threat and danger arrows are"},
     {"Hint button", "hints", &cfg.hints, 2, onoff, NULL, "adds a hint button, each click shows a bit more of the best move"},
     {"What a ___ plays", "level", &cfg.level, 5, level_names, NULL, "shows what a player at that rating would probably play here"},
     {"Show what it sees", "debug", &cfg.debug, 2, onoff, "Vision", "tags every square with what it thinks is there, good for checking it read right"},
@@ -394,12 +401,15 @@ static char cfg_path[1024];
 
 #define TH (&themes[cfg.theme])
 
-static uint32_t faded(uint32_t argb)
+static uint32_t fade_by(uint32_t argb, int step)
 {
     uint32_t a = argb >> 24;
-    a = a * (100 - fade_pct[cfg.fade]) / 100;
+    a = a * (100 - step * 5) / 100;
     return (a << 24) | (argb & 0xFFFFFF);
 }
+static uint32_t faded(uint32_t argb) { return fade_by(argb, cfg.fade); } // the box and everything else
+static uint32_t faded_move(uint32_t argb) { return fade_by(argb, cfg.fade_move); }
+static uint32_t faded_line(uint32_t argb) { return fade_by(argb, cfg.fade_line); }
 
 static void load_cfg(void)
 {
@@ -439,6 +449,15 @@ static void load_cfg(void)
                 for (; isxdigit((unsigned char)*q) && nd < 8; q++, nd++) v = v * 16 + (*q <= '9' ? *q - '0' : (*q | 32) - 'a' + 10);
                 if (nd == 8) *part(t, j) = v; // half a color is worse than the old one
             }
+            continue;
+        }
+        if (!strcmp(k, "fade")) { // one setting for everything back then, 4 steps
+            if (v < 4) cfg.fade = cfg.fade_move = cfg.fade_line = v * 5;
+            continue;
+        }
+        if (!strcmp(k, "thick") || !strcmp(k, "tthick") || !strcmp(k, "threatsize")) { // sizes had 4 steps, now 10
+            int nv = (int[]){1, 3, 5, 8}[v < 4 ? v : 1];
+            *(k[0] == 't' && k[1] == 't' ? &cfg.tthick : k[1] == 'h' && k[2] == 'r' ? &cfg.ththick : &cfg.thick) = nv;
             continue;
         }
         if (!strcmp(k, "engine") || !strcmp(k, "library")) continue; // indexes go stale, enginepath is what counts
@@ -670,7 +689,7 @@ static void draw_grid(Canvas *c, Rect bl, int style)
 {
     if (hushed()) return;
     double s = bl.w / 8, w = fmax(1.6, s * 0.035);
-    uint32_t col = faded(cfg.gcolor ? (pick_color(cfg.gcolor, 0) | 0xE6000000) : TH->grid);
+    uint32_t col = faded_line(cfg.gcolor ? (pick_color(cfg.gcolor, 0) | 0xE6000000) : TH->grid);
     if (style == 1)
         for (int i = 0; i <= 8; i++) {
             draw_rect(c, (Rect){bl.x + i * s - w / 2, bl.y - w / 2, w, bl.h + w}, col);
@@ -786,7 +805,7 @@ static void draw_move(Canvas *c, Rect bl, Move m, int white_bottom, uint32_t col
     int r0, c0, r1, c1;
     sq_display(M_FROM(m), white_bottom, &r0, &c0);
     sq_display(M_TO(m), white_bottom, &r1, &c1);
-    col = faded(col);
+    col = faded_move(col);
     mark_square(c, (Rect){bl.x + c0 * s, bl.y + r0 * s, s, s}, from_style, col);
     mark_square(c, (Rect){bl.x + c1 * s, bl.y + r1 * s, s, s}, to_style, col);
     if (arrow) {
@@ -865,8 +884,8 @@ static void draw_move(Canvas *c, Rect bl, Move m, int white_bottom, uint32_t col
     if (label && *label) {
         double tw = text_lw(c, label, 0), w = tw + 10, h = 19;
         Rect lr = {bl.x + c1 * s + (s - w) / 2, bl.y + r1 * s + s - h - 3, w, h};
-        draw_round_rect(c, lr, 5, faded(0xF0181818));
-        draw_text(c, lr.x + 5, lr.y + 1, label, 0, faded(0xFFF5F5F5));
+        draw_round_rect(c, lr, 5, faded_move(0xF0181818));
+        draw_text(c, lr.x + 5, lr.y + 1, label, 0, faded_move(0xFFF5F5F5));
     }
 }
 
@@ -881,7 +900,7 @@ static uint32_t pick_color(int idx, uint32_t fallback)
     return idx > 0 ? color_vals[idx] : fallback;
 }
 
-static double arrow_tk(int t) { return t == 0 ? 0.6 : t == 2 ? 1.5 : t == 3 ? 2.1 : 1.0; }
+static double arrow_tk(int t) { return 0.4 + 0.2 * t; } // 3 is the old normal
 
 static void format_score(const Analysis *a, int user_is_side_to_move, char *out, size_t n)
 {
@@ -1647,6 +1666,14 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             double d = 14, q = i == tog_i ? ease(tog_t, 160) : 1, v = on ? q : 1 - q; // only the one you just clicked slides
             draw_round_rect(c, sw, 9, mix(TH->btn, TH->title, v));
             draw_round_rect(c, (Rect){sw.x + 2 + (sw.w - d - 4) * v, sw.y + 2, d, d}, d / 2, mix(0xFFE8E8E8, 0xFF181818, v));
+        } else if (is_slider(st->v)) {
+            Rect tr = {row.x + row.w - 94, row.y + row.h / 2 - 3, 84, 6};
+            double f = st->n > 1 ? (double)*st->v / (st->n - 1) : 0, d = 14;
+            draw_round_rect(c, tr, 3, TH->btn);
+            draw_round_rect(c, (Rect){tr.x, tr.y, fmax(6, tr.w * f), tr.h}, 3, TH->title);
+            draw_round_rect(c, (Rect){tr.x + tr.w * f - d / 2, tr.y + 3 - d / 2, d, d}, d / 2, 0xFFE8E8E8);
+            const char *vt = st->names[*st->v];
+            draw_text(c, tr.x - 14 - text_lw(c, vt, 0), row.y + 4, vt, 0, TH->item_fg);
         } else {
             int act = is_action(st->v);
             Rect box = {row.x + row.w - (act ? 36 : 126), row.y + 3, act ? 30 : 120, row.h - 6};
@@ -1668,6 +1695,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             if (dd_open == i) ddbox = box; // list gets drawn after the panel so it can hang off the bottom
         }
         if (hit) add_hit_arg(row, ACT_SET, i);
+        if (hit && is_slider(st->v)) add_hit_arg((Rect){row.x + row.w - 102, row.y, 100, row.h}, ACT_SLIDE, i); // 8px of slack each side of the bar
         tip_spot(row, st->tip);
     }
     if (nhelp) {
@@ -2477,12 +2505,12 @@ static void draw_helper_board(Canvas *c, Rect bl, int bottom)
         int sqs[2] = {M_FROM(tracker.last_move), M_TO(tracker.last_move)};
         for (int k = 0; k < 2; k++) {
             sq_display(sqs[k], bottom, &r, &col);
-            draw_frame(c, (Rect){bl.x + col * s + 1, bl.y + r * s + 1, s - 2, s - 2}, fmax(2, s * 0.045), faded(0xC0FFE066));
+            draw_frame(c, (Rect){bl.x + col * s + 1, bl.y + r * s + 1, s - 2, s - 2}, fmax(2, s * 0.045), faded_line(0xC0FFE066));
         }
     }
     if (cfg.hanging) {
         int me = tracker.user_color;
-        uint32_t hc = faded(pick_color(cfg.hcolor, 0xD8FF8A1F) | 0xD8000000);
+        uint32_t hc = faded_line(pick_color(cfg.hcolor, 0xD8FF8A1F) | 0xD8000000);
         for (int sq = 0; sq < 64; sq++) {
             int pc = tracker.pos.sq[sq];
             if (pc == EMPTY || pc % 6 == KING) continue;
@@ -2500,7 +2528,7 @@ static void draw_helper_board(Canvas *c, Rect bl, int bottom)
             Rect kr = {bl.x + col * s, bl.y + r * s, s, s};
             for (int k = 0; k < 4; k++) {
                 double in = s * 0.03 * k;
-                draw_frame(c, (Rect){kr.x + in, kr.y + in, s - 2 * in, s - 2 * in}, s * 0.035, faded((uint32_t)(220 - 45 * k) << 24 | 0xFF3B3B));
+                draw_frame(c, (Rect){kr.x + in, kr.y + in, s - 2 * in, s - 2 * in}, s * 0.035, faded_line((uint32_t)(220 - 45 * k) << 24 | 0xFF3B3B));
             }
         }
     }
@@ -2648,7 +2676,7 @@ static void redraw(void)
             if (cfg.mode && nlegal) {
                 danger_text(alert, sizeof(alert), &an, have_an, my_turn);
                 if (cfg.movelist) moves_text(mvs, sizeof(mvs), 8);
-                uint32_t thc = faded((pick_color(cfg.thcolor, 0xC8FF4D4D) & 0xFFFFFF) | 0xB0000000);
+                uint32_t thc = ((pick_color(cfg.thcolor, 0xC8FF4D4D) & 0xFFFFFF) | 0xB0000000);
                 double thk = arrow_tk(cfg.ththick) * 0.75;
                 if (cfg.danger == 2 && danger_mv && !(my_turn && cfg.threats == 2 && danger_mv == threat_mv))
                     draw_move(c, bl, danger_mv, bottom, thc, cfg.tharrow, thk, 0, 0, NULL);
@@ -2699,7 +2727,7 @@ static void redraw(void)
                 else {
                     snprintf(tips[ntips], 100, "%s says %s (%s)", o0.name, ss, osc);
                     if (my_turn)
-                        draw_move(c, bl, o0.best, bottom, faded(0xB01FE0E0), 6, arrow_tk(cfg.thick) * 0.7, 0, 0, NULL);
+                        draw_move(c, bl, o0.best, bottom, 0xB01FE0E0, 6, arrow_tk(cfg.thick) * 0.7, 0, 0, NULL);
                 }
                 tipc[ntips++] = TH->title_off;
             }
@@ -3923,6 +3951,27 @@ static void sync_keyboard(void) // the game needs the keys when the library's cl
     on = lib_open;
 }
 
+static void pick_setting(const Setting *st, int k)
+{
+    *st->v = k;
+    if (st->v == &cfg.think) analyzer_set_think_ms(think_secs[cfg.think] * 1000);
+    if (st->v == &cfg.lines || st->v == &cfg.threads || st->v == &cfg.hash || st->v == &cfg.chaos)
+        analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.chaos >= 10 && cfg.lines < 2 ? 3 : cfg.lines + 1);
+    if (st->v == &cfg.engine) choose_engine(cfg.engine);
+    if (st->v == &cfg.strength) analyzer_set_elo(strength_elo[cfg.strength]);
+    if (st->v == &cfg.second) keep_second();
+    if (st->v == &cfg.library && nlib) {
+        char out[1200];
+        lib_out_path(cfg.library, out, sizeof(out));
+        if (is_exec(out)) {
+            scan_engines(NULL);
+            choose_engine(engine_index(out));
+        } else
+            start_download(cfg.library);
+    }
+    save_cfg();
+}
+
 static void handle_click(double x, double y)
 {
     hov_t = now_ms();
@@ -3989,6 +4038,8 @@ static void handle_click(double x, double y)
             } else if (st->v == &cfg.library || st->v == &cfg.engine || st->v == &cfg.second) { // second opinion gets picked with the 2nd buttons in there
                 lib_open = 1, lib_tab = st->v != &cfg.library, lib_scroll = 0, lib_del = -1, lib_query[0] = 0;
                 settings_open = 0, dd_open = -1;
+            } else if (is_slider(st->v)) {
+                dd_open = -1; // the bar itself takes the click
             } else {
                 dd_open = dd_open == hits[i].arg ? -1 : hits[i].arg;
             }
@@ -4121,28 +4172,18 @@ static void handle_click(double x, double y)
             if (open_folder(dir)) set_note("couldnt open the folder");
             break;
         }
-        case ACT_PICK: {
-            const Setting *st = &sets[hits[i].arg / 64];
-            *st->v = hits[i].arg % 64;
+        case ACT_SLIDE: {
+            const Setting *st = &sets[hits[i].arg];
+            double f = (x - (r.x + 8)) / (r.w - 16);
+            int k = (int)lround(fmin(1, fmax(0, f)) * (st->n - 1));
             dd_open = -1;
-            if (st->v == &cfg.think) analyzer_set_think_ms(think_secs[cfg.think] * 1000);
-            if (st->v == &cfg.lines || st->v == &cfg.threads || st->v == &cfg.hash || st->v == &cfg.chaos)
-                analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.chaos >= 10 && cfg.lines < 2 ? 3 : cfg.lines + 1);
-            if (st->v == &cfg.engine) choose_engine(cfg.engine);
-            if (st->v == &cfg.strength) analyzer_set_elo(strength_elo[cfg.strength]);
-            if (st->v == &cfg.second) keep_second();
-            if (st->v == &cfg.library && nlib) {
-                char out[1200];
-                lib_out_path(cfg.library, out, sizeof(out));
-                if (is_exec(out)) {
-                    scan_engines(NULL);
-                    choose_engine(engine_index(out));
-                } else
-                    start_download(cfg.library);
-            }
-            save_cfg();
+            if (k != *st->v) pick_setting(st, k);
             break;
         }
+        case ACT_PICK:
+            dd_open = -1;
+            pick_setting(&sets[hits[i].arg / 64], hits[i].arg % 64);
+            break;
         case ACT_DEBUG:
             debug_on = !debug_on;
             cfg.debug = debug_on;
@@ -4256,6 +4297,9 @@ int main(int argc, char **argv)
     }
     snprintf(tpl_path, sizeof(tpl_path), "%s/pieces.bin", data);
     snprintf(cfg_path, sizeof(cfg_path), "%s/settings", data);
+    static char pct[19][8];
+    for (int i = 0; i < 19; i++) snprintf(pct[i], sizeof(pct[i]), "%d%%", i * 5), fade_names[i] = pct[i];
+    cfg.thick = cfg.tthick = cfg.ththick = 3;
     cfg_default = cfg; // before load_cfg, reset needs the shipped values
     load_cfg();
     for (int i = 0; i < NTHEMES; i++) theme_names[i] = themes[i].name;

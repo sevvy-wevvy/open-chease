@@ -105,7 +105,7 @@ void exe_dir(char *out, size_t n)
 void default_data(char *out, size_t n)
 {
 #ifdef __APPLE__
-    const char *mhome = getenv("HOME"); // not $TMPDIR, macos clears that out after a few days
+    const char *mhome = getenv("HOME");
     if (mhome) {
         snprintf(out, n, "%s/Library/Application Support/open-chease", mhome);
         return;

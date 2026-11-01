@@ -1,6 +1,6 @@
 # irm https://raw.githubusercontent.com/sevvy-wevvy/open-chease/beta/get.ps1 | iex
 # no param() and no exit in here, iex chokes on the first and exit closes your whole window
-& { # own scope or iex leaves all this set in your window
+& {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue' # the progress bar makes downloads like 10x slower on powershell 5
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -27,7 +27,7 @@
 
     if ($update -or -not (Test-Path -LiteralPath $exe)) {
         Write-Host 'grabbing open-chease...'
-        if ($update) { Start-Sleep -Seconds 2 } # the old one is still closing and windows keeps its exe locked till then
+        if ($update) { Start-Sleep -Seconds 2 } # exe is locked till the old one closes
         $tmp = Join-Path $data ('dl.' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force $tmp | Out-Null
         try {
@@ -36,7 +36,7 @@
             $inner = Get-ChildItem -LiteralPath "$tmp\x" -Directory | Select-Object -First 1
             $old = "$app.old"
             if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue }
-            if (Test-Path -LiteralPath $app) { # move it aside first, a half deleted folder would leave you with nothing that runs
+            if (Test-Path -LiteralPath $app) {
                 $moved = $false
                 for ($i = 0; $i -lt 10 -and -not $moved; $i++) {
                     try { Move-Item -LiteralPath $app $old; $moved = $true } catch { Start-Sleep -Seconds 1 }
@@ -76,8 +76,8 @@
         $env:OPEN_CHEASE_DATA = $data
         $env:OPEN_CHEASE_HOME = $app
         $env:OPEN_CHEASE_UPDATE = 'get'
-        $env:OPEN_CHEASE_BRANCH = $branch # the app reads its engine lists from the same branch
-        if (Test-Path -LiteralPath $sf) { $env:OPEN_CHEASE_ENGINE = $sf } # just the default, whatever you pick in settings wins
+        $env:OPEN_CHEASE_BRANCH = $branch
+        if (Test-Path -LiteralPath $sf) { $env:OPEN_CHEASE_ENGINE = $sf }
         & $exe @pass
     }
 } @args
