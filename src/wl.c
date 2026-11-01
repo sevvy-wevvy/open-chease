@@ -61,7 +61,7 @@ static struct zxdg_output_manager_v1 *xdg_output_mgr;
 static struct wl_seat *seat;
 static struct wl_pointer *pointer;
 static struct wl_keyboard *keyboard;
-static int key_q[32], nkey_q, scroll_acc, scrolled;
+static int key_q[32], nkey_q, scroll_acc, scrolled, kb_dep; // key_q has the HK_ mods ored in
 static double scroll_lx, scroll_ly;
 static WlOut outs[MAX_OUTPUTS];
 static int nouts;
@@ -263,16 +263,26 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t t, 
     static const char map[] = // no libxkbcommon fallback, plain us evdev
         "\0\x1b" "1234567890-=\b\0" "qwertyuiop[]\r\0" "asdfghjkl;'`\0\\" "zxcvbnm,./\0*\0 ";
     if (state != WL_KEYBOARD_KEY_STATE_PRESSED || nkey_q >= 32) return;
+    int mods = (kb_dep & 1 ? HK_SHIFT : 0) | (kb_dep & 4 ? HK_CTRL : 0) | (kb_dep & 8 ? HK_ALT : 0) | (kb_dep & 64 ? HK_SUPER : 0); // the usual xkb mod bits
+    if (key >= 59 && key <= 68) { // f1-f10, then f11 f12 sit at 87 88
+        key_q[nkey_q++] = (HK_F1 + (int)key - 59) | mods;
+        return;
+    }
+    if (key == 87 || key == 88) {
+        key_q[nkey_q++] = (HK_F1 + 10 + (int)key - 87) | mods;
+        return;
+    }
     if (xkb.state) {
         char buf[8] = {0};
-        if (xkb.key_get_utf8(xkb.state, key + 8, buf, sizeof(buf)) == 1) key_q[nkey_q++] = (unsigned char)buf[0]; // xkb keycodes are evdev + 8
+        if (xkb.key_get_utf8(xkb.state, key + 8, buf, sizeof(buf)) == 1) key_q[nkey_q++] = (unsigned char)buf[0] | mods; // xkb keycodes are evdev + 8
         return;
     }
     if (key >= sizeof(map) - 1 || !map[key]) return;
-    key_q[nkey_q++] = (unsigned char)map[key];
+    key_q[nkey_q++] = (unsigned char)map[key] | mods;
 }
 static void kb_mods(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t dep, uint32_t lat, uint32_t lock, uint32_t g)
 {
+    kb_dep = (int)dep;
     if (xkb.state) xkb.update_mask(xkb.state, dep, lat, lock, 0, 0, g);
 }
 static void kb_repeat(void *d, struct wl_keyboard *k, int32_t rate, int32_t delay) {}
@@ -754,7 +764,7 @@ static int wl_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
             return 1;
         }
         if (nkey_q) {
-            ov->key = key_q[0];
+            ov->key = key_q[0] & 0xFF, ov->mods = key_q[0] & HK_MODS;
             memmove(key_q, key_q + 1, sizeof(int) * (size_t)--nkey_q);
             return 2;
         }
@@ -802,5 +812,5 @@ static void wl_keyboard_mode(Overlay *ov, int on)
     wl_display_flush(dpy);
 }
 
-static Overlay wl_overlay = {"layer-shell", wl_ov_init, wl_canvas, 0, wl_commit, wl_wait, NULL, wl_keyboard_mode, 0, wl_pointer_at, wl_held};
+static Overlay wl_overlay = {"layer-shell", wl_ov_init, wl_canvas, 0, wl_commit, wl_wait, NULL, wl_keyboard_mode, 0, wl_pointer_at, wl_held, 0, NULL}; // no global hotkeys on wayland, main does the --send fifo
 Overlay *overlay_wl(void) { return &wl_overlay; }

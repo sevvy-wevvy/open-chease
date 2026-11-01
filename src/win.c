@@ -25,7 +25,7 @@ static double scale = 1;
 static Backend *live_cap;
 static Overlay *live_ov;
 static Rect hits[256];
-static int nhits, clicked, keyq[32], nkeys, wheel, kb_on;
+static int nhits, clicked, keyq[32], nkeys, wheel, kb_on, hotq[16], nhot, nreg; // keyq has the HK_ mods ored in
 static double click_x, click_y, wheel_x, wheel_y;
 static HWND hot, before_kb;
 
@@ -195,6 +195,12 @@ static Mon *mon_of(HWND w)
 
 static int fwd_down;
 
+static int key_mods(void)
+{
+    return (GetKeyState(VK_SHIFT) < 0 ? HK_SHIFT : 0) | (GetKeyState(VK_CONTROL) < 0 ? HK_CTRL : 0) | (GetKeyState(VK_MENU) < 0 ? HK_ALT : 0) |
+           (GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0 ? HK_SUPER : 0);
+}
+
 static LRESULT CALLBACK wnd_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
     Mon *m = mon_of(w);
@@ -241,8 +247,16 @@ static LRESULT CALLBACK wnd_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_CHAR:
-        if (nkeys < 32 && wp < 128) keyq[nkeys++] = (int)wp;
+    case WM_SYSCHAR: // alt+key comes in as a sys char
+        if (nkeys < 32 && wp < 128) keyq[nkeys++] = (int)wp | key_mods();
         return 0;
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+        if (wp >= VK_F1 && wp <= VK_F12 && nkeys < 32) {
+            keyq[nkeys++] = (HK_F1 + (int)(wp - VK_F1)) | key_mods();
+            return 0;
+        }
+        break;
     case WM_MOUSEACTIVATE:
         return kb_on ? MA_ACTIVATE : MA_NOACTIVATE; // clicking a button shouldnt steal focus from the game
     case WM_CLOSE:
@@ -365,6 +379,10 @@ static int win_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
         MSG msg;
         while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) return -1;
+            if (msg.message == WM_HOTKEY) { // thread message, no window
+                if (nhot < 16 && msg.wParam >= 1 && (int)msg.wParam <= nreg) hotq[nhot++] = (int)msg.wParam - 1;
+                continue;
+            }
             TranslateMessage(&msg);
             DispatchMessageA(&msg);
         }
@@ -374,8 +392,13 @@ static int win_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
             *cx = click_x, *cy = click_y;
             return 1;
         }
+        if (nhot) {
+            ov->key = hotq[0];
+            memmove(hotq, hotq + 1, sizeof(int) * (size_t)--nhot);
+            return 4;
+        }
         if (nkeys) {
-            ov->key = keyq[0];
+            ov->key = keyq[0] & 0xFF, ov->mods = keyq[0] & HK_MODS;
             memmove(keyq, keyq + 1, sizeof(int) * (size_t)--nkeys);
             return 2;
         }
@@ -406,5 +429,20 @@ static void win_keyboard(Overlay *ov, int on)
     if (!on) before_kb = NULL;
 }
 
-static Overlay win_overlay = {"layered window", win_ov_init, win_canvas, 0, win_commit, win_wait, NULL, win_keyboard, 0, win_pointer, win_held};
+static void win_hotkeys(Overlay *ov, const int *combos, int n)
+{
+    for (int i = 0; i < nreg; i++) UnregisterHotKey(NULL, i + 1);
+    nreg = n;
+    nhot = 0;
+    for (int i = 0; i < n; i++) {
+        int c = combos[i], key = c & 0xFF;
+        if (!c) continue;
+        UINT vk = key >= HK_F1 ? (UINT)(VK_F1 + key - HK_F1) : (UINT)(VkKeyScanA((CHAR)key) & 0xFF); // low byte is the key, high byte the shift it wants
+        if (vk == 0xFF) continue; // not on this keyboard
+        UINT mods = 0x4000 | (c & HK_SHIFT ? MOD_SHIFT : 0) | (c & HK_CTRL ? MOD_CONTROL : 0) | (c & HK_ALT ? MOD_ALT : 0) | (c & HK_SUPER ? MOD_WIN : 0); // 0x4000 = MOD_NOREPEAT
+        if (!RegisterHotKey(NULL, i + 1, mods, vk)) fprintf(stderr, "another app already has hotkey %d, change it in settings > hotkeys\n", i + 1);
+    }
+}
+
+static Overlay win_overlay = {"layered window", win_ov_init, win_canvas, 0, win_commit, win_wait, NULL, win_keyboard, 0, win_pointer, win_held, 0, win_hotkeys};
 Overlay *overlay_win(void) { return &win_overlay; }

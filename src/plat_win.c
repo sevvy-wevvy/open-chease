@@ -534,3 +534,7 @@ void engine_list(const char *dir, void (*add)(const char *label, const char *pat
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 }
+
+int ctl_open(const char *data) { return -1; } // RegisterHotKey works here, no need
+int ctl_read(int fd, char *buf, int n) { return 0; }
+int ctl_send(const char *data, const char *msg) { return -1; }

@@ -29,7 +29,7 @@ enum {
     ACT_WHITE = 1, ACT_BLACK, ACT_CLOSE, ACT_STOP, ACT_FLIP, ACT_MENU, ACT_DEBUG, ACT_FIX, ACT_RESTART, ACT_UPDATE,
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
-    ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE
+    ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE, ACT_HIDE, ACT_KEYROW, ACT_SHEET
 };
 
 typedef struct {
@@ -399,6 +399,83 @@ static char data_dir[1024];
 static void set_note(const char *msg);
 static char cfg_path[1024];
 
+enum { K_HIDE, K_RESCAN, K_MODE, K_HINT, K_SETTINGS, K_FLIP, K_SHEET, K_LOCK, K_MENU, K_DEBUG, NHK };
+static const struct {
+    const char *name, *label;
+    int def;
+    const char *tip;
+} hk_acts[NHK] = {
+    {"hide", "Hide everything", HK_ALT | 'h', "hides every drawing and the box, press it again or click the little eye to get it back"},
+    {"rescan", "Rescan board", HK_ALT | 'r', "reads the whole board again from scratch if it got lost"},
+    {"mode", "Switch mode", HK_ALT | 'm', "goes cheats, helper, both and around again"},
+    {"hint", "Hint", HK_ALT | 'i', "same as the hint button, each press shows a bit more of the best move"},
+    {"settings", "Settings", HK_ALT | 's', "opens or closes this panel"},
+    {"flip", "Switch team", HK_ALT | 'f', "flips you to the other team, for when it guessed wrong"},
+    {"keys", "Hotkey list", HK_ALT | HK_SHIFT | '/', "pops up a little list of these, press it again or click to close it"},
+    {"lock", "Lock board", HK_ALT | 'l', "keeps the board where it is"},
+    {"menu", "Menu", 0, "opens or closes the ... menu"},
+    {"debug", "What it sees", 0, "tags every square with what it thinks is there"},
+};
+static int hk[NHK], key_wait = -1, quick_hidden, sheet_open, ctl_fd = -1;
+static Rect eye_r;
+static double keys_tab(Canvas *c, Rect m, double y, double pad, int draw, int hit);
+static void keys_finish(void);
+static void draw_eye(Canvas *c, Rect r, int slash, uint32_t col);
+
+static void hk_reset(void)
+{
+    for (int k = 0; k < NHK; k++) hk[k] = hk_acts[k].def;
+}
+
+static void hk_name(int c, char *out, size_t n, int pretty) // pretty = Alt+H for the screen, plain = alt+h for the settings file
+{
+    if (!c) {
+        snprintf(out, n, "none");
+        return;
+    }
+    int key = c & 0xFF, mods = c & HK_MODS;
+    const char *sh = key ? strchr(hk_plain, key) : NULL;
+    if ((mods & HK_SHIFT) && sh) key = hk_shifted[sh - hk_plain], mods &= ~HK_SHIFT; // alt+? reads better than alt+shift+/
+    char k[8];
+    if (key >= HK_F1) snprintf(k, sizeof(k), "%c%d", pretty ? 'F' : 'f', key - HK_F1 + 1);
+    else if (key == ' ') snprintf(k, sizeof(k), "%s", pretty ? "Space" : "space");
+    else snprintf(k, sizeof(k), "%c", pretty && key >= 'a' && key <= 'z' ? key - 32 : key);
+#ifdef __APPLE__
+    const char *mn[4] = {"Ctrl+", "Opt+", "Shift+", "Cmd+"};
+#else
+    const char *mn[4] = {"Ctrl+", "Alt+", "Shift+", "Super+"};
+#endif
+    static const int mb[4] = {HK_CTRL, HK_ALT, HK_SHIFT, HK_SUPER};
+    char m[40] = "";
+    for (int i = 0; i < 4; i++)
+        if (mods & mb[i]) {
+            size_t l = strlen(m);
+            snprintf(m + l, sizeof(m) - l, "%s", mn[i]);
+        }
+    if (!pretty)
+        for (char *q = m; *q; q++) *q = (char)hk_lower(*q);
+    snprintf(out, n, "%s%s", m, k);
+}
+
+static void hk_line(const char *rest) // "hide alt+h" from the settings file
+{
+    for (int k = 0; k < NHK; k++) {
+        size_t l = strlen(hk_acts[k].name);
+        if (strncmp(rest, hk_acts[k].name, l) || rest[l] != ' ') continue;
+        int c = hk_parse(rest + l + 1);
+        if (c || !strncmp(rest + l + 1, "none", 4)) hk[k] = c;
+    }
+}
+
+static void hk_save(FILE *f)
+{
+    for (int k = 0; k < NHK; k++) {
+        char t[40];
+        hk_name(hk[k], t, sizeof(t), 0);
+        fprintf(f, "hotkey %s %s\n", hk_acts[k].name, t);
+    }
+}
+
 #define TH (&themes[cfg.theme])
 
 static uint32_t fade_by(uint32_t argb, int step)
@@ -423,6 +500,10 @@ static void load_cfg(void)
         *sp = 0;
         int v = 0;
         for (char *q = sp + 1; *q >= '0' && *q <= '9' && v < 100000; q++) v = v * 10 + *q - '0'; // capped so a junk line cant overflow it
+        if (!strcmp(k, "hotkey")) {
+            hk_line(sp + 1);
+            continue;
+        }
         if (!strcmp(k, "squares")) old_squares = !!v;
         if (!strcmp(k, "enginepath")) {
             snprintf(saved_engine, sizeof(saved_engine), "%s", sp + 1);
@@ -490,6 +571,7 @@ static void save_cfg(void)
         for (int j = 0; j < NPARTS; j++) fprintf(f, " %08X", *part(&themes[CUSTOM0 + i], j));
         fputc('\n', f);
     }
+    hk_save(f);
     if (fclose(f) == 0) replace_file(tmp, cfg_path);
 }
 static char note[128];
@@ -1397,9 +1479,10 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     canvas_blit(dst, c, closing ? 1 - an : an, 0, closing ? -6 * an : -12 * (1 - an), -1);
 }
 
-static const char *tab_names[] = {"Look", "Yours", "Theirs", "Engine", "Fun", "Helper", "Vision", "Themes"};
-#define NTABS 8
+static const char *tab_names[] = {"Look", "Yours", "Theirs", "Engine", "Fun", "Helper", "Vision", "Themes", "Hotkeys"};
+#define NTABS 9
 #define TAB_THEMES 7
+#define TAB_KEYS 8
 static int set_tab, cslot, cpart;
 
 static int tab_of(int i)
@@ -1606,6 +1689,8 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     Rect m = {0, 0, mw, 0};
     if (set_tab == TAB_THEMES)
         body = themes_tab(c, m, top, pad, 0, 0) - top; // draw 0 = just measure it
+    else if (set_tab == TAB_KEYS)
+        body = keys_tab(c, m, top, pad, 0, 0) - top;
     else
         body = per * rh + 40 + (nhelp ? nhelp * 18 + 40 : 0);
     double mh = top + body + pad;
@@ -1658,6 +1743,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     Rect ddbox = {0};
     tip_text = NULL;
     if (set_tab == TAB_THEMES) themes_tab(c, m, m.y + top, pad, 1, hit);
+    if (set_tab == TAB_KEYS) keys_tab(c, m, m.y + top, pad, 1, hit);
     for (int j = 0; set_tab != TAB_THEMES && j < n; j++) {
         int i = idx[j];
         const Setting *st = &sets[i];
@@ -2609,7 +2695,10 @@ static void redraw(void)
         if (c) canvas_clear(c);
     }
     if (state == SCANNING) {
-        ov->commit(ov, NULL, 0);
+        keys_finish();
+        Rect hr[MAX_HITS];
+        for (int i = 0; i < nhits; i++) hr[i] = hits[i].r;
+        ov->commit(ov, nhits ? hr : NULL, nhits);
         return;
     }
     Rect bl = board_logical(&board);
@@ -2844,7 +2933,8 @@ static void redraw(void)
             }
             int t1big = cfg.size > 0, t1zoom = cfg.size == 2 ? 2 : 1, t2big = cfg.size == 2;
             double bs = cfg.size == 0 ? 22 : (cfg.size == 1 ? 26 : 34);
-            Rect p, gb, mb, bx, hb = {0, 0, 0, 0};
+            Rect p, gb, mb, bx, hb = {0, 0, 0, 0}, er;
+            double es = cfg.size == 0 ? 16 : cfg.size == 1 ? 20 : 26, ew = es + 2; // the hide eye at the top left
             int show_hint = cfg.mode == 1 && cfg.hints && my_turn && nlegal, nbt = 3 + show_hint;
             double vw = cfg.size == 0 ? 190 : (cfg.size == 1 ? 220 : 270);
             int side = (cfg.spot == 2 && bl.x - vw - 8 >= outr.x + 4) ||
@@ -2921,6 +3011,7 @@ static void redraw(void)
                 gb = (Rect){p.x + p.w - 3 * (bs + 4) - 4, p.y + 8, bs, bs};
                 mb = (Rect){p.x + p.w - 2 * (bs + 4) - 4, p.y + 8, bs, bs};
                 bx = (Rect){p.x + p.w - (bs + 4) - 4, p.y + 8, bs, bs};
+                er = (Rect){p.x + 10, p.y + 8 + (bs - es) / 2, es, es};
             } else {
                 double ph = cfg.size == 0 ? 46 : (cfg.size == 1 ? 58 : 84);
                 if (!cfg.status) {
@@ -2929,18 +3020,18 @@ static void redraw(void)
                     bs = ph - 10;
                 }
                 double y2 = cfg.size == 0 ? 26 : (cfg.size == 1 ? 34 : 54);
-                double room = outr.w - 8 - 28 - nbt * (bs + 4);
+                double room = outr.w - 8 - 28 - nbt * (bs + 4) - ew;
                 set_text_zoom(t1zoom);
                 cut_to(line1, room, t1big);
                 double w1 = text_width(line1, t1big);
                 set_text_zoom(1);
                 cut_to(line2, room, t2big);
-                double w = fmax(w1, text_width(line2, t2big)) + 28 + nbt * (bs + 4);
+                double w = fmax(w1 + ew, text_width(line2, t2big)) + 28 + nbt * (bs + 4);
                 if (w < 300) w = 300;
                 p = panel_rect(&bl, w, ph, &outr);
                 panel_bg(c, p, 12, faded(TH->panel));
                 set_text_zoom(t1zoom);
-                draw_text(c, p.x + 14, p.y + 6, line1, t1big, my_turn ? TH->title : TH->title_off);
+                draw_text(c, p.x + 14 + ew, p.y + 6, line1, t1big, my_turn ? TH->title : TH->title_off);
                 set_text_zoom(1);
                 draw_text(c, p.x + 14, p.y + y2, line2, t2big, TH->sub);
                 double by = p.y + (ph - bs) / 2;
@@ -2948,8 +3039,11 @@ static void redraw(void)
                 gb = (Rect){p.x + p.w - 3 * (bs + 4) - 4, by, bs, bs};
                 mb = (Rect){p.x + p.w - 2 * (bs + 4) - 4, by, bs, bs};
                 bx = (Rect){p.x + p.w - (bs + 4) - 4, by, bs, bs};
+                er = (Rect){p.x + 10, p.y + 6 + ((t1big ? 22 : 15) * t1zoom - es) / 2, es, es};
             }
             draw_wgraph(c, p, bl, outr);
+            draw_eye(c, er, 1, TH->title_off);
+            if (i == lead) add_hit(er, ACT_HIDE), eye_r = er;
             if (show_hint) {
                 int lv = hint_key == tracker.pos.key ? hint_lv : 0;
                 draw_round_rect(c, hb, 5, lv ? (TH->btn | 0xFF000000) + 0x00202020 : TH->btn);
@@ -2970,6 +3064,7 @@ static void redraw(void)
             draw_extras(c, bl, p, outr, i == lead);
         }
     }
+    keys_finish();
     Rect hr[MAX_HITS];
     for (int i = 0; i < nhits; i++) hr[i] = hits[i].r;
     ov->commit(ov, hr, nhits);
@@ -3937,8 +4032,349 @@ static void update_and_relaunch(void)
 #endif
 }
 
+static void toggle_lock_board(void) {} // stub, the board lock goes in here
+
+static void draw_eye(Canvas *c, Rect r, int slash, uint32_t col)
+{
+    draw_icon(c, r, 0, col);
+    if (!slash) return;
+    double s = r.w, w = fmax(1.6, s * 0.11);
+    draw_line(c, r.x + s * 0.1, r.y + s * 0.9, r.x + s * 0.9, r.y + s * 0.1, w * 1.1, col);
+}
+
+static void wipe(Canvas *c) // clears this redraw but keeps the old damage, or the last frame would stay on screen
+{
+    int x0 = c->cx0, y0 = c->cy0, x1 = c->cx1, y1 = c->cy1;
+    canvas_clear(c);
+    if (x1 <= x0) return;
+    if (c->cx1 <= c->cx0) {
+        c->cx0 = x0, c->cy0 = y0, c->cx1 = x1, c->cy1 = y1;
+        return;
+    }
+    if (x0 < c->cx0) c->cx0 = x0;
+    if (y0 < c->cy0) c->cy0 = y0;
+    if (x1 > c->cx1) c->cx1 = x1;
+    if (y1 > c->cy1) c->cy1 = y1;
+}
+
+static void hk_sym(int c, char *out, size_t n, int sway) // what hyprland and sway call the key
+{
+    static const char punct[] = "`-=[]\\;',./ ";
+    static const char *pn[] = {"grave", "minus", "equal", "bracketleft", "bracketright", "backslash", "semicolon",
+                               "apostrophe", "comma", "period", "slash", "space"};
+    int key = c & 0xFF, mods = c & HK_MODS;
+    const char *q = key ? strchr(punct, key) : NULL;
+    char k[16], m[40] = "";
+    if (key >= HK_F1) snprintf(k, sizeof(k), "F%d", key - HK_F1 + 1);
+    else if (q) snprintf(k, sizeof(k), "%s", pn[q - punct]);
+    else snprintf(k, sizeof(k), "%c", sway || key < 'a' || key > 'z' ? key : key - 32);
+    static const int mb[4] = {HK_SUPER, HK_CTRL, HK_ALT, HK_SHIFT};
+    static const char *hy[4] = {"SUPER", "CTRL", "ALT", "SHIFT"}, *sw[4] = {"Mod4", "Ctrl", "Alt", "Shift"};
+    for (int i = 0; i < 4; i++)
+        if (mods & mb[i]) {
+            size_t l = strlen(m);
+            snprintf(m + l, sizeof(m) - l, sway ? "%s+" : l ? " %s" : "%s", sway ? sw[i] : hy[i]);
+        }
+    if (sway) snprintf(out, n, "%s%s", m, k);
+    else snprintf(out, n, "%s, %s", m, k);
+}
+
+static int keys_help(Canvas *c, double maxw, char out[][100], int max, const char **title)
+{
+    const char *say[4] = {NULL};
+    char bind[160], sym[48];
+    int ns = 0, n = 0;
+    int c0 = hk[K_HIDE] ? hk[K_HIDE] : hk_acts[K_HIDE].def;
+#if defined(_WIN32) || defined(__APPLE__)
+    int compositor = !ov->hotkeys;
+#else
+    int compositor = !ov->hotkeys || getenv("WAYLAND_DISPLAY"); // gnome runs us on xwayland, those grabs only see x11 windows
+#endif
+    if (compositor) {
+        const char *desk = getenv("XDG_CURRENT_DESKTOP");
+        *title = "Wayland wont let apps grab keys, bind them yourself";
+        if (desk && has_ci(desk, "sway")) {
+            hk_sym(c0, sym, sizeof(sym), 1);
+            snprintf(bind, sizeof(bind), "sway: bindsym %s exec open-chease --send hide", sym);
+        } else if (desk && (has_ci(desk, "gnome") || has_ci(desk, "kde"))) {
+            snprintf(bind, sizeof(bind), "add a custom shortcut in your keyboard settings that runs open-chease --send hide");
+        } else {
+            hk_sym(c0, sym, sizeof(sym), 0);
+            snprintf(bind, sizeof(bind), "hyprland: bind = %s, exec, open-chease --send hide", sym);
+        }
+        say[ns++] = bind;
+        say[ns++] = "the rest: rescan mode hint settings flip keys lock menu debug";
+    } else {
+        *title = "How these work";
+#ifdef __APPLE__
+        say[ns++] = "mac needs accessibility access for them, System Settings > Privacy > Accessibility";
+#else
+        say[ns++] = "they work in any window, even while the game has the keyboard";
+#endif
+    }
+    say[ns++] = "click one, then press the new keys. esc cancels, backspace clears";
+    for (int k = 0; k < ns && n < max; k++) n += wrap_text(c, say[k], maxw, out + n, max - n);
+    return n;
+}
+
+static double keys_tab(Canvas *c, Rect m, double y, double pad, int draw, int hit)
+{
+    int ncol = m.w >= 272 * 2 + pad * 3 ? 2 : 1;
+    double cw = (m.w - pad * (ncol + 1)) / ncol, rh = 28;
+    int per = (NHK + ncol - 1) / ncol;
+    for (int k = 0; draw && k < NHK; k++) {
+        Rect row = {m.x + pad + (k / per) * (cw + pad), y + (k % per) * rh, cw, rh - 3};
+        int on = key_wait == k;
+        char t[40];
+        if (on) snprintf(t, sizeof(t), "press keys");
+        else hk_name(hk[k], t, sizeof(t), 1);
+        draw_round_rect(c, row, 7, TH->item);
+        Rect box = {row.x + row.w - 114, row.y + 3, 108, row.h - 6};
+        draw_text(c, row.x + 10, row.y + 4, fit_text(c, hk_acts[k].label, box.x - row.x - 16), 0, TH->item_fg);
+        draw_round_rect(c, box, 5, on ? TH->title : TH->btn);
+        draw_text(c, box.x + 8, box.y + 1, fit_text(c, t, box.w - 16), 0, on ? 0xFF181818 : hk[k] ? TH->btn_fg : (TH->btn_fg & 0xFFFFFF) | 0x80000000);
+        if (hit) add_hit_arg(row, ACT_KEYROW, k);
+        tip_spot(row, hk_acts[k].tip);
+    }
+    y += per * rh + 4;
+    char ln[8][100];
+    const char *title;
+    int n = keys_help(c, m.w - 2 * pad - 16, ln, 8, &title);
+    Rect hb = {m.x + pad, y, m.w - 2 * pad, n * 18 + 30};
+    if (draw) {
+        draw_round_rect(c, hb, 7, TH->item);
+        draw_text(c, hb.x + 8, hb.y + 5, fit_text(c, title, hb.w - 16), 0, TH->title);
+        for (int k = 0; k < n; k++) draw_text(c, hb.x + 8, hb.y + 25 + k * 18, ln[k], 0, TH->item_fg);
+    }
+    return hb.y + hb.h + 10 + 30; // the reset button goes in the last 30
+}
+
+static void draw_sheet(Canvas *c, Rect r, double kw)
+{
+    panel_bg(c, r, 12, TH->menu);
+    draw_text(c, r.x + 14, r.y + 10, "Hotkeys", 1, TH->title);
+    double y = r.y + 42;
+    for (int k = 0; k < NHK; k++) {
+        if (!hk[k]) continue;
+        char t[40];
+        hk_name(hk[k], t, sizeof(t), 1);
+        draw_text(c, r.x + 14, y, t, 0, TH->title);
+        draw_text(c, r.x + 14 + kw, y, hk_acts[k].label, 0, TH->item_fg);
+        y += 20;
+    }
+    draw_text(c, r.x + 14, y + 6, "click anywhere to close", 0, TH->sub);
+}
+
+static void keys_finish(void) // redraw calls this last, quick hide and the hotkey list go over everything
+{
+    if (key_wait >= 0 && (!settings_open || set_tab != TAB_KEYS)) key_wait = -1;
+    if (state == SCANNING && !sheet_open) return;
+    int out = board.out < cap->nout ? board.out : 0, lead = -1;
+    Rect outr = cap->out[out].logical, bl = state == SCANNING ? outr : board_logical(&board);
+    for (int i = 0; i < ov->ncanvas && lead < 0; i++)
+        if (ov->canvas(ov, i)) lead = i;
+    if (lead < 0) return;
+    if (quick_hidden && state != SCANNING) {
+        for (int i = 0; i < ov->ncanvas; i++) {
+            Canvas *c = ov->canvas(ov, i);
+            if (c) wipe(c);
+        }
+        nhits = ui_over_board = tip_shown = tip_wait = 0;
+        Rect e = eye_r;
+        if (e.w <= 0) e = (Rect){bl.x + 10, bl.y - 28, 18, 18}; // box never got drawn, park it over the board corner
+        if (e.y < outr.y + 6) e.y = outr.y + 6;
+        Rect b = {e.x - 5, e.y - 5, e.w + 10, e.h + 10};
+        for (int i = 0; i < ov->ncanvas; i++) {
+            Canvas *c = ov->canvas(ov, i);
+            if (!c) continue;
+            draw_round_rect(c, b, 7, (TH->panel & 0xFFFFFF) | 0x58000000);
+            draw_eye(c, e, 0, (TH->title_off & 0xFFFFFF) | 0x98000000);
+        }
+        add_hit(b, ACT_HIDE);
+    }
+    if (!sheet_open) return;
+    Canvas *c0 = ov->canvas(ov, lead);
+    double kw = 0, lw = text_lw(c0, "click anywhere to close", 0);
+    int n = 0;
+    for (int k = 0; k < NHK; k++) {
+        if (!hk[k]) continue;
+        char t[40];
+        hk_name(hk[k], t, sizeof(t), 1);
+        kw = fmax(kw, text_lw(c0, t, 0) + 18);
+        lw = fmax(lw, kw + text_lw(c0, hk_acts[k].label, 0));
+        n++;
+    }
+    double w = fmax(lw, 120) + 28, h = 42 + n * 20 + 34;
+    Rect r = {bl.x + (bl.w - w) / 2, bl.y + (bl.h - h) / 2, w, h};
+    if (r.x < outr.x + 4) r.x = outr.x + 4;
+    if (r.y < outr.y + 4) r.y = outr.y + 4;
+    if (state != SCANNING) covers(r, bl);
+    for (int i = 0; i < ov->ncanvas; i++) {
+        Canvas *c = ov->canvas(ov, i);
+        if (c) draw_sheet(c, r, kw);
+    }
+    add_hit(outr, ACT_SHEET); // last in so it wins, any click just closes it
+}
+
+static void keys_register(void)
+{
+    if (ov->hotkeys) ov->hotkeys(ov, hk, NHK);
+}
+
+static void quick_hide(int on)
+{
+    quick_hidden = on;
+    if (on) lib_open = menu_open = settings_open = confirm_quit = 0, dd_open = -1, key_wait = -1;
+}
+
+static void key_take(int c)
+{
+    int k = key_wait;
+    if (k < 0) return;
+    for (int j = 0; j < NHK; j++)
+        if (j != k && hk[j] == c) hk[j] = hk[k]; // swap, one combo cant do two things
+    hk[k] = c;
+    key_wait = -1;
+    save_cfg();
+    keys_register();
+}
+
+static int key_capture(int ch, int mods) // 1 = it was for the hotkey being rebound
+{
+    if (key_wait < 0) return 0;
+    if (ch == 27 && !mods) key_wait = -1;
+    else if (ch == 8 && !mods) {
+        hk[key_wait] = 0;
+        key_wait = -1;
+        save_cfg();
+        keys_register();
+    } else {
+        int c = hk_norm(ch, mods);
+        if (c && !(c & (HK_CTRL | HK_ALT | HK_SUPER)) && (c & 0xFF) < HK_F1) set_note("hold alt, ctrl or super with it, or use an F key");
+        else if (c) key_take(c);
+    }
+    return 1;
+}
+
+static void key_click(int action, int arg)
+{
+    if (action == ACT_HIDE) quick_hide(!quick_hidden);
+    if (action == ACT_KEYROW) key_wait = key_wait == arg ? -1 : arg, dd_open = -1;
+    if (action == ACT_SHEET) sheet_open = 0;
+    if (action == ACT_RESET) {
+        hk_reset();
+        key_wait = -1;
+        keys_register();
+    }
+}
+
+static void hotkey_fire(int k)
+{
+    if (k < 0 || k >= NHK) return;
+    if (key_wait >= 0) { // pressed one thats already grabbed while rebinding, so thats the combo they want
+        key_take(hk[k]);
+        return;
+    }
+    int live = state == TRACKING;
+    switch (k) {
+    case K_HIDE:
+        quick_hide(!quick_hidden);
+        break;
+    case K_RESCAN:
+        if (!live) break;
+        menu_open = 0;
+        want_rescan = 1, rescan_hush = 0;
+        set_note("rescanning the board");
+        break;
+    case K_MODE:
+        cfg.mode = (cfg.mode + 1) % 3;
+        save_cfg();
+        set_note(cfg.mode == 1 ? "helper mode, no more moves" : cfg.mode == 2 ? "both, moves and the helper stuff" : "cheat mode, moves are back");
+        break;
+    case K_HINT:
+        if (!live) break;
+        if (!cfg.mode || !cfg.hints) {
+            set_note("hints need helper mode and the hint button on");
+            break;
+        }
+        if (hint_key != tracker.pos.key) hint_key = tracker.pos.key, hint_lv = 0;
+        if (hint_lv < 3) hint_lv++;
+        break;
+    case K_SETTINGS:
+        if (!live) break;
+        quick_hidden = 0;
+        settings_open = !settings_open;
+        dd_open = -1;
+        menu_open = confirm_quit = 0;
+        break;
+    case K_FLIP:
+        if (!live) break;
+        menu_open = 0;
+        tracker_start(&tracker, tracker.user_color ^ 1);
+        new_stats = 1;
+        read_and_track(1);
+        break;
+    case K_SHEET:
+        sheet_open = !sheet_open;
+        break;
+    case K_LOCK:
+        toggle_lock_board();
+        break;
+    case K_MENU:
+        if (!live) break;
+        quick_hidden = 0;
+        menu_open = !menu_open;
+        settings_open = confirm_quit = 0;
+        dd_open = -1;
+        break;
+    case K_DEBUG:
+        debug_on = !debug_on;
+        cfg.debug = debug_on;
+        save_cfg();
+        break;
+    }
+}
+
+static void ctl_poll(void) // open-chease --send hide from a compositor bind
+{
+    char buf[256];
+    int n = ctl_read(ctl_fd, buf, sizeof(buf) - 1);
+    if (n <= 0) return;
+    buf[n] = 0;
+    for (char *w = strtok(buf, " \t\r\n"); w; w = strtok(NULL, " \t\r\n"))
+        for (int k = 0; k < NHK; k++)
+            if (!strcmp(w, hk_acts[k].name)) hotkey_fire(k);
+    redraw();
+}
+
+static int send_action(const char *data, const char *name)
+{
+    int k = 0;
+    while (k < NHK && strcmp(name, hk_acts[k].name)) k++;
+    if (k == NHK) {
+        fprintf(stderr, "dont know %s, try one of:", name);
+        for (k = 0; k < NHK; k++) fprintf(stderr, " %s", hk_acts[k].name);
+        fprintf(stderr, "\n");
+        return 1;
+    }
+    char msg[32];
+    snprintf(msg, sizeof(msg), "%s\n", name);
+    if (ctl_send(data, msg)) {
+        fprintf(stderr, "open-chease isnt running%s\n",
+#ifdef _WIN32
+                ", and on windows the hotkeys work without this anyway"
+#else
+                ""
+#endif
+        );
+        return 1;
+    }
+    return 0;
+}
+
 static void handle_key(int ch)
 {
+    if (key_capture(ch, ov->mods)) return;
     if (lib_open) {
         size_t l = strlen(lib_query);
         if (ch == 27) lib_open = 0;
@@ -3955,8 +4391,9 @@ static void sync_keyboard(void) // the game needs the keys when the library's cl
 {
     static int on, hook = 1;
     if (hook && state == TRACKING && getenv("OPEN_CHEASE_OPEN_LIBRARY")) lib_open = 1, hook = 0; // test hook for library shots
-    if (lib_open != on && ov->keyboard) ov->keyboard(ov, lib_open);
-    on = lib_open;
+    int want = lib_open || key_wait >= 0;
+    if (want != on && ov->keyboard) ov->keyboard(ov, want);
+    on = want;
 }
 
 static void pick_setting(const Setting *st, int k)
@@ -4131,6 +4568,7 @@ static void handle_click(double x, double y)
             break;
         }
         case ACT_RESET:
+            if (set_tab == TAB_KEYS) key_click(ACT_RESET, 0);
             for (int k = 0; k < NSET; k++) {
                 if (tab_of(k) != set_tab || (is_button(sets[k].v) && sets[k].v != &cfg.second)) continue;
                 *sets[k].v = *(int *)((char *)&cfg_default + ((char *)sets[k].v - (char *)&cfg)); // same field in the defaults copy
@@ -4273,6 +4711,11 @@ static void handle_click(double x, double y)
         case ACT_QUIT_NO:
             confirm_quit = 0;
             break;
+        case ACT_HIDE:
+        case ACT_KEYROW:
+        case ACT_SHEET:
+            key_click(hits[i].action, hits[i].arg);
+            break;
         }
         redraw();
         return;
@@ -4286,6 +4729,7 @@ static void usage(void)
            "  --builtin            use my engine even if stockfish is around\n"
            "  --engine PATH        use any other uci engine (like stockfish)\n"
            "  --backend X          force how it grabs the screen: wayland, gnome or x11\n"
+           "  --send ACTION        tells the running one to do a hotkey (hide, rescan, mode...), for wayland binds\n"
            "  -v / -vv             print what its seeing\n");
 }
 
@@ -4300,7 +4744,7 @@ int main(int argc, char **argv)
     int engine_cli = 0;
     dump_dir = getenv("OPEN_CHEASE_DUMP");
     const char *force = NULL;
-    const char *replay_dir = NULL;
+    const char *replay_dir = NULL, *send = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--engine") && i + 1 < argc)
             engine = argv[++i], engine_cli = 1;
@@ -4311,6 +4755,8 @@ int main(int argc, char **argv)
             engine = NULL, engine_cli = 1;
         else if (!strcmp(argv[i], "--backend") && i + 1 < argc)
             force = argv[++i];
+        else if (!strcmp(argv[i], "--send") && i + 1 < argc)
+            send = argv[++i];
         else if (!strcmp(argv[i], "--replay") && i + 1 < argc)
             replay_dir = argv[++i];
         else if (!strcmp(argv[i], "--team") && i + 1 < argc) {
@@ -4339,6 +4785,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "%s isnt a folder you own, delete it or point OPEN_CHEASE_DATA somewhere else\n", data);
         return 1;
     }
+    if (send) return send_action(data, send);
     snprintf(tpl_path, sizeof(tpl_path), "%s/pieces.bin", data);
     snprintf(cfg_path, sizeof(cfg_path), "%s/settings", data);
     static char pct[20][8];
@@ -4346,6 +4793,7 @@ int main(int argc, char **argv)
     cfg.fade = cfg.fade_move = cfg.fade_line = 19;
     cfg.thick = cfg.tthick = cfg.ththick = 3;
     cfg_default = cfg; // before load_cfg, reset needs the shipped values
+    hk_reset();
     load_cfg();
     for (int i = 0; i < NTHEMES; i++) theme_names[i] = themes[i].name;
     char real_data[4096];
@@ -4399,6 +4847,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "cant read frames from %s\n", replay_dir);
             return 1;
         }
+        keys_register();
         replay_ticks = 0;
         int slow = getenv("OPEN_CHEASE_SHOTS") != NULL;
         if (getenv("OPEN_CHEASE_DEBUG_VIEW")) debug_on = 1; // test hook
@@ -4434,6 +4883,7 @@ int main(int argc, char **argv)
             while ((ev = ov->wait_events(ov, 0, &cx, &cy)) > 0) {
                 if (ev == 1) handle_click(cx, cy);
                 else if (ev == 2) handle_key(ov->key);
+                else if (ev == 4) hotkey_fire(ov->key);
                 redraw();
             }
             char fen[128];
@@ -4499,6 +4949,8 @@ int main(int argc, char **argv)
         return 1;
     }
 #endif
+    keys_register();
+    ctl_fd = ctl_open(data_dir);
     analyzer_set_think_ms(think_secs[cfg.think] * 1000);
     analyzer_start(engine);
     Analysis a;
@@ -4529,13 +4981,16 @@ int main(int argc, char **argv)
         if (busy && wait > 15) wait = 15; // ~60fps while something slides
         if (settings_open && ov->pointer && wait > 100) wait = 100; // keeps an eye on the mouse for the tooltips
         if (slide_i >= 0 && wait > 16) wait = 16;
+        if (ctl_fd >= 0 && wait > 150) wait = 150; // checks the --send fifo
         int r = ov->wait_events(ov, wait, &cx, &cy);
         if (r < 0) break;
+        ctl_poll();
         int tipr = settings_open && hover_moved();
         if (drag_slide()) continue;
         if (r == 1) handle_click(cx, cy);
         else if (r == 2) handle_key(ov->key), redraw();
         else if (r == 3 && lib_open) lib_scroll += ov->key, redraw();
+        else if (r == 4) hotkey_fire(ov->key), redraw();
         else if (rainbow || busy || tipr) redraw();
         sync_keyboard();
     }

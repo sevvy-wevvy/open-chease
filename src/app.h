@@ -84,7 +84,61 @@ typedef struct Overlay {
     int key; // wait_events 2 = key, 3 = scroll (+1 down, -1 up)
     int (*pointer)(struct Overlay *o, double *x, double *y); // 1 if the mouse is over one of our hit areas, logical coords. can be NULL
     int (*held)(struct Overlay *o, double *x, double *y); // 1 while the left button is down, for dragging sliders. can be NULL
+    int mods; // HK_ bits held during the last wait_events 2 key, 0 if the backend cant tell
+    void (*hotkeys)(struct Overlay *o, const int *combos, int n); // grabs them system wide, wait_events 4 = one got pressed, key = its index. can be NULL
 } Overlay;
+
+// a hotkey is one int, a lowercase unshifted key (? is shift + /) or HK_F1 + n, ored with the mods. 0 = none
+enum { HK_F1 = 0x81, HK_SHIFT = 0x100, HK_CTRL = 0x200, HK_ALT = 0x400, HK_SUPER = 0x800, HK_MODS = 0xF00 };
+
+static const char hk_shifted[] = "~!@#$%^&*()_+{}|:\"<>?", hk_plain[] = "`1234567890-=[]\\;',./"; // us layout
+
+static inline int hk_norm(int ch, int mods) // whatever a backend got for a key press into a combo
+{
+    mods &= HK_MODS;
+    if ((mods & HK_CTRL) && ch >= 1 && ch <= 26) ch += 96; // ctrl+h comes in as backspace
+    if (ch >= 'A' && ch <= 'Z') ch += 32, mods |= HK_SHIFT;
+    for (int i = 0; hk_shifted[i]; i++)
+        if (ch == hk_shifted[i]) ch = hk_plain[i], mods |= HK_SHIFT;
+    if ((ch >= 32 && ch < 127) || (ch >= HK_F1 && ch < HK_F1 + 12)) return ch | mods;
+    return 0;
+}
+
+static inline int hk_lower(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
+
+static inline int hk_word(const char *s, const char *w, int len) // s starts with w, any case
+{
+    for (int i = 0; i < len; i++)
+        if (hk_lower((unsigned char)s[i]) != w[i]) return 0;
+    return 1;
+}
+
+static inline int hk_parse(const char *s) // "alt+shift+/", "Ctrl+F5", "alt+?", 0 if it makes no sense
+{
+    static const struct { const char *n; int m; } mn[] = {{"alt", HK_ALT}, {"opt", HK_ALT}, {"option", HK_ALT}, {"ctrl", HK_CTRL},
+        {"control", HK_CTRL}, {"shift", HK_SHIFT}, {"super", HK_SUPER}, {"win", HK_SUPER}, {"cmd", HK_SUPER}};
+    int mods = 0;
+    for (;;) {
+        int got = 0;
+        for (int i = 0; i < (int)(sizeof(mn) / sizeof(mn[0])) && !got; i++) {
+            int l = 0;
+            while (mn[i].n[l]) l++;
+            if (hk_word(s, mn[i].n, l) && s[l] == '+' && s[l + 1]) mods |= mn[i].m, s += l + 1, got = 1;
+        }
+        if (!got) break;
+    }
+    int len = 0;
+    while (s[len] && s[len] != ' ' && s[len] != '\n' && s[len] != '\r') len++;
+    if (len == 1) return hk_norm((unsigned char)s[0], mods);
+    if (len == 5 && hk_word(s, "space", 5)) return ' ' | mods;
+    if ((len == 2 || len == 3) && hk_lower((unsigned char)s[0]) == 'f' && s[1] >= '1' && s[1] <= '9') {
+        int n = s[1] - '0';
+        if (len == 3) n = s[2] >= '0' && s[2] <= '9' ? n * 10 + s[2] - '0' : 0;
+        if (n >= 1 && n <= 12) return (HK_F1 + n - 1) | mods;
+    }
+    return 0;
+}
+
 
 int backend_wl_init_shared(void);
 Backend *backend_wl(void);
