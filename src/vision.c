@@ -653,6 +653,50 @@ static int display_to_sq(int r, int c, int white_bottom)
     return white_bottom ? (7 - r) * 8 + c : r * 8 + (7 - c);
 }
 
+// a white piece on a light square only shows its outline, on a dark one its solid.
+// fill the inside so both look the same, the built in shapes are solid too
+static void fill_holes(float *m)
+{
+    uint8_t wall[FEAT_N * FEAT_N] = {0}, out[FEAT_N * FEAT_N] = {0};
+    int stack[FEAT_N * FEAT_N], n = 0;
+    for (int y = 0; y < FEAT_N; y++) // outline grown by 2 so small gaps in it dont leak
+        for (int x = 0; x < FEAT_N; x++)
+            for (int dy = -2; dy <= 2 && !wall[y * FEAT_N + x]; dy++)
+                for (int dx = -2; dx <= 2; dx++) {
+                    int xx = x + dx, yy = y + dy;
+                    if (xx >= 0 && yy >= 0 && xx < FEAT_N && yy < FEAT_N && m[yy * FEAT_N + xx] == 1) {
+                        wall[y * FEAT_N + x] = 1;
+                        break;
+                    }
+                }
+    for (int i = 0; i < FEAT_N; i++) {
+        int edge[4] = {i, (FEAT_N - 1) * FEAT_N + i, i * FEAT_N, i * FEAT_N + FEAT_N - 1};
+        for (int k = 0; k < 4; k++)
+            if (!wall[edge[k]] && !out[edge[k]]) out[edge[k]] = 1, stack[n++] = edge[k];
+    }
+    while (n) {
+        int i = stack[--n], x = i % FEAT_N, y = i / FEAT_N;
+        int nb[4] = {x > 0 ? i - 1 : -1, x < FEAT_N - 1 ? i + 1 : -1, y > 0 ? i - FEAT_N : -1, y < FEAT_N - 1 ? i + FEAT_N : -1};
+        for (int k = 0; k < 4; k++)
+            if (nb[k] >= 0 && !wall[nb[k]] && !out[nb[k]]) out[nb[k]] = 1, stack[n++] = nb[k];
+    }
+    // the grown wall itself borders the outside, so only fill cells 3+ away from anything the flood reached
+    for (int y = 0; y < FEAT_N; y++)
+        for (int x = 0; x < FEAT_N; x++) {
+            int i = y * FEAT_N + x, near = 0;
+            if (m[i] != 0) continue;
+            for (int dy = -3; dy <= 3 && !near; dy++)
+                for (int dx = -3; dx <= 3; dx++) {
+                    int xx = x + dx, yy = y + dy;
+                    if (xx < 0 || yy < 0 || xx >= FEAT_N || yy >= FEAT_N || out[yy * FEAT_N + xx]) {
+                        near = 1;
+                        break;
+                    }
+                }
+            if (!near) m[i] = 1;
+        }
+}
+
 void vision_read(const Frame *f, const Board *b, int white_bottom, float color_thr, BoardRead *out,
                  int (*masked)(void *, int, int), void *mctx)
 {
@@ -861,6 +905,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                     out->occ_frac[sq] = 0;
                 }
             }
+            if (occ[sq]) fill_holes(out->mask[sq]);
             lums[sq] = out->lum[sq];
         }
     double vals[64];
