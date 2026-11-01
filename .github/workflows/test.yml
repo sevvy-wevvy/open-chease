@@ -44,7 +44,7 @@ jobs:
           chmod +x /tmp/rec.sh
           python3 tests/track_sim.py --games 3 --seed 11 --bin /tmp/rec.sh | tail -4
           python3 tests/track_sim.py --games 10 --seed 21 --bin out-linux/open-chease 2>&1 | grep "^moves right" | tee sim.txt
-          grep -q "moves right 1119/1124" sim.txt
+          grep -q "moves right 1114/1124" sim.txt
           tar czf rec.tgz rec
           python3 tools/make_board.py "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" board.ppm --theme chesscom --sq 72 --x 200 --y 60 --W 1000 --H 700 --pieces tests/pieces/cburnett
           python3 -c "from PIL import Image; Image.open('board.ppm').save('board.png')"

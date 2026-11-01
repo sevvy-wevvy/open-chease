@@ -5,7 +5,7 @@
 #include "app.h"
 #include "templates_data.h"
 
-#define TPL_MAGIC 0x4f435432 // OCT2
+#define TPL_MAGIC 0x4f435433 // OCT3, pieces learned before the outline fill dont match anymore
 
 static void load_builtin(Templates *t, int set, int k)
 {
@@ -56,15 +56,17 @@ static int piece_type(int pc) { return pc % 6; }
 
 void templates_learn(Templates *t, const BoardRead *r, const Pos *p)
 {
-    float acc[2][6][FEAT_N * FEAT_N];
-    int cnt[2][6];
+    static float acc[2][6][FEAT_N * FEAT_N];
+    static int cnt[2][6], seen[2][6][FEAT_N * FEAT_N];
     memset(acc, 0, sizeof(acc));
     memset(cnt, 0, sizeof(cnt));
+    memset(seen, 0, sizeof(seen));
     for (int sq = 0; sq < 64; sq++) {
         int pc = p->sq[sq];
         if (pc == EMPTY) continue;
         int c = piece_color(pc), ty = piece_type(pc);
-        for (int i = 0; i < FEAT_N * FEAT_N; i++) acc[c][ty][i] += r->mask[sq][i];
+        for (int i = 0; i < FEAT_N * FEAT_N; i++)
+            if (r->mask[sq][i] != 0.5f) acc[c][ty][i] += r->mask[sq][i], seen[c][ty][i]++; // covered bits arent part of the piece
         cnt[c][ty]++;
     }
     float max_black = 0, min_white = 255;
@@ -78,7 +80,8 @@ void templates_learn(Templates *t, const BoardRead *r, const Pos *p)
     for (int c = 0; c < 2; c++)
         for (int ty = 0; ty < 6; ty++)
             if (cnt[c][ty])
-                for (int i = 0; i < FEAT_N * FEAT_N; i++) t->t[c][ty][i] = acc[c][ty][i] / cnt[c][ty];
+                for (int i = 0; i < FEAT_N * FEAT_N; i++)
+                    t->t[c][ty][i] = seen[c][ty][i] ? acc[c][ty][i] / seen[c][ty][i] : -1; // -1 = never saw this bit
     t->have = 1;
     t->learned = 1;
 }
@@ -87,7 +90,7 @@ static float similarity(const float *a, const float *b)
 {
     float mn = 0, mx = 0;
     for (int i = 0; i < FEAT_N * FEAT_N; i++) {
-        if (a[i] == 0.5f) continue; // coordinate labels and our overlay
+        if (a[i] == 0.5f || b[i] < 0) continue; // coordinate labels and our overlay, or a bit the template never saw
         float x = a[i], y = b[i];
         mn += x < y ? x : y;
         mx += x > y ? x : y;
