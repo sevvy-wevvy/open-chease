@@ -193,25 +193,45 @@ static Mon *mon_of(HWND w)
     return NULL;
 }
 
+static int fwd_down;
+
 static LRESULT CALLBACK wnd_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
     Mon *m = mon_of(w);
     switch (msg) {
     case WM_LBUTTONDOWN:
+        fwd_down = 0;
         if (m) {
             double x = (m->r.left + (short)LOWORD(lp)) / scale, y = (m->r.top + (short)HIWORD(lp)) / scale;
             if (!on_hit(x, y)) { // missed the buttons, hand the click to the game instead
                 set_clicky(w, 0);
                 hot = NULL;
-                INPUT in;
-                memset(&in, 0, sizeof(in));
-                in.type = INPUT_MOUSE;
-                in.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-                SendInput(1, &in, sizeof(in));
+                int sw = GetSystemMetrics(SM_SWAPBUTTON); // sendinput and the key state are physical buttons, this message is the logical left one
+                INPUT in[2];
+                memset(in, 0, sizeof(in));
+                in[0].type = in[1].type = INPUT_MOUSE;
+                in[0].mi.dwFlags = sw ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_LEFTDOWN;
+                in[1].mi.dwFlags = sw ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_LEFTUP;
+                if (GetAsyncKeyState(sw ? VK_RBUTTON : VK_LBUTTON) & 0x8000) {
+                    SendInput(1, in, sizeof(INPUT));
+                    fwd_down = 1; // the real release goes to the game now, unless it already got queued to us
+                } else {
+                    SendInput(2, in, sizeof(INPUT)); // already let go, a lone down would leave the piece stuck to the mouse
+                }
                 return 0;
             }
             clicked = 1;
             click_x = x, click_y = y;
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (fwd_down) {
+            fwd_down = 0;
+            INPUT in;
+            memset(&in, 0, sizeof(in));
+            in.type = INPUT_MOUSE;
+            in.mi.dwFlags = GetSystemMetrics(SM_SWAPBUTTON) ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_LEFTUP;
+            SendInput(1, &in, sizeof(in));
         }
         return 0;
     case WM_MOUSEWHEEL: {

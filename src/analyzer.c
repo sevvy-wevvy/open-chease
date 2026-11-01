@@ -79,7 +79,7 @@ static void *builtin_thread(void *arg)
 {
     for (;;) {
         pthread_mutex_lock(&mu);
-        while (!have_want && !quit_flag) pthread_cond_wait(&cv, &mu);
+        while ((!have_want || external) && !quit_flag) pthread_cond_wait(&cv, &mu); // have_want belongs to the uci engine while its running
         if (quit_flag) {
             pthread_mutex_unlock(&mu);
             break;
@@ -289,7 +289,11 @@ static int read_until(int fd, const char *token, int ms) // raw reads, a hung en
 {
     char buf[4096];
     size_t n = 0;
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
     for (;;) {
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        if ((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 > ms * 3) return 0; // one that never stops talking but never says uciok
         if (fd_wait(fd, ms) <= 0) return 0;
         if (n > sizeof(buf) - 256) { // keep a tail incase the token got split between reads
             memmove(buf, buf + n - 64, 64);

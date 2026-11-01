@@ -63,13 +63,13 @@ static void handle_position(char *line)
         if (!fen || !pos_from_fen(&pos, fen + 4)) pos_startpos(&pos);
     }
     if (moves) {
-        char *tok = strtok(moves + 7, " \n");
+        char *tok = strtok(moves + 7, " \r\n\t");
         while (tok) {
             Move m = move_from_uci(&pos, tok);
             if (!m) break; // junk move, keep what we have
             Undo u;
             pos_make(&pos, m, &u);
-            tok = strtok(NULL, " \n");
+            tok = strtok(NULL, " \r\n\t");
         }
     }
 }
@@ -89,6 +89,7 @@ static void handle_go(const char *line)
     limits.cb = print_info;
     atomic_store(&stop_flag, 0);
     limits.max_depth = arg_int(line, " depth ", 0);
+    if (limits.max_depth > 100) limits.max_depth = 100; // tt keeps depth in a signed byte
     int movetime = arg_int(line, " movetime ", 0);
     int wtime = arg_int(line, " wtime ", -1), btime = arg_int(line, " btime ", -1);
     int winc = arg_int(line, " winc ", 0), binc = arg_int(line, " binc ", 0);
