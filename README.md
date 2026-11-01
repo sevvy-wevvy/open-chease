@@ -1,4 +1,4 @@
-<h1 align="center">♟️ open-chease ♟️</h1>
+<h1 align="center">♟️ open-chease [beta] ♟️</h1>
 
 <p align="center">
 <b>A chess overlay for Linux, Windows and Mac that finds the board on your screen and shows you the best move.</b>
@@ -34,7 +34,29 @@ This is the <b>beta</b> branch, new stuff thats mostly working gets tested here 
 <summary align="center"><b>✅ Easy Install ✅</b></summary>
 
 <p align="center">
-The easiest way is one command. Paste it in a terminal, it works the same in bash, zsh and fish. It downloads everything into <code>~/.local/share/open-chease</code> (on a mac its <code>~/Library/Application Support/open-chease</code>) so running it again doesn't download it all again, and your settings stick around after a reboot.
+Find your computer below and paste its one command into a terminal. It downloads everything once, so running it again just starts it, and your settings stick around after a reboot.
+</p>
+
+<h3 align="center">🍎 Mac</h3>
+
+<p align="center">
+Open <b>Terminal</b> (Cmd + Space, type terminal, hit enter) and paste this:
+</p>
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sevvy-wevvy/open-chease/beta/get.sh | bash
+```
+
+<p align="center">
+It builds itself on your mac the first time, so you need apples command line tools. If you dont have them run <code>xcode-select --install</code> first.<br>
+macOS will ask you to let Terminal record the screen. Turn it on in System Settings > Privacy & Security > Screen Recording, then paste the command again.<br>
+Everything goes in <code>~/Library/Application Support/open-chease</code>
+</p>
+
+<h3 align="center">🐧 Linux</h3>
+
+<p align="center">
+Open a terminal and paste this, works the same in bash, zsh and fish:
 </p>
 
 ```sh
@@ -50,7 +72,13 @@ wget -qO- https://raw.githubusercontent.com/sevvy-wevvy/open-chease/beta/get.sh 
 ```
 
 <p align="center">
-<b>Windows</b> - open PowerShell (not cmd) and paste this. It goes in <code>%LOCALAPPDATA%\open-chease</code>
+Everything goes in <code>~/.local/share/open-chease</code>
+</p>
+
+<h3 align="center">🪟 Windows</h3>
+
+<p align="center">
+Open <b>PowerShell</b> (start menu, type powershell, NOT cmd) and paste this:
 </p>
 
 ```powershell
@@ -58,10 +86,26 @@ irm https://raw.githubusercontent.com/sevvy-wevvy/open-chease/beta/get.ps1 | iex
 ```
 
 <p align="center">
-The first run also grabs Stockfish (about 80 MB) so the moves are way stronger. Add <code>--no-stockfish</code> if you dont want it, or <code>--update</code> to get the newest open-chease, like <code>curl ... | bash -s -- --update</code>. To pass options on windows its <code>& ([scriptblock]::Create((irm https://raw.githubusercontent.com/sevvy-wevvy/open-chease/beta/get.ps1))) --team white</code><br> <br>
-<b>Mac</b> - it gets built on your mac the first time, so you need apples command line tools (<code>xcode-select --install</code>). macOS will also ask you to allow screen recording for your terminal, turn it on in System Settings > Privacy & Security and run it again.<br>
-<b>Windows</b> - its not signed, so SmartScreen might say "Windows protected your PC" the first time. More info > Run anyway. Some engines in the library need the <a href="https://aka.ms/vs/17/release/vc_redist.x64.exe">Visual C++ runtime</a>, it says so next to them.
+Its not signed, so SmartScreen might say "Windows protected your PC" the first time. Click More info > Run anyway.<br>
+Some engines in the library need the <a href="https://aka.ms/vs/17/release/vc_redist.x64.exe">Visual C++ runtime</a>, it says so next to them.<br>
+Everything goes in <code>%LOCALAPPDATA%\open-chease</code>
 </p>
+
+<h3 align="center">⚙️ Options</h3>
+
+<p align="center">
+The first run also grabs Stockfish (about 80 MB) so the moves are way stronger. Add <code>--no-stockfish</code> if you dont want it, or <code>--update</code> to get the newest open-chease.
+</p>
+
+```sh
+# mac and linux
+curl -fsSL https://raw.githubusercontent.com/sevvy-wevvy/open-chease/beta/get.sh | bash -s -- --update
+```
+
+```powershell
+# windows
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/sevvy-wevvy/open-chease/beta/get.ps1))) --update
+```
 </details>
 
 <details>
