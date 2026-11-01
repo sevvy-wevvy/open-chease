@@ -5,7 +5,16 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$(uname -s)" = Darwin ]; then
   data="${OPEN_CHEASE_DATA:-$HOME/Library/Application Support/open-chease}"
 else
-  data="${OPEN_CHEASE_DATA:-${TMPDIR:-/tmp}/open-chease-$(id -u)}"
+  data="${OPEN_CHEASE_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/open-chease}" # used to be in /tmp, which a reboot wipes
+  old="${TMPDIR:-/tmp}/open-chease-$(id -u)"
+  case "$here" in "$old"/*) old=/nonexistent ;; esac # dont move the folder this script is running from
+  if [ -z "${OPEN_CHEASE_DATA:-}" ] && [ ! -e "$data" ] && [ -d "$old" ] && [ ! -L "$old" ] && [ -O "$old" ]; then
+    if mkdir -p "$(dirname "$data")" && mv "$old" "$data" 2>/dev/null; then # bring your settings and engines along
+      for f in "$data/settings" "$data/engine-names" "$data"/engines/*; do # these remember full paths into the old folder
+        [ -f "$f" ] && [ "$(wc -c <"$f")" -lt 65536 ] && grep -qF "$old" "$f" 2>/dev/null && sed -i "s#$old#$data#g" "$f"
+      done
+    fi
+  fi
 fi
 mkdir -p "$data"
 if [ -L "$data" ] || [ ! -O "$data" ]; then # someone else made it first, dont run their stuff

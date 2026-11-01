@@ -178,7 +178,9 @@ typedef struct {
 } Analysis;
 
 int analyzer_start(const char *engine_path);
-int analyzer_switch(const char *engine_path);
+int analyzer_switch(const char *engine_path); // waits up to 20s
+int analyzer_switch_async(const char *engine_path);
+int analyzer_switch_done(unsigned ticket); // 1 ok, 0 failed, -1 still starting
 void analyzer_set_options(int threads, int hash_mb, int lines);
 void analyzer_set_elo(int elo);
 void analyzer_set_position(const Pos *p);

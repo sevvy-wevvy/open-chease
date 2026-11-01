@@ -34,7 +34,7 @@ This is the <b>beta</b> branch, new stuff thats mostly working gets tested here 
 <summary align="center"><b>✅ Easy Install ✅</b></summary>
 
 <p align="center">
-The easiest way is one command. Paste it in a terminal, it works the same in bash, zsh and fish. It downloads everything into <code>/tmp/open-chease-(your user id)</code> (on a mac its <code>~/Library/Application Support/open-chease</code>) so running it again doesn't download it all again.
+The easiest way is one command. Paste it in a terminal, it works the same in bash, zsh and fish. It downloads everything into <code>~/.local/share/open-chease</code> (on a mac its <code>~/Library/Application Support/open-chease</code>) so running it again doesn't download it all again, and your settings stick around after a reboot.
 </p>
 
 ```sh

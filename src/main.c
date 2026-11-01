@@ -168,9 +168,9 @@ static const char *arrow_names[] = {"Off", "Straight", "Knight bends", "Curve", 
 static const char *thick_names[] = {"Thin", "Normal", "Thick", "Huge"};
 static const char *mark_names[] = {"Off", "Outline", "Filled", "Corners", "Dot", "Ring", "Big dot",
                                    "Cross", "Triangles", "Brackets", "Dashed", "Double", "Glow", "Underline"};
-static const char *color_names[] = {"Theme", "Gold", "Green", "Blue", "Red", "Pink", "Purple", "White", "Orange", "Cyan", "Rainbow"};
+static const char *color_names[] = {"Theme", "Gold", "Green", "Blue", "Red", "Pink", "Purple", "White", "Orange", "Cyan", "Rainbow", "Black"}; // black after rainbow so old saved picks keep their color
 static const uint32_t color_vals[] = {0, 0xC8FFC400, 0xC82BD957, 0xC83D9BFF, 0xC8FF4D4D, 0xC8FF5FC8, 0xC8A86BFF,
-                                      0xC8F5F5F5, 0xC8FF8A1F, 0xC81FE0E0, 0};
+                                      0xC8F5F5F5, 0xC8FF8A1F, 0xC81FE0E0, 0, 0xD8101010};
 static const char *strength_names[] = {"Full", "2400", "2000", "1700", "1400"};
 static const int strength_elo[] = {0, 2400, 2000, 1700, 1400};
 static const char *chaos_names[] = {"Best move", "Close enough", "Random top 3", "Coin flip", "Random move", "Worst move",
@@ -320,7 +320,7 @@ static Setting sets[] = {
     {"Box size", "size", &cfg.size, 3, size_names, NULL, "how big the info box and its text are"},
     {"See-through", "fade", &cfg.fade, 4, fade_names, NULL, "makes the box and arrows see-through so you can still see the game under them"},
     {"Grid", "grid", &cfg.grid, 4, grid_names, NULL, "draws lines on the squares, handy to check it found the board right"},
-    {"Grid color", "gcolor", &cfg.gcolor, 11, color_names, NULL, "what color the grid is"},
+    {"Grid color", "gcolor", &cfg.gcolor, 12, color_names, NULL, "what color the grid is"},
     {"Status line", "status", &cfg.status, 2, onoff, NULL, "the small line with your team, the engine and what its doing"},
     {"Show score", "score", &cfg.score, 2, onoff, NULL, "shows whos winning as a number next to the move"},
     {"Score as", "scorefmt", &cfg.scorefmt, 3, scorefmt_names, NULL, "pawns is +1.5 style, centipawns is +150, win % is your chance of winning"},
@@ -337,7 +337,7 @@ static Setting sets[] = {
     {"Where it goes", "to", &cfg.to, 14, mark_names, NULL, "marks the square it should go to"},
     {"Move name", "label", &cfg.label, 2, onoff, NULL, "writes the move like Nf3 on the board"},
     {"Top moves", "lines", &cfg.lines, 3, lines_names, NULL, "shows the 2nd and 3rd best moves too, as thinner arrows with a number on them"},
-    {"Color", "mcolor", &cfg.mcolor, 11, color_names, NULL, "color of your arrow and marks, theme uses the themes own color"},
+    {"Color", "mcolor", &cfg.mcolor, 12, color_names, NULL, "color of your arrow and marks, theme uses the themes own color"},
     {"Show", "hint", &cfg.hint, 3, hint_names, NULL, "show the whole move, just which piece to move, or just where something goes"},
     {"Show it", "delay", &cfg.delay, 3, delay_names, NULL, "waits a bit before showing the move so you think first"},
     {"Engine", "engine", &cfg.engine, 1, engine_names, "Engine", "which chess engine does the thinking, opens the engine list"},
@@ -354,7 +354,7 @@ static Setting sets[] = {
     {"Piece to move", "tfrom", &cfg.tfrom, 14, mark_names, NULL, "marks the piece theyll probably move"},
     {"Where it goes", "tto", &cfg.tto, 14, mark_names, NULL, "marks where theyll probably move it"},
     {"Move name", "tlabel", &cfg.tlabel, 2, onoff, NULL, "writes their move like Nf3 on the board"},
-    {"Color", "tcolor", &cfg.tcolor, 11, color_names, NULL, "color of their arrow and marks"},
+    {"Color", "tcolor", &cfg.tcolor, 12, color_names, NULL, "color of their arrow and marks"},
     {"Material", "material", &cfg.material, 2, onoff, "Helper", "shows whos up in material, like +3"},
     {"Taken pieces", "taken", &cfg.taken, 2, onoff, NULL, "lists the pieces each side has taken"},
     {"Opening & phase", "opening", &cfg.opening, 2, onoff, NULL, "names the opening youre in and if its the opening, middlegame or endgame"},
@@ -364,14 +364,14 @@ static Setting sets[] = {
     {"Last move", "lastmove", &cfg.lastmove, 2, onoff, NULL, "outlines the two squares of the last move"},
     {"Check warning", "checkwarn", &cfg.checkwarn, 2, onoff, NULL, "puts a red ring on the king when its in check"},
     {"Hanging pieces", "hanging", &cfg.hanging, 4, hang_names, NULL, "marks pieces that can be taken for free, yours, theirs or both"},
-    {"Hanging color", "hcolor", &cfg.hcolor, 11, color_names, NULL, "color of the hanging piece marks"},
+    {"Hanging color", "hcolor", &cfg.hcolor, 12, color_names, NULL, "color of the hanging piece marks"},
     {"Hanging look", "hstyle", &cfg.hstyle, 5, hstyle_names, NULL, "how hanging pieces get marked"},
     {"Move list", "movelist", &cfg.movelist, 2, onoff, NULL, "shows the last few moves of the game"},
     {"Danger alerts", "danger", &cfg.danger, 3, threat_names, NULL, "warns when something of yours can get taken cheap. with arrow also draws who attacks it"},
     {"Session score", "session", &cfg.session, 2, onoff, NULL, "counts your wins, losses and draws since you opened it"},
     {"Threats", "threats", &cfg.threats, 3, threat_names, NULL, "shows what theyd do if they got a free move, like a fork. with arrow draws it too"},
     {"Threat arrow", "threatarrow", &cfg.tharrow, 9, arrow_names, NULL, "how the threat and danger arrows look"},
-    {"Threat color", "threatcolor", &cfg.thcolor, 11, color_names, NULL, "color of the threat and danger arrows"},
+    {"Threat color", "threatcolor", &cfg.thcolor, 12, color_names, NULL, "color of the threat and danger arrows"},
     {"Threat size", "threatsize", &cfg.ththick, 4, thick_names, NULL, "how thick the threat and danger arrows are"},
     {"Hint button", "hints", &cfg.hints, 2, onoff, NULL, "adds a hint button, each click shows a bit more of the best move"},
     {"What a ___ plays", "level", &cfg.level, 5, level_names, NULL, "shows what a player at that rating would probably play here"},
@@ -384,6 +384,7 @@ static Setting sets[] = {
 #define NSET ((int)(sizeof(sets) / sizeof(sets[0])))
 static int dd_open = -1;
 static void check_download(void);
+static void check_switch(void);
 static intptr_t dl_pid;
 static int dl_index = -1, lib_reload;
 static char dl_out[1200], dl_name[32];
@@ -1711,6 +1712,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             if (k == *st->v) draw_round_rect(c, it, 5, TH->btn);
             if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.thcolor || st->v == &cfg.theme) {
                 uint32_t sw = (st->v == &cfg.theme ? themes[k].panel : pick_color(k, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : st->v == &cfg.hcolor ? 0xD8FF8A1F : 0xC8FF4D4D)) | 0xFF000000;
+                if (st->v != &cfg.theme && k == 11) draw_round_rect(c, (Rect){it.x + 5, it.y + 4, 14, 14}, 7, 0xFFB0B0B0); // black dot on a dark menu needs a rim
                 draw_round_rect(c, (Rect){it.x + 6, it.y + 5, 12, 12}, 6, sw);
                 draw_text(c, it.x + 24, it.y + 3, st->names[k], 0, TH->item_fg);
             } else {
@@ -3288,6 +3290,7 @@ static int seen[MAX_OUTPUTS];
 static void tick(void)
 {
     check_download();
+    check_switch();
     if (!cap->capture(cap)) {
         if (replay_ticks >= 0) quit = 1;
         if (state == SCANNING) scan_log(0, NULL);
@@ -3780,18 +3783,43 @@ static void start_download(int i)
     set_note(msg);
 }
 
+static int switch_ticket;
+static long switch_since;
+
 static void choose_engine(int idx)
 {
     if (idx < 0 || idx >= nengines) return;
     cfg.engine = idx;
-    if (!analyzer_switch(*engine_paths[idx] ? engine_paths[idx] : NULL) && *engine_paths[idx]) {
+    switch_ticket = analyzer_switch_async(*engine_paths[idx] ? engine_paths[idx] : NULL);
+    switch_since = now_ms();
+    if (switch_ticket <= 0 && *engine_paths[idx]) {
         set_note("that engine wont start on this pc, using mine");
         cfg.engine = 0;
     }
+    if (switch_ticket <= 0) switch_ticket = 0;
     snprintf(saved_engine, sizeof(saved_engine), "%.1000s", engine_paths[cfg.engine]);
     have_saved_engine = 1;
     save_cfg();
     if (state == TRACKING) analyzer_set_position(&tracker.pos); // might be paused
+}
+
+// engines like lc0 take a while to load, so we check back every tick instead of freezing the clicks
+static void check_switch(void)
+{
+    if (!switch_ticket) return;
+    int r = analyzer_switch_done((unsigned)switch_ticket);
+    if (r < 0 && now_ms() - switch_since < 25000) return;
+    switch_ticket = 0;
+    if (r == 1) {
+        if (state == TRACKING) analyzer_set_position(&tracker.pos);
+        return;
+    }
+    set_note("that engine wont start on this pc, using mine");
+    cfg.engine = 0;
+    analyzer_switch_async(NULL);
+    snprintf(saved_engine, sizeof(saved_engine), "%s", "");
+    save_cfg();
+    if (state == TRACKING) analyzer_set_position(&tracker.pos);
 }
 
 static void check_download(void)
@@ -4249,6 +4277,7 @@ int main(int argc, char **argv)
         }
         start_download(i);
         for (int t = 0; dl_pid && t < 6000; t++) usleep(100000), check_download();
+        for (int t = 0; switch_ticket && t < 300; t++) usleep(100000), check_switch();
         Analysis an;
         analyzer_get(&an);
         printf("%s: %s, engine %s\n", want, note, cfg.engine ? an.engine : "not running");
