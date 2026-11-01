@@ -105,17 +105,24 @@ void exe_dir(char *out, size_t n)
 void default_data(char *out, size_t n)
 {
 #ifdef __APPLE__
-    const char *home = getenv("HOME"); // not $TMPDIR, macos clears that out after a few days
-    if (home) {
-        snprintf(out, n, "%s/Library/Application Support/open-chease", home);
+    const char *mhome = getenv("HOME"); // not $TMPDIR, macos clears that out after a few days
+    if (mhome) {
+        snprintf(out, n, "%s/Library/Application Support/open-chease", mhome);
         return;
     }
 #endif
-    snprintf(out, n, "/tmp/open-chease-%d", (int)getuid());
+    const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
+    if (xdg && *xdg == '/') snprintf(out, n, "%s/open-chease", xdg);
+    else if (home && *home) snprintf(out, n, "%s/.local/share/open-chease", home);
+    else snprintf(out, n, "/tmp/open-chease-%d", (int)getuid());
 }
 
 int data_dir_ok(const char *dir)
 {
+    char up[1100];
+    snprintf(up, sizeof(up), "%s", dir);
+    for (char *p = up + 1; *p; p++) // parents first, ~/.local/share isnt there on every system
+        if (*p == '/') *p = 0, mkdir(up, 0755), *p = '/';
     mkdir(dir, 0700);
     struct stat st;
     if (lstat(dir, &st) || !S_ISDIR(st.st_mode) || st.st_uid != getuid()) return 0; // don't run engines someone else could've dropped in

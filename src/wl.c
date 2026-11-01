@@ -46,7 +46,8 @@ typedef struct {
     int cap_w, cap_h, cap_stride, cap_state, y_invert, warned;
     uint32_t offered[8];
     int noffered;
-    uint8_t *flip, *conv;
+    uint8_t *flip, *conv, *rot;
+    int transform; // rotated monitor, screencopy hands us the buffer the unrotated way
 } WlOut;
 
 static struct wl_display *dpy;
@@ -113,6 +114,37 @@ static void free_shm(ShmBuf *b)
     if (b->buf) wl_buffer_destroy(b->buf);
     if (b->data) munmap(b->data, b->size);
     memset(b, 0, sizeof(*b));
+}
+
+static void out_geometry(void *d, struct wl_output *w, int32_t x, int32_t y, int32_t pw, int32_t ph, int32_t sub, const char *make,
+                         const char *model, int32_t transform)
+{
+    ((WlOut *)d)->transform = transform & 7;
+}
+static void out_mode(void *d, struct wl_output *w, uint32_t flags, int32_t mw, int32_t mh, int32_t refresh) {}
+static void out_done(void *d, struct wl_output *w) {}
+static void out_scale(void *d, struct wl_output *w, int32_t f) {}
+static void out_text(void *d, struct wl_output *w, const char *t) {} // name and description, only sent past v3
+static const struct wl_output_listener out_listener = {out_geometry, out_mode, out_done, out_scale, out_text, out_text};
+
+// turns the raw buffer into what you actually see on a rotated or flipped monitor
+static void untransform(const uint8_t *src, int sw, int sh, int sstride, int t, uint8_t *dst, int *dw, int *dh)
+{
+    int rot = t & 3, w = rot & 1 ? sh : sw, h = rot & 1 ? sw : sh;
+    for (int y = 0; y < h; y++) {
+        uint32_t *out = (uint32_t *)(dst + (size_t)y * w * 4);
+        for (int x0 = 0; x0 < w; x0++) {
+            int x = t & 4 ? w - 1 - x0 : x0, sx, sy;
+            switch (rot) {
+            case 1: sx = y, sy = sh - 1 - x; break;
+            case 2: sx = sw - 1 - x, sy = sh - 1 - y; break;
+            case 3: sx = sw - 1 - y, sy = x; break;
+            default: sx = x, sy = y;
+            }
+            out[x0] = *(const uint32_t *)(src + (size_t)sy * sstride + (size_t)sx * 4);
+        }
+    }
+    *dw = w, *dh = h;
 }
 
 static void xo_pos(void *d, struct zxdg_output_v1 *x, int32_t px, int32_t py)
@@ -295,6 +327,7 @@ static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char
         o->alive = 1;
         o->global_name = name;
         o->output = wl_registry_bind(r, name, &wl_output_interface, version < 3 ? version : 3);
+        wl_output_add_listener(o->output, &out_listener, o);
         snprintf(o->name, sizeof(o->name), "output-%u", name);
         if (inited > 0) { // hotplug, the ones there at startup get xdg_output in init
             if (xdg_output_mgr) {
@@ -335,6 +368,7 @@ static void reg_remove(void *d, struct wl_registry *r, uint32_t name)
         free_shm(&o->cap);
         free(o->flip);
         free(o->conv);
+        free(o->rot);
         memset(o, 0, sizeof(*o));
         o->cap_state = -1;
         while (nouts && !outs[nouts - 1].alive) nouts--;
@@ -533,7 +567,9 @@ static int wl_capture(Backend *b)
             zwlr_screencopy_frame_v1_destroy(o->frame);
             o->frame = NULL;
         }
-        bo->logical = (Rect){o->lx, o->ly, o->have_logical ? o->lw : o->cap_w, o->have_logical ? o->lh : o->cap_h};
+        int sideways = o->transform & 1;
+        bo->logical = (Rect){o->lx, o->ly, o->have_logical ? o->lw : sideways ? o->cap_h : o->cap_w,
+                             o->have_logical ? o->lh : sideways ? o->cap_w : o->cap_h};
         if (o->cap_state != 1) {
             bo->have_frame = 0;
             continue;
@@ -567,9 +603,21 @@ static int wl_capture(Backend *b)
             stride = o->cap_w * 4;
             bgr = 1;
         }
+        int fw = o->cap_w, fh = o->cap_h;
+        if (o->transform) {
+            uint8_t *nr = realloc(o->rot, (size_t)fw * fh * 4);
+            if (!nr) {
+                bo->have_frame = 0;
+                continue;
+            }
+            o->rot = nr;
+            untransform(px, fw, fh, stride, o->transform, o->rot, &fw, &fh);
+            px = o->rot;
+            stride = fw * 4;
+        }
         bo->frame.px = px;
-        bo->frame.w = o->cap_w;
-        bo->frame.h = o->cap_h;
+        bo->frame.w = fw;
+        bo->frame.h = fh;
         bo->frame.stride = stride;
         bo->frame.bgr = bgr;
         bo->have_frame = 1;
