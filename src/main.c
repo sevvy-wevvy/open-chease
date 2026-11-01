@@ -29,7 +29,8 @@ enum {
     ACT_WHITE = 1, ACT_BLACK, ACT_CLOSE, ACT_STOP, ACT_FLIP, ACT_MENU, ACT_DEBUG, ACT_FIX, ACT_RESTART, ACT_UPDATE,
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
-    ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE, ACT_HIDE, ACT_KEYROW, ACT_SHEET
+    ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE, ACT_HIDE, ACT_KEYROW, ACT_SHEET, ACT_SEARCH, ACT_EXPORT,
+    ACT_IMPORT
 };
 
 typedef struct {
@@ -1510,6 +1511,14 @@ static void draw_icon(Canvas *c, Rect r, int kind, uint32_t col)
     }
 }
 
+static int update_new; // github has a newer commit than this copy
+static char set_query[24];
+static int set_typing;
+static double stats_tab(Canvas *c, Rect m, double y, double pad, int draw);
+static void backup_row(Canvas *c, Rect row, int hit);
+static void stats_add(char res);
+static int set_matches(int i) { return has_ci(sets[i].label, set_query) || (sets[i].tip && has_ci(sets[i].tip, set_query)); }
+
 static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
 {
     const char *items[10] = {"Helper mode", debug_on ? "Hide what it sees" : "Show what it sees",
@@ -1518,6 +1527,7 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     const char *hint[10] = {cfg.mode == 1 ? "on, moves are hidden" : cfg.mode == 2 ? "moves + helper stuff" : "hides the moves", "tags on every square",
                             "click one, pick whats there", "", "if it got lost", "get, pick or delete them", "", "",
                             "pulls the newest version", ""};
+    if (update_new) hint[8] = "new version out";
     int acts[10] = {ACT_MODE, ACT_DEBUG, ACT_FIX, ACT_TURN, ACT_RESCAN, ACT_LIB_OPEN, ACT_FLIP, ACT_RESTART, ACT_UPDATE, ACT_QUIT};
     int icons[10] = {9, 0, 1, 2, 3, 4, 5, 6, 7, 8}; // 9 is the switch, flips to 10 when its on
     int group[10] = {0, 1, 1, 1, 1, 2, 2, 3, 3, 4}; // divider line wherever this changes
@@ -1559,10 +1569,11 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     canvas_blit(dst, c, closing ? 1 - an : an, 0, closing ? -6 * an : -12 * (1 - an), -1);
 }
 
-static const char *tab_names[] = {"Look", "Yours", "Theirs", "Engine", "Fun", "Helper", "Vision", "Themes", "Hotkeys"};
-#define NTABS 9
+static const char *tab_names[] = {"Look", "Yours", "Theirs", "Engine", "Fun", "Helper", "Vision", "Themes", "Hotkeys", "Stats"};
+#define NTABS 10
 #define TAB_THEMES 7
 #define TAB_KEYS 8
+#define TAB_STATS 9
 static int set_tab, cslot, cpart;
 
 static int tab_of(int i)
@@ -1747,9 +1758,12 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     double cw = 272, rh = 28, pad = 12;
     int ncol = outr.w >= cw * 2 + pad * 3 + 8 ? 2 : 1;
     double mw = cw * ncol + pad * (ncol + 1);
-    int idx[NSET], n = 0;
+    int idx[NSET], n = 0, nfound = 0, searching = *set_query != 0, vt = searching ? -1 : set_tab; // vt -1 = search results
     for (int i = 0; i < NSET; i++)
-        if (tab_of(i) == set_tab) idx[n++] = i;
+        if (searching ? set_matches(i) : tab_of(i) == set_tab) {
+            if (n < ncol * 10) idx[n++] = i;
+            nfound++;
+        }
     double tabh = 26, tg = 4, tx = pad, ty = 46;
     Rect tabr[NTABS];
     for (int k = 0; k < NTABS; k++) {
@@ -1761,18 +1775,22 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     double top = ty + tabh + 14, body, helpw = mw - 2 * pad - 32;
     int per = (n + ncol - 1) / ncol, nhelp = 0, wrapped[12] = {0};
     char help[12][100];
-    for (int k = 0; set_tab == TAB_VISION && k < 4; k++) {
+    for (int k = 0; vt == TAB_VISION && k < 4; k++) {
         int got = wrap_text(c, teach_steps[k], helpw, help + nhelp, 3);
         for (int j = 1; j < got; j++) wrapped[nhelp + j] = 1;
         nhelp += got;
     }
     Rect m = {0, 0, mw, 0};
-    if (set_tab == TAB_THEMES)
+    if (vt == TAB_THEMES)
         body = themes_tab(c, m, top, pad, 0, 0) - top; // draw 0 = just measure it
-    else if (set_tab == TAB_KEYS)
+    else if (vt == TAB_KEYS)
         body = keys_tab(c, m, top, pad, 0, 0) - top;
+    else if (vt == TAB_STATS)
+        body = stats_tab(c, m, top, pad, 0) - top;
+    else if (searching)
+        body = per * rh + (n < nfound || !n ? 26 : 4);
     else
-        body = per * rh + 40 + (nhelp ? nhelp * 18 + 40 : 0);
+        body = per * rh + 40 + (nhelp ? nhelp * 18 + 40 : 0) + (vt == 0 ? rh + 4 : 0);
     double mh = top + body + pad;
     static double from_h, to_h;
     static long h_t = -99999;
@@ -1798,6 +1816,14 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     Rect x = {m.x + m.w - pad - 26, m.y + 10, 26, 26};
     draw_close(c, x);
     if (hit) add_hit(x, ACT_SETTINGS);
+    Rect sb = {m.x + pad + text_lw(c, "Settings", 1) + 14, m.y + 10, 0, 26};
+    sb.w = x.x - 10 - sb.x;
+    draw_round_rect(c, sb, 7, TH->item);
+    if (set_typing) draw_frame(c, sb, 1, TH->title);
+    char sq[40];
+    snprintf(sq, sizeof(sq), "%s%s", set_query, set_typing ? "_" : "");
+    draw_text(c, sb.x + 9, sb.y + 4, *sq ? fit_text(c, sq, sb.w - 16) : "search", 0, *sq ? TH->item_fg : (TH->item_fg & 0xFFFFFF) | 0x80000000);
+    if (hit) add_hit(sb, ACT_SEARCH);
     draw_line(c, m.x + pad, m.y + 40, m.x + m.w - pad, m.y + 40, 1, TH->btn);
     double tq = ease(tab_t, 200);
     Rect a0 = tabr[tab_prev < NTABS ? tab_prev : set_tab], a1 = tabr[set_tab];
@@ -1808,13 +1834,13 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         draw_round_rect(c, r, 13, TH->item);
         if (hit) add_hit_arg(r, ACT_TAB, k);
     }
-    draw_round_rect(c, pill, 13, TH->title);
+    if (!searching) draw_round_rect(c, pill, 13, TH->title);
     // labels go on after the pill, dark text only where the pill is under it mid slide
     for (int k = 0; k < NTABS; k++) {
         Rect r = tabr[k];
         r.x += m.x, r.y += m.y;
         double tw = text_lw(c, tab_names[k], 0), cx = r.x + r.w / 2;
-        int under = cx > pill.x && cx < pill.x + pill.w && fabs(r.y - pill.y) < 4;
+        int under = !searching && cx > pill.x && cx < pill.x + pill.w && fabs(r.y - pill.y) < 4;
         draw_text(c, r.x + (r.w - tw) / 2, r.y + 4, tab_names[k], 0, under ? 0xFF181818 : TH->item_fg);
     }
     Canvas *panel = c;
@@ -1822,15 +1848,21 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     if (tq < 1 && (c = layer(1, panel, area)) == NULL) c = panel; // only needs its own layer while it slides
     Rect ddbox = {0};
     tip_text = NULL;
-    if (set_tab == TAB_THEMES) themes_tab(c, m, m.y + top, pad, 1, hit);
-    if (set_tab == TAB_KEYS) keys_tab(c, m, m.y + top, pad, 1, hit);
-    for (int j = 0; set_tab != TAB_THEMES && j < n; j++) {
+    if (vt == TAB_THEMES) themes_tab(c, m, m.y + top, pad, 1, hit);
+    if (vt == TAB_KEYS) keys_tab(c, m, m.y + top, pad, 1, hit);
+    if (vt == TAB_STATS) stats_tab(c, m, m.y + top, pad, 1);
+    for (int j = 0; vt != TAB_THEMES && j < n; j++) {
         int i = idx[j];
         const Setting *st = &sets[i];
         int col = j / per;
         Rect row = {m.x + pad + col * (cw + pad), m.y + top + (j % per) * rh, cw, rh - 3};
         draw_round_rect(c, row, 7, TH->item);
         draw_text(c, row.x + 10, row.y + 4, st->label, 0, TH->item_fg);
+        if (searching) { // which tab its from, theres two Arrows and three Colors
+            const char *tn = tab_names[tab_of(i)];
+            double lx = row.x + 18 + text_lw(c, st->label, 0), room = st->names == onoff ? 50 : is_action(st->v) ? 40 : 150;
+            if (lx + text_lw(c, tn, 0) < row.x + row.w - room) draw_text(c, lx, row.y + 4, tn, 0, (TH->item_fg & 0xFFFFFF) | 0x80000000);
+        }
         Rect tr = {0};
         if (st->names == onoff) {
             int on = *st->v;
@@ -1879,13 +1911,20 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         draw_text(c, hb.x + 8, hb.y + 5, "How to teach it your pieces", 0, TH->title);
         for (int k = 0; k < nhelp; k++) draw_text(c, hb.x + (wrapped[k] ? 24 : 8), hb.y + 25 + k * 18, help[k], 0, TH->item_fg);
     }
+    if (searching && (n < nfound || !n)) {
+        char more[48];
+        if (n) snprintf(more, sizeof(more), "%d more, type a bit more", nfound - n);
+        else snprintf(more, sizeof(more), "nothing matches that");
+        draw_text(c, m.x + pad + 2, m.y + top + per * rh + 2, more, 0, TH->sub);
+    }
+    if (vt == 0) backup_row(c, (Rect){m.x + pad, m.y + top + per * rh + 4, m.w - 2 * pad, rh - 3}, hit);
     Rect rs = {m.x + pad, m.y + top + body - 30, 150, 26};
-    if (set_tab != TAB_THEMES) {
+    if (vt >= 0 && vt != TAB_THEMES && vt != TAB_STATS) {
         draw_button(c, rs, "Reset this tab", TH->btn, TH->btn_fg);
         if (hit) add_hit(rs, ACT_RESET);
         tip_spot(rs, "puts every setting in this tab back to how it started");
     }
-    if (set_tab == 0) {
+    if (vt == 0) {
         Rect tt = {rs.x + rs.w + 8, rs.y, 140, 26};
         draw_button(c, tt, "More themes >", TH->btn, TH->btn_fg);
         if (hit) add_hit_arg(tt, ACT_TAB, TAB_THEMES);
@@ -3023,9 +3062,9 @@ static void redraw(void)
             int nlegal = pos_gen_legal(&tmp, moves);
             if (!nlegal && i == lead && counted_key != tracker.pos.key) { // redraw runs a lot, count the game once
                 counted_key = tracker.pos.key;
-                if (!pos_in_check(&tracker.pos, tracker.pos.side)) draws++;
-                else if (my_turn) losses++;
-                else wins++;
+                if (!pos_in_check(&tracker.pos, tracker.pos.side)) draws++, stats_add('d');
+                else if (my_turn) losses++, stats_add('l');
+                else wins++, stats_add('w');
             }
             char alert[64] = "", mvs[96] = "", tips[3][100];
             int ntips = 0;
@@ -3330,6 +3369,7 @@ static void redraw(void)
                 if (i == lead) add_hit(hb, ACT_HINT);
             }
             draw_gear(c, gb, settings_open);
+            if (update_new) draw_round_rect(c, (Rect){gb.x + gb.w - 7, gb.y - 2, 9, 9}, 4.5, 0xFFFF4D4D);
             draw_dots(c, mb, menu_open);
             draw_close(c, bx);
             if (i == lead) {
@@ -4284,9 +4324,11 @@ static void check_switch(void)
     if (state == TRACKING) analyzer_set_position(&tracker.pos);
 }
 
+static void update_poll(void);
 static void check_download(void)
 {
     int ok;
+    update_poll();
     if (lib_pid && job_done(lib_pid, &ok)) lib_pid = 0, lib_reload = 1;
     if (lib_reload && !dl_pid) lib_reload = 0, load_library(); // not mid download, the indexes would shift
     if (!dl_pid || !job_done(dl_pid, &ok)) return;
@@ -4708,6 +4750,438 @@ static int send_action(const char *data, const char *name)
     return 0;
 }
 
+// settings search
+static void search_key(int ch)
+{
+    size_t l = strlen(set_query);
+    if (ch == 27) set_query[0] = 0, set_typing = 0;
+    else if (ch == 8 && l) set_query[l - 1] = 0;
+    else if (ch >= 32 && ch < 127 && l + 1 < sizeof(set_query)) set_query[l] = (char)tolower(ch), set_query[l + 1] = 0;
+    dd_open = -1;
+}
+
+static void search_click(int act) // clicking anything but the results drops the search
+{
+    if ((set_typing || *set_query) && act != ACT_SEARCH && act != ACT_SET && act != ACT_PICK && act != ACT_SLIDE)
+        set_typing = 0, set_query[0] = 0;
+}
+
+// backup file, same format as the settings file
+static void backup_file(char *out, size_t n)
+{
+#ifdef _WIN32
+    const char *home = getenv("USERPROFILE");
+    char desk[1024];
+    struct stat st;
+    if (home && *home) {
+        snprintf(desk, sizeof(desk), "%.1000s\\Desktop", home);
+        if (!stat(desk, &st) && S_ISDIR(st.st_mode)) home = desk;
+    }
+    snprintf(out, n, "%.990s\\open-chease-settings.txt", home && *home ? home : ".");
+#else
+    const char *home = getenv("HOME");
+    snprintf(out, n, "%.990s/open-chease-settings.txt", home && *home ? home : ".");
+#endif
+}
+
+static void export_cfg(void)
+{
+    char path[1024], keep[1024], msg[128];
+    backup_file(path, sizeof(path));
+    FILE *f = fopen(path, "a");
+    if (!f) {
+        set_note("couldnt write the backup file, is your home folder read only?");
+        return;
+    }
+    fclose(f);
+    snprintf(keep, sizeof(keep), "%s", cfg_path);
+    snprintf(cfg_path, sizeof(cfg_path), "%s", path); // save_cfg writes wherever this points
+    save_cfg();
+    snprintf(cfg_path, sizeof(cfg_path), "%s", keep);
+    snprintf(msg, sizeof(msg), "saved to %.100s", path);
+    set_note(msg);
+}
+
+static void import_cfg(void)
+{
+    char path[1024], keep[1024], eng[1024], sec[1024], msg[128];
+    backup_file(path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        snprintf(msg, sizeof(msg), "no backup at %.90s, export one first", path);
+        set_note(msg);
+        return;
+    }
+    fclose(f);
+    int had = have_saved_engine;
+    snprintf(eng, sizeof(eng), "%s", saved_engine);
+    snprintf(sec, sizeof(sec), "%s", saved_second);
+    snprintf(keep, sizeof(keep), "%s", cfg_path);
+    snprintf(cfg_path, sizeof(cfg_path), "%s", path);
+    load_cfg(); // does the checking, junk lines and out of range values just get skipped
+    snprintf(cfg_path, sizeof(cfg_path), "%s", keep);
+    if (*saved_engine && !is_exec(saved_engine)) // engines from another pc arent here
+        snprintf(saved_engine, sizeof(saved_engine), "%s", eng), have_saved_engine = had;
+    if (*saved_second && strcmp(saved_second, "builtin") && !is_exec(saved_second)) snprintf(saved_second, sizeof(saved_second), "%s", sec);
+    debug_on = cfg.debug;
+    if (cfg.theme >= CUSTOM0) cslot = cfg.theme - CUSTOM0;
+    scan_engines(NULL); // puts cfg.second back from the path
+    int k = engine_index(saved_engine);
+    if (have_saved_engine && k != cfg.engine && (k || !*saved_engine)) choose_engine(k);
+    keep_second();
+    analyzer_set_think_ms(think_secs[cfg.think] * 1000);
+    analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.chaos >= 10 && cfg.lines < 2 ? 3 : cfg.lines + 1);
+    analyzer_set_elo(strength_elo[cfg.strength]);
+    dd_open = -1;
+    save_cfg();
+    snprintf(msg, sizeof(msg), "loaded your settings from %.90s", path);
+    set_note(msg);
+}
+
+static void backup_row(Canvas *c, Rect row, int hit)
+{
+    draw_round_rect(c, row, 7, TH->item);
+    draw_text(c, row.x + 10, row.y + 4, "Backup", 0, TH->item_fg);
+    Rect im = {row.x + row.w - 76, row.y + 3, 70, row.h - 6}, ex = {im.x - 76, im.y, 70, im.h};
+    draw_button(c, ex, "Export", TH->btn, TH->btn_fg);
+    draw_button(c, im, "Import", TH->btn, TH->btn_fg);
+    if (hit) add_hit(ex, ACT_EXPORT), add_hit(im, ACT_IMPORT);
+    tip_spot(ex, "saves all your settings to open-chease-settings.txt in your home folder, copy it to another pc");
+    tip_spot(im, "loads open-chease-settings.txt back in. engines only come along if this pc has them too");
+}
+
+// stats, one line per finished game: date result youracc theiracc blunders opening
+typedef struct {
+    char date[11], res;
+    int me, them, bad; // -1 = didnt get rated
+    char open[40];
+} Played;
+#define MAX_PLAYED 500
+static Played played[MAX_PLAYED];
+static int nplayed, played_loaded, played_ver;
+static u64 logged_key;
+static int logged_nsan;
+
+static int parse_played(char *ln, Played *g)
+{
+    ln[strcspn(ln, "\r\n")] = 0;
+    char *f[6] = {ln};
+    int nf = 1, v[3];
+    for (char *q = ln; *q && nf < 6; q++)
+        if (*q == ' ') *q = 0, f[nf++] = q + 1;
+    if (nf < 5 || strlen(f[0]) != 10) return 0;
+    for (int k = 0; k < 10; k++)
+        if (k == 4 || k == 7 ? f[0][k] != '-' : !isdigit((unsigned char)f[0][k])) return 0;
+    g->res = !strcmp(f[1], "win") ? 'w' : !strcmp(f[1], "loss") ? 'l' : !strcmp(f[1], "draw") ? 'd' : 0;
+    if (!g->res) return 0;
+    for (int k = 0; k < 3; k++) { // by hand, no atoi
+        const char *q = f[2 + k];
+        v[k] = 0;
+        if (!strcmp(q, "-")) {
+            v[k] = -1;
+            continue;
+        }
+        if (!*q || strlen(q) > 3) return 0;
+        for (; *q; q++) {
+            if (*q < '0' || *q > '9') return 0;
+            v[k] = v[k] * 10 + *q - '0';
+        }
+    }
+    if (v[0] > 100 || v[1] > 100 || v[2] < 0) return 0;
+    memcpy(g->date, f[0], 11);
+    g->me = v[0], g->them = v[1], g->bad = v[2];
+    snprintf(g->open, sizeof(g->open), "%.39s", nf > 5 ? f[5] : "");
+    return 1;
+}
+
+static void stats_load(void)
+{
+    if (played_loaded || !*data_dir) return;
+    played_loaded = 1;
+    char path[1100], ln[256];
+    snprintf(path, sizeof(path), "%s/stats.txt", data_dir);
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    while (fgets(ln, sizeof(ln), f)) {
+        Played g;
+        if (!parse_played(ln, &g)) continue;
+        if (nplayed == MAX_PLAYED) memmove(played, played + 1, sizeof(played[0]) * --nplayed);
+        played[nplayed++] = g;
+    }
+    fclose(f);
+    played_ver++;
+}
+
+static void stats_save(void)
+{
+    char path[1100], tmp[1200];
+    snprintf(path, sizeof(path), "%s/stats.txt", data_dir);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    FILE *f = fopen(tmp, "w");
+    if (!f) return;
+    for (int i = 0; i < nplayed; i++) { // rewritten every time, so it never grows past the last 500
+        const Played *g = &played[i];
+        char a[12] = "-", b[12] = "-";
+        if (g->me >= 0) snprintf(a, sizeof(a), "%d", g->me);
+        if (g->them >= 0) snprintf(b, sizeof(b), "%d", g->them);
+        fprintf(f, "%s %s %s %s %d %s\n", g->date, g->res == 'w' ? "win" : g->res == 'l' ? "loss" : "draw", a, b, g->bad, g->open);
+    }
+    if (fclose(f) == 0) replace_file(tmp, path);
+}
+
+static void stats_add(char res)
+{
+    if (!nsan || (tracker.pos.key == logged_key && nsan == logged_nsan)) return; // no moves seen = not a game we watched
+    logged_key = tracker.pos.key, logged_nsan = nsan;
+    stats_load();
+    Played g = {"2000-01-01", res, -1, -1, grades[0][4], ""};
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    if (tm) strftime(g.date, sizeof(g.date), "%Y-%m-%d", tm);
+    if (acc_n[0]) g.me = (int)lround(fmin(100, acc_sum[0] / acc_n[0]));
+    if (acc_n[1]) g.them = (int)lround(fmin(100, acc_sum[1] / acc_n[1]));
+    if (open_name) snprintf(g.open, sizeof(g.open), "%.39s", open_name);
+    for (char *q = g.open; *q; q++)
+        if (*q < 32) *q = ' ';
+    if (nplayed == MAX_PLAYED) memmove(played, played + 1, sizeof(played[0]) * --nplayed);
+    played[nplayed++] = g;
+    played_ver++;
+    stats_save();
+    if (verbose) fprintf(stderr, "logged a %c, acc %d vs %d\n", res, g.me, g.them);
+}
+
+static uint32_t res_color(char r) { return r == 'w' ? 0xFF2BD957 : r == 'l' ? 0xFFFF4D4D : 0xFFB0B0B0; }
+
+static double stats_tab(Canvas *c, Rect m, double y, double pad, int draw)
+{
+    stats_load();
+    double x0 = m.x + pad, w = m.w - 2 * pad;
+    uint32_t dim = (TH->item_fg & 0xFFFFFF) | 0x90000000;
+    if (!nplayed) {
+        if (draw) draw_text(c, x0 + 2, y, "no games yet, finish one and it shows up here", 0, TH->sub);
+        return y + 30;
+    }
+    static int seen = -1, won, lost, drew, top_n;
+    static double avg;
+    static char top[40];
+    if (seen != played_ver) { // dont count 500 lines every frame
+        seen = played_ver, won = lost = drew = top_n = 0, top[0] = 0;
+        int na = 0;
+        double sum = 0;
+        for (int i = 0; i < nplayed; i++) {
+            won += played[i].res == 'w', lost += played[i].res == 'l', drew += played[i].res == 'd';
+            if (played[i].me >= 0) sum += played[i].me, na++;
+            if (!*played[i].open) continue;
+            int k = 0;
+            for (int j = 0; j < nplayed; j++) k += !strcmp(played[j].open, played[i].open);
+            if (k > top_n) top_n = k, snprintf(top, sizeof(top), "%s", played[i].open);
+        }
+        avg = na ? sum / na : -1;
+    }
+    char v[4][48];
+    const char *lab[4] = {"games", "w / l / d", "avg accuracy", "most played"};
+    snprintf(v[0], sizeof(v[0]), "%d", nplayed);
+    snprintf(v[1], sizeof(v[1]), "%d / %d / %d", won, lost, drew);
+    if (avg >= 0) snprintf(v[2], sizeof(v[2]), "%.0f%%", avg);
+    else snprintf(v[2], sizeof(v[2]), "-");
+    snprintf(v[3], sizeof(v[3]), "%s", *top ? top : "-");
+    int per = w >= 500 ? 4 : 2;
+    double g = 8, tw = (w - (per - 1) * g) / per, th = 48;
+    for (int k = 0; k < 4; k++) {
+        Rect r = {x0 + (k % per) * (tw + g), y + (k / per) * (th + g), tw, th};
+        if (!draw) continue;
+        draw_round_rect(c, r, 7, TH->item);
+        if (k == 3) draw_text(c, r.x + 8, r.y + 7, fit_text(c, v[k], r.w - 14), 0, TH->title);
+        else draw_text(c, r.x + 8, r.y + 3, v[k], 1, TH->title);
+        draw_text(c, r.x + 8, r.y + 27, fit_text(c, lab[k], r.w - 14), 0, dim);
+        if (k == 3 && *top) tip_spot(r, top);
+    }
+    y += (4 / per) * (th + g) + 4;
+    int pts[20], pi[20], np = 0;
+    for (int i = nplayed - 1; i >= 0 && np < 20; i--)
+        if (played[i].me >= 0) pi[np++] = i;
+    for (int k = 0; k < np / 2; k++) { // oldest on the left
+        int t = pi[k];
+        pi[k] = pi[np - 1 - k], pi[np - 1 - k] = t;
+    }
+    for (int k = 0; k < np; k++) pts[k] = played[pi[k]].me;
+    if (draw) draw_text(c, x0 + 2, y, "Your accuracy, last 20 games", 0, TH->title);
+    y += 22;
+    Rect gr = {x0, y, w, 84};
+    if (draw) {
+        draw_round_rect(c, gr, 7, TH->item);
+        if (np < 2) {
+            draw_text(c, gr.x + 10, gr.y + 32, fit_text(c, "needs 2 rated games, turn on game report or rate my moves", gr.w - 20), 0, dim);
+        } else {
+            double gx = gr.x + 12, gw = gr.w - 50, gy = gr.y + 10, gh = gr.h - 20;
+            for (double k = 0; k < gw; k += 8) draw_line(c, gx + k, gy + gh / 2, gx + fmin(gw, k + 4), gy + gh / 2, 1, (TH->item_fg & 0xFFFFFF) | 0x30000000);
+            draw_text(c, gx + gw + 8, gy + gh / 2 - 9, "50%", 0, dim);
+            draw_text(c, gx + gw + 8, gy - 7, "100", 0, dim);
+            for (int k = 0; k < np; k++) {
+                double xa = gx + gw * k / (np - 1), ya = gy + gh * (1 - pts[k] / 100.0);
+                if (k) {
+                    double xb = gx + gw * (k - 1) / (np - 1), yb = gy + gh * (1 - pts[k - 1] / 100.0);
+                    draw_line(c, xb, yb, xa, ya, 2, TH->title);
+                }
+            }
+            for (int k = 0; k < np; k++) {
+                double xa = gx + gw * k / (np - 1), ya = gy + gh * (1 - pts[k] / 100.0);
+                draw_round_rect(c, (Rect){xa - 3.5, ya - 3.5, 7, 7}, 3.5, res_color(played[pi[k]].res));
+            }
+        }
+    }
+    y += gr.h + 10;
+    if (draw) draw_text(c, x0 + 2, y, "Last games", 0, TH->title);
+    y += 22;
+    static char tips[8][96];
+    double c1 = text_lw(c, "0000-00-00", 0) + 14, c2 = c1 + text_lw(c, "loss", 0) + 14, c3, c4;
+    int wide = w - c2 >= text_lw(c, "100% vs 100%", 0) + text_lw(c, "3 ??", 0) + 30; // the one column panel drops their accuracy
+    c3 = c2 + text_lw(c, wide ? "100% vs 100%" : "100%", 0) + 14, c4 = c3 + text_lw(c, "3 ??", 0) + 18;
+    for (int k = 0; k < 8 && k < nplayed; k++) {
+        const Played *p = &played[nplayed - 1 - k];
+        Rect r = {x0, y, w, 22};
+        y += 25;
+        if (!draw) continue;
+        draw_round_rect(c, r, 6, TH->item);
+        char a[40], b[16];
+        if (wide && p->me >= 0 && p->them >= 0) snprintf(a, sizeof(a), "%d%% vs %d%%", p->me, p->them);
+        else if (p->me >= 0) snprintf(a, sizeof(a), "%d%%", p->me);
+        else snprintf(a, sizeof(a), "-");
+        snprintf(b, sizeof(b), "%d ??", p->bad);
+        draw_text(c, r.x + 8, r.y + 2, p->date, 0, dim);
+        draw_text(c, r.x + c1, r.y + 2, p->res == 'w' ? "win" : p->res == 'l' ? "loss" : "draw", 0, res_color(p->res));
+        draw_text(c, r.x + c2, r.y + 2, a, 0, TH->item_fg);
+        draw_text(c, r.x + c3, r.y + 2, b, 0, p->bad ? 0xFFFF8A1F : dim);
+        if (r.w - c4 > 60 && *p->open) draw_text(c, r.x + c4, r.y + 2, fit_text(c, p->open, r.w - c4 - 8), 0, TH->item_fg);
+        snprintf(tips[k], sizeof(tips[k]), "%s, %d blunder%s", *p->open ? p->open : "no opening name", p->bad, p->bad == 1 ? "" : "s");
+        tip_spot(r, tips[k]);
+    }
+    return y + 4;
+}
+
+// update check, compares this copy with the newest commit on its branch
+static intptr_t upd_pid;
+static char upd_have[41], upd_branch[64], upd_json[1100];
+
+static size_t read_small(const char *path, char *buf, size_t n)
+{
+    FILE *f = fopen(path, "rb");
+    size_t got = f ? fread(buf, 1, n - 1, f) : 0;
+    if (f) fclose(f);
+    buf[got] = 0;
+    return got;
+}
+
+static int take_sha(const char *s, char *out)
+{
+    for (int k = 0; k < 40; k++)
+        if (!isxdigit((unsigned char)s[k])) return 0;
+    if (isxdigit((unsigned char)s[40])) return 0;
+    for (int k = 0; k < 40; k++) out[k] = (char)tolower((unsigned char)s[k]);
+    out[40] = 0;
+    return 1;
+}
+
+static void take_branch(const char *s)
+{
+    size_t k = 0;
+    for (; s[k] && s[k] != '\n' && s[k] != '\r' && k < sizeof(upd_branch) - 1; k++)
+        if (!isalnum((unsigned char)s[k]) && !strchr("._/-", s[k])) return; // ends up in a url
+    if (k && (!s[k] || s[k] == '\n' || s[k] == '\r')) memcpy(upd_branch, s, k), upd_branch[k] = 0;
+}
+
+static void join_path(char *out, size_t n, const char *base, const char *rel)
+{
+    int abs = rel[0] == '/' || rel[0] == '\\' || (rel[0] && rel[1] == ':');
+    if (abs) snprintf(out, n, "%.1000s", rel);
+    else snprintf(out, n, "%.500s/%.500s", base, rel);
+}
+
+static void git_version(const char *home)
+{
+    char gd[1100], common[1100], p[2200], buf[4096];
+    snprintf(gd, sizeof(gd), "%.1000s/.git", home);
+    if (read_small(gd, buf, sizeof(buf)) > 8 && !strncmp(buf, "gitdir: ", 8)) { // a worktree, .git is a file
+        buf[strcspn(buf, "\r\n")] = 0;
+        join_path(gd, sizeof(gd), home, buf + 8);
+    }
+    snprintf(common, sizeof(common), "%s", gd);
+    snprintf(p, sizeof(p), "%s/commondir", gd);
+    if (read_small(p, buf, sizeof(buf))) buf[strcspn(buf, "\r\n")] = 0, join_path(common, sizeof(common), gd, buf);
+    snprintf(p, sizeof(p), "%s/HEAD", gd);
+    read_small(p, buf, sizeof(buf));
+    if (take_sha(buf, upd_have) || strncmp(buf, "ref: refs/heads/", 16)) return; // detached, branch has to come from the env
+    take_branch(buf + 16);
+    if (!*upd_branch) return;
+    snprintf(p, sizeof(p), "%s/refs/heads/%s", common, upd_branch);
+    if (read_small(p, buf, sizeof(buf)) >= 40 && take_sha(buf, upd_have)) return;
+    snprintf(p, sizeof(p), "%s/packed-refs", common);
+    FILE *f = fopen(p, "r");
+    char want[100];
+    snprintf(want, sizeof(want), " refs/heads/%s", upd_branch);
+    while (f && fgets(buf, sizeof(buf), f)) {
+        buf[strcspn(buf, "\r\n")] = 0;
+        if (strlen(buf) > 40 && !strcmp(buf + 40, want) && take_sha(buf, upd_have)) break;
+        buf[40] = 0;
+    }
+    if (f) fclose(f);
+}
+
+static void update_check_start(int replay)
+{
+    const char *test = getenv("OPEN_CHEASE_LATEST_URL"); // test hook, point it at a file:// so tests dont hit github
+    const char *home = getenv("OPEN_CHEASE_HOME"), *mode = getenv("OPEN_CHEASE_UPDATE"), *br = getenv("OPEN_CHEASE_BRANCH");
+    if ((replay && !test) || !home || !mode) return; // copies that cant update dont need to know
+    char p[1100], buf[4096];
+    if (!strcmp(mode, "git")) git_version(home);
+    else {
+        snprintf(p, sizeof(p), "%.1000s/.commit", home); // get.sh and get.ps1 write this
+        read_small(p, buf, sizeof(buf));
+        if (take_sha(buf, upd_have) && buf[40] == '\n') take_branch(buf + 41);
+    }
+    if (br && *br) take_branch(br);
+    if (!*upd_have || !*upd_branch) return;
+    snprintf(p, sizeof(p), "%s/update-check", data_dir);
+    long long when = 0;
+    char latest[41] = "", inst[41] = "";
+    const char *q = buf;
+    read_small(p, buf, sizeof(buf));
+    for (; *q >= '0' && *q <= '9' && when < 100000000000LL; q++) when = when * 10 + *q - '0';
+    if (*q == ' ' && take_sha(q + 1, latest) && q[41] == ' ') take_sha(q + 42, inst);
+    else if (*q == ' ' && q[1] == '-' && q[2] == ' ') take_sha(q + 3, inst);
+    long long now = (long long)time(NULL);
+    if (!strcmp(inst, upd_have) && now >= when && now - when < 6 * 3600) { // checked lately and nothing got installed since
+        update_new = *latest && strcmp(latest, upd_have);
+        return;
+    }
+    char url[300];
+    if (test) snprintf(url, sizeof(url), "%.299s", test);
+    else snprintf(url, sizeof(url), "https://api.github.com/repos/sevvy-wevvy/open-chease/commits/%s", upd_branch);
+    snprintf(upd_json, sizeof(upd_json), "%s/latest.json", data_dir);
+    upd_pid = fetch_start(url, upd_json);
+}
+
+static void update_poll(void)
+{
+    int ok;
+    if (!upd_pid || !job_done(upd_pid, &ok)) return;
+    upd_pid = 0;
+    char buf[4096], latest[41] = "", p[1100];
+    if (ok && read_small(upd_json, buf, sizeof(buf))) {
+        const char *q = strstr(buf, "\"sha\""); // first one is the commit itself
+        if (q) {
+            for (q += 5; *q == ' ' || *q == ':' || *q == '\n' || *q == '\r' || *q == '\t'; q++) {}
+            if (*q == '"') take_sha(q + 1, latest);
+        }
+    }
+    remove(upd_json);
+    snprintf(p, sizeof(p), "%s/update-check", data_dir);
+    FILE *f = fopen(p, "w"); // failed checks count too, no hammering github when its down
+    if (f) fprintf(f, "%lld %s %s\n", (long long)time(NULL), *latest ? latest : "-", upd_have), fclose(f);
+    if (*latest) update_new = strcmp(latest, upd_have) != 0;
+    if (verbose) fprintf(stderr, "update check on %s: have %s, newest %s\n", upd_branch, upd_have, *latest ? latest : "(failed)");
+}
+
 static void handle_key(int ch)
 {
     if (key_capture(ch, ov->mods)) return;
@@ -4717,6 +5191,8 @@ static void handle_key(int ch)
         else if (ch == 8 && l) lib_query[l - 1] = 0;
         else if (ch >= 32 && ch < 127 && l + 1 < sizeof(lib_query)) lib_query[l] = (char)(ch >= 'A' && ch <= 'Z' ? ch + 32 : ch), lib_query[l + 1] = 0;
         lib_scroll = 0;
+    } else if (set_typing && settings_open) {
+        search_key(ch);
     } else if (ch == 27) {
         settings_open = menu_open = confirm_quit = 0;
         dd_open = -1;
@@ -4727,7 +5203,8 @@ static void sync_keyboard(void) // the game needs the keys when the library's cl
 {
     static int on, hook = 1;
     if (hook && state == TRACKING && getenv("OPEN_CHEASE_OPEN_LIBRARY")) lib_open = 1, hook = 0; // test hook for library shots
-    int want = lib_open || key_wait >= 0;
+    if (!settings_open) set_typing = 0, set_query[0] = 0;
+    int want = lib_open || key_wait >= 0 || set_typing;
     if (want != on && ov->keyboard) ov->keyboard(ov, want);
     on = want;
 }
@@ -4794,6 +5271,7 @@ static void handle_click(double x, double y)
     for (int i = nhits - 1; i >= 0; i--) {
         Rect r = hits[i].r;
         if (x < r.x || y < r.y || x >= r.x + r.w || y >= r.y + r.h) continue;
+        search_click(hits[i].action);
         switch (hits[i].action) {
         case ACT_WHITE:
         case ACT_BLACK:
@@ -5067,6 +5545,15 @@ static void handle_click(double x, double y)
         case ACT_SHEET:
             key_click(hits[i].action, hits[i].arg);
             break;
+        case ACT_SEARCH:
+            set_typing = 1, dd_open = -1;
+            break;
+        case ACT_EXPORT:
+            export_cfg();
+            break;
+        case ACT_IMPORT:
+            import_cfg();
+            break;
         }
         redraw();
         return;
@@ -5155,6 +5642,7 @@ int main(int argc, char **argv)
         engine = *saved_engine ? saved_engine : NULL;
     scan_engines(engine);
     if (!replay_dir) fetch_library(); // tests stay offline
+    update_check_start(replay_dir != NULL);
     const char *want = getenv("OPEN_CHEASE_GET"); // test hook: download one engine from the library, start it, exit
     if (want) {
         int i = 0;

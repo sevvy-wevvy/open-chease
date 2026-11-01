@@ -240,6 +240,13 @@ intptr_t lists_start(const char *data, const char *a, const char *b)
                   "&& grep -q '|' \"$D/$n.new\" && mv \"$D/$n.new\" \"$D/$n\"; rm -f \"$D/$n.new\"; done", env);
 }
 
+intptr_t fetch_start(const char *url, const char *out)
+{
+    const char *env[] = {"U", url, "O", out, NULL};
+    return sh_job("rm -f \"$O.new\"; if command -v curl >/dev/null; then curl -fsL --max-time 10 \"$U\" -o \"$O.new\"; "
+                  "else wget -q -T 10 -O \"$O.new\" \"$U\"; fi && mv \"$O.new\" \"$O\" || { rm -f \"$O.new\"; exit 1; }", env);
+}
+
 int job_done(intptr_t h, int *ok)
 {
     int st;

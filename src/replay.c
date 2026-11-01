@@ -178,16 +178,17 @@ static int ro_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
 {
     static int kframe = -1;
     static const char *kp;
-    const char *keys = getenv("OPEN_CHEASE_KEYS"); // "frame:text", ^ = backspace, ~ = escape
+    const char *keys = getenv("OPEN_CHEASE_KEYS"); // "frame:text|frame:text", ^ = backspace, ~ = escape
     if (keys && kframe != frame_no - 1) {
         kframe = frame_no - 1;
         kp = NULL;
-        int n = 0;
-        const char *c = keys;
-        while (*c >= '0' && *c <= '9') n = n * 10 + *c++ - '0';
-        if (*c == ':' && n == kframe) kp = c + 1;
+        for (const char *c = keys; c && !kp; c = strchr(c, '|') ? strchr(c, '|') + 1 : NULL) {
+            int n = 0;
+            while (*c >= '0' && *c <= '9') n = n * 10 + *c++ - '0';
+            if (*c == ':' && n == kframe) kp = c + 1;
+        }
     }
-    if (kp && *kp) { // one char per call, like real key events
+    if (kp && *kp && *kp != '|') { // one char per call, like real key events
         char ch = *kp++;
         ov->key = ch == '^' ? 8 : ch == '~' ? 27 : ch;
         ov->mods = 0;

@@ -52,6 +52,7 @@ typedef struct {
 
 intptr_t dl_start(const DlJob *j);
 intptr_t lists_start(const char *data, const char *a, const char *b);
+intptr_t fetch_start(const char *url, const char *out); // small file, short timeout, out only shows up if it worked
 int job_done(intptr_t h, int *ok);
 void job_kill(intptr_t h);
 
