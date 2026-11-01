@@ -79,7 +79,7 @@ static void *builtin_thread(void *arg)
 {
     for (;;) {
         pthread_mutex_lock(&mu);
-        while (!have_want && !quit_flag) pthread_cond_wait(&cv, &mu);
+        while ((!have_want || external) && !quit_flag) pthread_cond_wait(&cv, &mu);
         if (quit_flag) {
             pthread_mutex_unlock(&mu);
             break;
@@ -289,7 +289,11 @@ static int read_until(int fd, const char *token, int ms) // raw reads, a hung en
 {
     char buf[4096];
     size_t n = 0;
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
     for (;;) {
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        if ((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 > ms * 3) return 0; // chatty engine that never says uciok
         if (fd_wait(fd, ms) <= 0) return 0;
         if (n > sizeof(buf) - 256) { // keep a tail incase the token got split between reads
             memmove(buf, buf + n - 64, 64);
@@ -434,7 +438,8 @@ int analyzer_start(const char *engine_path)
     return analyzer_switch(engine_path);
 }
 
-int analyzer_switch(const char *engine_path)
+// 0 = back on the built in one
+int analyzer_switch_async(const char *engine_path)
 {
     pthread_mutex_lock(&mu);
     cur.key = 0;
@@ -461,14 +466,28 @@ int analyzer_switch(const char *engine_path)
     pthread_cond_signal(&wcv);
     pthread_mutex_unlock(&mu);
     proc_kill(old); // uci_watch gets eof and picks up the new path
+    return (int)g;
+}
+
+int analyzer_switch_done(unsigned g)
+{
+    pthread_mutex_lock(&mu);
+    int r = result_gen == g ? result_ok : gen != g ? 0 : -1; // -1 still starting
+    pthread_mutex_unlock(&mu);
+    return r;
+}
+
+int analyzer_switch(const char *engine_path)
+{
+    int g = analyzer_switch_async(engine_path);
+    if (g <= 0) return 0;
     struct timespec until;
     clock_gettime(CLOCK_REALTIME, &until);
     until.tv_sec += 20; // 5s uciok + 10s readyok and some slack
-
     pthread_mutex_lock(&mu);
-    while (result_gen != g && gen == g)
+    while (result_gen != (unsigned)g && gen == (unsigned)g)
         if (pthread_cond_timedwait(&rcv, &mu, &until)) break;
-    int ok = result_gen == g && result_ok;
+    int ok = result_gen == (unsigned)g && result_ok;
     pthread_mutex_unlock(&mu);
     return ok;
 }

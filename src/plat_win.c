@@ -193,13 +193,25 @@ int data_dir_ok(const char *dir)
 
 int open_folder(const char *dir) { return (intptr_t)ShellExecuteA(NULL, "open", dir, NULL, NULL, SW_SHOWNORMAL) > 32 ? 0 : 1; }
 
+// bare names get looked up in the current folder first on windows
+static const char *sys_exe(const char *name, char *out, size_t n)
+{
+    const char *sub = !strcmp(name, "curl.exe") ? "curl.exe" : !strcmp(name, "tar.exe") ? "tar.exe"
+                    : !strcmp(name, "powershell") ? "WindowsPowerShell\\v1.0\\powershell.exe" : NULL;
+    char dir[MAX_PATH];
+    UINT l = sub ? GetSystemDirectoryA(dir, sizeof(dir)) : 0;
+    if (!l || l >= sizeof(dir)) return NULL;
+    snprintf(out, n, "%s\\%s", dir, sub);
+    return GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES ? out : NULL;
+}
+
 static int run_cmd(char *const argv[], DWORD *code)
 {
-    char cmd[8192] = "";
+    char cmd[8192] = "", app[MAX_PATH + 64];
     for (int i = 0; argv[i]; i++) quote_arg(cmd, sizeof(cmd), argv[i]);
     HANDLE nul = nul_handle();
     PROCESS_INFORMATION pi;
-    int ok = spawn(NULL, cmd, NULL, nul, nul, nul, &pi);
+    int ok = spawn(sys_exe(argv[0], app, sizeof(app)), cmd, NULL, nul, nul, nul, &pi);
     if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
     if (!ok) return 0;
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -234,14 +246,15 @@ void relaunch_self(char **argv, const char *home)
 
 int spawn_detached(char *const argv[])
 {
-    char cmd[8192] = "";
+    char cmd[8192] = "", app[MAX_PATH + 64];
     for (int i = 0; argv[i]; i++) quote_arg(cmd, sizeof(cmd), argv[i]);
+    const char *exe = sys_exe(argv[0], app, sizeof(app));
     STARTUPINFOA si;
     memset(&si, 0, sizeof(si));
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi;
-    if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NEW_CONSOLE | CREATE_BREAKAWAY_FROM_JOB, NULL, NULL, &si, &pi) &&
-        !CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi))
+    if (!CreateProcessA(exe, cmd, NULL, NULL, FALSE, CREATE_NEW_CONSOLE | CREATE_BREAKAWAY_FROM_JOB, NULL, NULL, &si, &pi) &&
+        !CreateProcessA(exe, cmd, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi))
         return -1;
     CloseHandle(pi.hProcess), CloseHandle(pi.hThread);
     return 0;
@@ -397,6 +410,19 @@ static DWORD WINAPI lists_thread(void *arg)
     return 0;
 }
 
+static DWORD WINAPI fetch_thread(void *arg)
+{
+    Job *jb = arg;
+    char tmp[1300];
+    snprintf(tmp, sizeof(tmp), "%s.new", jb->j.out);
+    DeleteFileA(tmp);
+    char *curl[] = {"curl.exe", "-fsL", "--max-time", "10", jb->j.url, "-o", tmp, NULL};
+    int ok = run_wait(curl) == 0 && MoveFileExA(tmp, jb->j.out, MOVEFILE_REPLACE_EXISTING);
+    DeleteFileA(tmp);
+    free(jb);
+    return ok ? 0 : 1;
+}
+
 static intptr_t start_job(Job *jb, LPTHREAD_START_ROUTINE fn)
 {
     HANDLE h = CreateThread(NULL, 0, fn, jb, 0, NULL);
@@ -420,6 +446,15 @@ intptr_t lists_start(const char *data, const char *a, const char *b)
     snprintf(jb->a, sizeof(jb->a), "%s", a);
     snprintf(jb->b, sizeof(jb->b), "%s", b);
     return start_job(jb, lists_thread);
+}
+
+intptr_t fetch_start(const char *url, const char *out)
+{
+    Job *jb = calloc(1, sizeof(Job));
+    if (!jb) return 0;
+    snprintf(jb->j.url, sizeof(jb->j.url), "%s", url);
+    snprintf(jb->j.out, sizeof(jb->j.out), "%s", out);
+    return start_job(jb, fetch_thread);
 }
 
 int job_done(intptr_t h, int *ok)
@@ -521,3 +556,7 @@ void engine_list(const char *dir, void (*add)(const char *label, const char *pat
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 }
+
+int ctl_open(const char *data) { return -1; } // RegisterHotKey works here, no need
+int ctl_read(int fd, char *buf, int n) { return 0; }
+int ctl_send(const char *data, const char *msg) { return -1; }

@@ -137,24 +137,65 @@ static void ro_commit(Overlay *ov, const Rect *hits, int nhits)
     fclose(f);
 }
 
+static int grabbed[32], ngrabbed;
+
+static void ro_hotkeys(Overlay *ov, const int *combos, int n)
+{
+    ngrabbed = n < 32 ? n : 32;
+    memcpy(grabbed, combos, sizeof(int) * (size_t)ngrabbed);
+}
+
+// OPEN_CHEASE_HOTKEYS="frame:alt+h frame:ctrl+j", a grabbed combo comes in like a real global press, anything else as a plain key
+static int hotkey_press(Overlay *ov)
+{
+    static int hframe = -1, used;
+    const char *p = getenv("OPEN_CHEASE_HOTKEYS");
+    if (!p) return 0;
+    if (hframe != frame_no - 1) hframe = frame_no - 1, used = 0;
+    for (int k = 0; *p;) {
+        int n = 0;
+        while (*p >= '0' && *p <= '9' && n < 100000) n = n * 10 + *p++ - '0';
+        if (*p++ != ':') break;
+        const char *tok = p;
+        while (*p && *p != ' ') p++;
+        while (*p == ' ') p++;
+        if (n != hframe || k++ < used) continue;
+        used++;
+        int c = hk_parse(tok);
+        if (!c) return 0;
+        for (int i = 0; i < ngrabbed; i++)
+            if (grabbed[i] == c) {
+                ov->key = i;
+                return 4;
+            }
+        ov->key = c & 0xFF, ov->mods = c & HK_MODS;
+        return 2;
+    }
+    return 0;
+}
+
 static int ro_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
 {
     static int kframe = -1;
     static const char *kp;
-    const char *keys = getenv("OPEN_CHEASE_KEYS"); // "frame:text", ^ = backspace, ~ = escape
+    const char *keys = getenv("OPEN_CHEASE_KEYS"); // "frame:text|frame:text", ^ = backspace, ~ = escape
     if (keys && kframe != frame_no - 1) {
         kframe = frame_no - 1;
         kp = NULL;
-        int n = 0;
-        const char *c = keys;
-        while (*c >= '0' && *c <= '9') n = n * 10 + *c++ - '0';
-        if (*c == ':' && n == kframe) kp = c + 1;
+        for (const char *c = keys; c && !kp; c = strchr(c, '|') ? strchr(c, '|') + 1 : NULL) {
+            int n = 0;
+            while (*c >= '0' && *c <= '9') n = n * 10 + *c++ - '0';
+            if (*c == ':' && n == kframe) kp = c + 1;
+        }
     }
-    if (kp && *kp) { // one char per call, like real key events
+    if (kp && *kp && *kp != '|') { // one char per call, like real key events
         char ch = *kp++;
         ov->key = ch == '^' ? 8 : ch == '~' ? 27 : ch;
+        ov->mods = 0;
         return 2;
     }
+    int hk = hotkey_press(ov);
+    if (hk) return hk;
     static int last = -1;
     const char *clicks = getenv("OPEN_CHEASE_CLICKS"); // "frame:x,y frame:x,y"
     if (!clicks || frame_no - 1 == last) return 0;
@@ -194,5 +235,13 @@ static int ro_pointer(Overlay *ov, double *x, double *y)
     return got;
 }
 
-static Overlay ro_overlay = {"replay", ro_init, ro_canvas, 0, ro_commit, ro_wait, NULL, NULL, 0, ro_pointer};
+static int ro_held(Overlay *ov, double *x, double *y)
+{
+    const char *h = getenv("OPEN_CHEASE_HELD"); // test hook, "a-b" holds the button down from frame a to b
+    if (!h) return 0;
+    int a = num(&h), b = *h == '-' ? (h++, num(&h)) : a;
+    return frame_no - 1 >= a && frame_no - 1 <= b && ro_pointer(ov, x, y);
+}
+
+static Overlay ro_overlay = {"replay", ro_init, ro_canvas, 0, ro_commit, ro_wait, NULL, NULL, 0, ro_pointer, ro_held, 0, ro_hotkeys};
 Overlay *overlay_replay(void) { return &ro_overlay; }

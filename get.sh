@@ -8,7 +8,15 @@ branch="${OPEN_CHEASE_BRANCH:-main}"
 if [ "$(uname -s)" = Darwin ]; then
   data="${OPEN_CHEASE_DATA:-$HOME/Library/Application Support/open-chease}" # macs clean out $TMPDIR after a few days
 else
-  data="${OPEN_CHEASE_DATA:-${TMPDIR:-/tmp}/open-chease-$(id -u)}"
+  data="${OPEN_CHEASE_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/open-chease}" # was /tmp before, reboots wiped it
+  old="${TMPDIR:-/tmp}/open-chease-$(id -u)"
+  if [ -z "${OPEN_CHEASE_DATA:-}" ] && [ ! -e "$data" ] && [ -d "$old" ] && [ ! -L "$old" ] && [ -O "$old" ]; then
+    if mkdir -p "$(dirname "$data")" && mv "$old" "$data" 2>/dev/null; then
+      for f in "$data/settings" "$data/engine-names" "$data"/engines/*; do # these have the old path baked in
+        [ -f "$f" ] && [ "$(wc -c <"$f")" -lt 65536 ] && grep -qF "$old" "$f" 2>/dev/null && sed -i "s#$old#$data#g" "$f"
+      done
+    fi
+  fi
 fi
 data="${data%/}"
 app="$data/app"
@@ -38,20 +46,20 @@ case "$os" in
 esac
 
 mkdir -p "$data"
-trap 'rm -rf "${tmp:-}"' EXIT # a failed download or tar shouldnt leave junk behind
+trap 'rm -rf "${tmp:-}"' EXIT
 if [ -L "$data" ] || [ ! -O "$data" ]; then # someone else made it first, dont run their stuff
   echo "$data isnt a folder you own, delete it or set OPEN_CHEASE_DATA to somewhere else" >&2
   exit 1
 fi
 chmod 700 "$data"
 export OPEN_CHEASE_DATA="$data"
-export OPEN_CHEASE_BRANCH="$branch" # the app reads its engine lists from the same branch
+export OPEN_CHEASE_BRANCH="$branch"
 
 dl() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fL --progress-bar "$1" -o "$2"
+    curl -fL --connect-timeout 15 --speed-time 30 --speed-limit 1000 --progress-bar "$1" -o "$2"
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --show-progress -O "$2" "$1"
+    wget -q -T 30 --show-progress -O "$2" "$1"
   else
     echo "you need curl or wget for this" >&2
     return 1
@@ -73,10 +81,17 @@ if [ ! -x "$app/run.sh" ] || [ "$update" = 1 ]; then
   mkdir -p "$tmp/app"
   tar xzf "$tmp/app.tar.gz" -C "$tmp/app" --strip-components=1
   chmod +x "$tmp/app/run.sh" "$tmp/app/build.sh" "$tmp/app/bin/"* 2>/dev/null || true
+  api="https://api.github.com/repos/$repo/commits/$branch" # so the app can tell when its behind, no .commit just means no update dot
+  curl -fsL --max-time 10 "$api" -o "$tmp/c.json" 2>/dev/null || wget -q -T 10 -O "$tmp/c.json" "$api" 2>/dev/null || true
+  sha="$(grep -o '"sha": *"[0-9a-f]\{40\}"' "$tmp/c.json" 2>/dev/null | sed -n '1s/.*"\([0-9a-f]\{40\}\)"/\1/p')" || sha=""
+  [ -n "$sha" ] && printf '%s\n%s\n' "$sha" "$branch" > "$tmp/app/.commit" || true
   rm -rf "$app"
   mv "$tmp/app" "$app"
   rm -rf "$tmp"
-  rm -rf "$data/build" # makes run.sh rebuild from the new source when theres no prebuilt for this pc
+  if [ -d "$data/build" ]; then # run.sh rebuilds, old one stays as a fallback
+    rm -rf "$data/build.old"
+    mv "$data/build" "$data/build.old"
+  fi
 fi
 
 if [ "$want_sf" = 1 ] && { [ "$os" = Darwin ] || [ "$(uname -m)" = "x86_64" ]; } && ! ls "$sf_dir"/stockfish* >/dev/null 2>&1; then

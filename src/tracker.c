@@ -5,14 +5,22 @@
 #include "app.h"
 #include "templates_data.h"
 
-#define TPL_MAGIC 0x4f435433 // OCT3, pieces learned before the outline fill dont match anymore
+#define TPL_MAGIC 0x4f435433 // OCT3, old ones were learned before fill_holes
 
 static void load_builtin(Templates *t, int set, int k)
 {
-    for (int c = 0; c < 2; c++)
-        for (int p = 0; p < 6; p++)
-            for (int i = 0; i < FEAT_N * FEAT_N; i++)
-                t->t[c][p][i] = (builtin_templates[set][k][c][p][i >> 3] >> (i & 7)) & 1;
+    static float filled[BUILTIN_SETS][BUILTIN_SCALES][2][6][FEAT_N * FEAT_N];
+    static uint8_t done[BUILTIN_SETS][BUILTIN_SCALES];
+    if (!done[set][k]) {
+        for (int c = 0; c < 2; c++)
+            for (int p = 0; p < 6; p++) {
+                float *m = filled[set][k][c][p];
+                for (int i = 0; i < FEAT_N * FEAT_N; i++) m[i] = (builtin_templates[set][k][c][p][i >> 3] >> (i & 7)) & 1;
+                vision_fill_holes(m);
+            }
+        done[set][k] = 1;
+    }
+    memcpy(t->t, filled[set][k], sizeof(t->t));
 }
 
 void templates_builtin(Templates *t)
@@ -29,8 +37,13 @@ int templates_load(Templates *t, const char *path)
     unsigned magic = 0;
     Templates tmp;
     int ok = fread(&magic, 4, 1, f) == 1 && magic == TPL_MAGIC && fread(tmp.t, sizeof(tmp.t), 1, f) == 1 &&
-             fread(&tmp.color_thr, sizeof(float), 1, f) == 1;
+             fread(&tmp.color_thr, sizeof(float), 1, f) == 1 && fgetc(f) == EOF;
     fclose(f);
+    if (ok) ok = tmp.color_thr >= 0 && tmp.color_thr <= 255;
+    for (int i = 0; ok && i < 2 * 6 * FEAT_N * FEAT_N; i++) {
+        float v = (&tmp.t[0][0][0])[i];
+        ok = v == -1 || (v >= 0 && v <= 1); // nan fails this too
+    }
     if (!ok) return 0;
     memcpy(t->t, tmp.t, sizeof(tmp.t));
     t->color_thr = tmp.color_thr;
@@ -48,7 +61,7 @@ void templates_save(const Templates *t, const char *path)
     unsigned magic = TPL_MAGIC;
     int ok = fwrite(&magic, 4, 1, f) == 1 && fwrite(t->t, sizeof(t->t), 1, f) == 1 &&
              fwrite(&t->color_thr, sizeof(float), 1, f) == 1;
-    if (fclose(f) == 0 && ok) rename(tmp, path); // no half written file if it dies mid save
+    if (fclose(f) == 0 && ok) replace_file(tmp, path); // no half written file if it dies mid save
 }
 
 static int piece_color(int pc) { return pc / 6; }
@@ -66,7 +79,7 @@ void templates_learn(Templates *t, const BoardRead *r, const Pos *p)
         if (pc == EMPTY) continue;
         int c = piece_color(pc), ty = piece_type(pc);
         for (int i = 0; i < FEAT_N * FEAT_N; i++)
-            if (r->mask[sq][i] != 0.5f) acc[c][ty][i] += r->mask[sq][i], seen[c][ty][i]++; // covered bits arent part of the piece
+            if (r->mask[sq][i] != 0.5f) acc[c][ty][i] += r->mask[sq][i], seen[c][ty][i]++;
         cnt[c][ty]++;
     }
     float max_black = 0, min_white = 255;
@@ -81,7 +94,7 @@ void templates_learn(Templates *t, const BoardRead *r, const Pos *p)
         for (int ty = 0; ty < 6; ty++)
             if (cnt[c][ty])
                 for (int i = 0; i < FEAT_N * FEAT_N; i++)
-                    t->t[c][ty][i] = seen[c][ty][i] ? acc[c][ty][i] / seen[c][ty][i] : -1; // -1 = never saw this bit
+                    t->t[c][ty][i] = seen[c][ty][i] ? acc[c][ty][i] / seen[c][ty][i] : -1; // -1 = never seen
     t->have = 1;
     t->learned = 1;
 }
@@ -90,7 +103,7 @@ static float similarity(const float *a, const float *b)
 {
     float mn = 0, mx = 0;
     for (int i = 0; i < FEAT_N * FEAT_N; i++) {
-        if (a[i] == 0.5f || b[i] < 0) continue; // coordinate labels and our overlay, or a bit the template never saw
+        if (a[i] == 0.5f || b[i] < 0) continue; // coordinate labels and our overlay
         float x = a[i], y = b[i];
         mn += x < y ? x : y;
         mx += x > y ? x : y;
@@ -106,6 +119,29 @@ static void type_scores(const Templates *t, const BoardRead *r, int sq, float *o
         float b = similarity(r->mask[sq], t->t[c ^ 1][ty]);
         out[ty] = a > b * 0.97f ? a : b * 0.97f; // other colors shape still counts, a bit less
     }
+}
+
+// how sure the shapes are about pc on sq: its score minus the best other type, under 0 means it looks like something else
+float tracker_confidence(const Templates *t, const BoardRead *r, int sq, int pc)
+{
+    float sc[6], other = 0;
+    type_scores(t, r, sq, sc);
+    for (int ty = 0; ty < 6; ty++)
+        if (ty != piece_type(pc) && sc[ty] > other) other = sc[ty];
+    return sc[piece_type(pc)] - other;
+}
+
+// one square fixed by hand, nudge that pieces shape towards it
+void templates_learn_one(Templates *t, const BoardRead *r, int sq, int pc)
+{
+    float *d = t->t[piece_color(pc)][piece_type(pc)];
+    for (int i = 0; i < FEAT_N * FEAT_N; i++) {
+        float v = r->mask[sq][i];
+        if (v == 0.5f) continue;
+        d[i] = d[i] < 0 ? v : d[i] * 0.4f + v * 0.6f;
+    }
+    t->have = 1;
+    t->learned = 1;
 }
 
 int classify_piece(const Templates *t, const BoardRead *r, int sq)
@@ -338,7 +374,7 @@ static void play_line(Tracker *t, Pos from, const Match *m, const BoardRead *r, 
             t->promo_color[slot] = t->pos.side;
             t->promo_ticks[slot] = 0;
             memset(t->promo_votes[slot], 0, sizeof(t->promo_votes[slot]));
-            if (i == m->n - 1) {
+            if (i == m->n - 1 && r->obs[M_TO(mv)] != OBS_UNKNOWN && r->obs[M_TO(mv)] != OBS_EMPTY && !r->hidden[M_TO(mv)]) {
                 t->promo_votes[slot][promo_type(tpl, r, M_TO(mv), 0.02f, &t->pos, M_FROM(mv))]++;
                 t->promo_ticks[slot] = 1;
             }
@@ -441,6 +477,19 @@ static int apply_matching(Tracker *t, const BoardRead *r, Templates *tpl)
         }
     }
     if (heal_types(t, r, tpl)) return 1;
+    for (int k = 0; k < t->nprev && !extra; k++) { // plain takeback
+        uint8_t e2[64];
+        int od2, cd2;
+        expected_obs(&t->prev[k], e2);
+        diff2(e2, r->obs, &od2, &cd2);
+        if (od2 == 0 && cd2 <= 1) {
+            t->pos = t->prev[k];
+            t->last_move = 0;
+            memmove(&t->prev[0], &t->prev[k + 1], sizeof(Pos) * (t->nprev - k - 1));
+            t->nprev -= k + 1;
+            return 1;
+        }
+    }
     for (int k = 0; k < t->nprev && !extra; k++) { // takeback, or we followed a wrong move
         Pos back = t->prev[k];
         if (find_line(&back, r, 2, &m) && m.c == 0) {
@@ -470,6 +519,7 @@ static void verify_promo(Tracker *t, const BoardRead *r, const Templates *tpl)
             t->promo_ticks[k] = 10;
             continue;
         }
+        if (r->obs[sq] == OBS_UNKNOWN || r->obs[sq] == OBS_EMPTY || r->hidden[sq]) continue; // picker still open
         t->promo_ticks[k]++;
         int ty = promo_type(tpl, r, sq, 0.02f, &t->pos, -1);
         t->promo_votes[k][ty]++;
@@ -593,7 +643,7 @@ static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *ou
             int cnt[6] = {0};
             for (int sq = 0; sq < 64; sq++)
                 if (r->obs[sq] == want && types[sq] >= 0) cnt[types[sq]]++;
-            int mv_sq = -1, mv_to = -1, mv_from = -1;
+            int mv_sq = -1, mv_to = -1;
             float loss = 1e9f;
             for (int sq = 0; sq < 64; sq++) {
                 if (r->obs[sq] != want || types[sq] < 0 || types[sq] == KING) continue;
@@ -603,11 +653,11 @@ static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *ou
                     if (ty == over || sc[sq][ty] < 0) continue;
                     if (ty == PAWN ? cnt[PAWN] >= 8 : cnt[ty] >= cap[ty]) continue;
                     float l = sc[sq][over] - sc[sq][ty];
-                    if (l < loss) loss = l, mv_sq = sq, mv_to = ty, mv_from = over;
+                    if (over == QUEEN && l > 0.15f) continue; // two queens happens, dont force one away
+                    if (l < loss) loss = l, mv_sq = sq, mv_to = ty;
                 }
             }
             if (mv_sq < 0) break;
-            if (mv_from == QUEEN && loss > 0.15f) break; // two queens happens, dont force one away
             types[mv_sq] = mv_to;
         }
     }

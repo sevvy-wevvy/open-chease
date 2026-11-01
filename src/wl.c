@@ -46,7 +46,8 @@ typedef struct {
     int cap_w, cap_h, cap_stride, cap_state, y_invert, warned;
     uint32_t offered[8];
     int noffered;
-    uint8_t *flip, *conv;
+    uint8_t *flip, *conv, *rot;
+    int transform; // screencopy gives us the unrotated buffer
 } WlOut;
 
 static struct wl_display *dpy;
@@ -60,7 +61,7 @@ static struct zxdg_output_manager_v1 *xdg_output_mgr;
 static struct wl_seat *seat;
 static struct wl_pointer *pointer;
 static struct wl_keyboard *keyboard;
-static int key_q[32], nkey_q, scroll_acc, scrolled;
+static int key_q[32], nkey_q, scroll_acc, scrolled, kb_dep; // key_q has the HK_ mods ored in
 static double scroll_lx, scroll_ly;
 static WlOut outs[MAX_OUTPUTS];
 static int nouts;
@@ -115,6 +116,36 @@ static void free_shm(ShmBuf *b)
     memset(b, 0, sizeof(*b));
 }
 
+static void out_geometry(void *d, struct wl_output *w, int32_t x, int32_t y, int32_t pw, int32_t ph, int32_t sub, const char *make,
+                         const char *model, int32_t transform)
+{
+    ((WlOut *)d)->transform = transform & 7;
+}
+static void out_mode(void *d, struct wl_output *w, uint32_t flags, int32_t mw, int32_t mh, int32_t refresh) {}
+static void out_done(void *d, struct wl_output *w) {}
+static void out_scale(void *d, struct wl_output *w, int32_t f) {}
+static void out_text(void *d, struct wl_output *w, const char *t) {}
+static const struct wl_output_listener out_listener = {out_geometry, out_mode, out_done, out_scale, out_text, out_text};
+
+static void untransform(const uint8_t *src, int sw, int sh, int sstride, int t, uint8_t *dst, int *dw, int *dh)
+{
+    int rot = t & 3, w = rot & 1 ? sh : sw, h = rot & 1 ? sw : sh;
+    for (int y = 0; y < h; y++) {
+        uint32_t *out = (uint32_t *)(dst + (size_t)y * w * 4);
+        for (int x0 = 0; x0 < w; x0++) {
+            int x = t & 4 ? w - 1 - x0 : x0, sx, sy;
+            switch (rot) {
+            case 1: sx = y, sy = sh - 1 - x; break;
+            case 2: sx = sw - 1 - x, sy = sh - 1 - y; break;
+            case 3: sx = sw - 1 - y, sy = x; break;
+            default: sx = x, sy = y;
+            }
+            out[x0] = *(const uint32_t *)(src + (size_t)sy * sstride + (size_t)sx * 4);
+        }
+    }
+    *dw = w, *dh = h;
+}
+
 static void xo_pos(void *d, struct zxdg_output_v1 *x, int32_t px, int32_t py)
 {
     WlOut *o = d;
@@ -151,8 +182,10 @@ static void ptr_motion(void *d, struct wl_pointer *p, uint32_t t, wl_fixed_t x, 
     ptr_x = wl_fixed_to_double(x);
     ptr_y = wl_fixed_to_double(y);
 }
+static int ptr_down;
 static void ptr_button(void *d, struct wl_pointer *p, uint32_t serial, uint32_t t, uint32_t button, uint32_t state)
 {
+    if (button == 0x110) ptr_down = state == WL_POINTER_BUTTON_STATE_PRESSED; // BTN_LEFT
     if (state != WL_POINTER_BUTTON_STATE_PRESSED || !ptr_surface) return;
     for (int i = 0; i < nouts; i++)
         if (outs[i].surface == ptr_surface) {
@@ -230,16 +263,26 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t t, 
     static const char map[] = // no libxkbcommon fallback, plain us evdev
         "\0\x1b" "1234567890-=\b\0" "qwertyuiop[]\r\0" "asdfghjkl;'`\0\\" "zxcvbnm,./\0*\0 ";
     if (state != WL_KEYBOARD_KEY_STATE_PRESSED || nkey_q >= 32) return;
+    int mods = (kb_dep & 1 ? HK_SHIFT : 0) | (kb_dep & 4 ? HK_CTRL : 0) | (kb_dep & 8 ? HK_ALT : 0) | (kb_dep & 64 ? HK_SUPER : 0); // the usual xkb mod bits
+    if (key >= 59 && key <= 68) { // f1-f10, then f11 f12 sit at 87 88
+        key_q[nkey_q++] = (HK_F1 + (int)key - 59) | mods;
+        return;
+    }
+    if (key == 87 || key == 88) {
+        key_q[nkey_q++] = (HK_F1 + 10 + (int)key - 87) | mods;
+        return;
+    }
     if (xkb.state) {
         char buf[8] = {0};
-        if (xkb.key_get_utf8(xkb.state, key + 8, buf, sizeof(buf)) == 1) key_q[nkey_q++] = (unsigned char)buf[0]; // xkb keycodes are evdev + 8
+        if (xkb.key_get_utf8(xkb.state, key + 8, buf, sizeof(buf)) == 1) key_q[nkey_q++] = (unsigned char)buf[0] | mods; // xkb keycodes are evdev + 8
         return;
     }
     if (key >= sizeof(map) - 1 || !map[key]) return;
-    key_q[nkey_q++] = (unsigned char)map[key];
+    key_q[nkey_q++] = (unsigned char)map[key] | mods;
 }
 static void kb_mods(void *d, struct wl_keyboard *k, uint32_t serial, uint32_t dep, uint32_t lat, uint32_t lock, uint32_t g)
 {
+    kb_dep = (int)dep;
     if (xkb.state) xkb.update_mask(xkb.state, dep, lat, lock, 0, 0, g);
 }
 static void kb_repeat(void *d, struct wl_keyboard *k, int32_t rate, int32_t delay) {}
@@ -295,6 +338,7 @@ static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char
         o->alive = 1;
         o->global_name = name;
         o->output = wl_registry_bind(r, name, &wl_output_interface, version < 3 ? version : 3);
+        wl_output_add_listener(o->output, &out_listener, o);
         snprintf(o->name, sizeof(o->name), "output-%u", name);
         if (inited > 0) { // hotplug, the ones there at startup get xdg_output in init
             if (xdg_output_mgr) {
@@ -335,6 +379,7 @@ static void reg_remove(void *d, struct wl_registry *r, uint32_t name)
         free_shm(&o->cap);
         free(o->flip);
         free(o->conv);
+        free(o->rot);
         memset(o, 0, sizeof(*o));
         o->cap_state = -1;
         while (nouts && !outs[nouts - 1].alive) nouts--;
@@ -533,7 +578,9 @@ static int wl_capture(Backend *b)
             zwlr_screencopy_frame_v1_destroy(o->frame);
             o->frame = NULL;
         }
-        bo->logical = (Rect){o->lx, o->ly, o->have_logical ? o->lw : o->cap_w, o->have_logical ? o->lh : o->cap_h};
+        int sideways = o->transform & 1;
+        bo->logical = (Rect){o->lx, o->ly, o->have_logical ? o->lw : sideways ? o->cap_h : o->cap_w,
+                             o->have_logical ? o->lh : sideways ? o->cap_w : o->cap_h};
         if (o->cap_state != 1) {
             bo->have_frame = 0;
             continue;
@@ -567,9 +614,21 @@ static int wl_capture(Backend *b)
             stride = o->cap_w * 4;
             bgr = 1;
         }
+        int fw = o->cap_w, fh = o->cap_h;
+        if (o->transform) {
+            uint8_t *nr = realloc(o->rot, (size_t)fw * fh * 4);
+            if (!nr) {
+                bo->have_frame = 0;
+                continue;
+            }
+            o->rot = nr;
+            untransform(px, fw, fh, stride, o->transform, o->rot, &fw, &fh);
+            px = o->rot;
+            stride = fw * 4;
+        }
         bo->frame.px = px;
-        bo->frame.w = o->cap_w;
-        bo->frame.h = o->cap_h;
+        bo->frame.w = fw;
+        bo->frame.h = fh;
         bo->frame.stride = stride;
         bo->frame.bgr = bgr;
         bo->have_frame = 1;
@@ -608,10 +667,10 @@ static void add_layer(WlOut *o)
     o->layer = zwlr_layer_shell_v1_get_layer_surface(layer_shell, o->surface, o->output,
                                                      ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "open-chease");
     zwlr_layer_surface_v1_add_listener(o->layer, &ls_listener, o);
-    zwlr_layer_surface_v1_set_anchor(o->layer, 15); // all 4 edges
+    zwlr_layer_surface_v1_set_anchor(o->layer, 15);
     zwlr_layer_surface_v1_set_exclusive_zone(o->layer, -1); // or waybar pushes it around
-    zwlr_layer_surface_v1_set_keyboard_interactivity(o->layer, kb_on); // 1 = exclusive, eats every key
-    zwlr_layer_surface_v1_set_size(o->layer, 0, 0); // 0x0 + anchors = whole output
+    zwlr_layer_surface_v1_set_keyboard_interactivity(o->layer, kb_on);
+    zwlr_layer_surface_v1_set_size(o->layer, 0, 0);
     struct wl_region *empty = wl_compositor_create_region(compositor);
     wl_surface_set_input_region(o->surface, empty);
     wl_region_destroy(empty);
@@ -705,7 +764,7 @@ static int wl_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
             return 1;
         }
         if (nkey_q) {
-            ov->key = key_q[0];
+            ov->key = key_q[0] & 0xFF, ov->mods = key_q[0] & HK_MODS;
             memmove(key_q, key_q + 1, sizeof(int) * (size_t)--nkey_q);
             return 2;
         }
@@ -732,6 +791,15 @@ static int wl_pointer_at(Overlay *ov, double *x, double *y)
     return 0;
 }
 
+static int wl_held(Overlay *ov, double *x, double *y)
+{
+    if (!ptr_down) return 0;
+    wl_display_dispatch_pending(dpy); // motion events land here while you drag
+    for (int i = 0; i < nouts; i++) // the press grabs the pointer, so it keeps reporting even off our hit areas
+        if (outs[i].surface == ptr_surface) *x = outs[i].lx + ptr_x, *y = outs[i].ly + ptr_y;
+    return ptr_down;
+}
+
 static void wl_keyboard_mode(Overlay *ov, int on)
 {
     kb_on = on;
@@ -744,5 +812,5 @@ static void wl_keyboard_mode(Overlay *ov, int on)
     wl_display_flush(dpy);
 }
 
-static Overlay wl_overlay = {"layer-shell", wl_ov_init, wl_canvas, 0, wl_commit, wl_wait, NULL, wl_keyboard_mode, 0, wl_pointer_at};
+static Overlay wl_overlay = {"layer-shell", wl_ov_init, wl_canvas, 0, wl_commit, wl_wait, NULL, wl_keyboard_mode, 0, wl_pointer_at, wl_held, 0, NULL}; // no global hotkeys on wayland, main does the --send fifo
 Overlay *overlay_wl(void) { return &wl_overlay; }

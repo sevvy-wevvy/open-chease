@@ -70,10 +70,15 @@ static u64 tt_mask;
 
 void engine_tt_resize(int mb)
 {
+    if (mb < 1) mb = 1;
+    if (mb > 4096) mb = 4096;
     u64 n = 1;
     while (n * 2 * sizeof(TTEntry) <= (u64)mb * 1024 * 1024) n *= 2; // power of 2 so the index is just key & mask
+    TTEntry *t2 = NULL;
+    while (n > 1 && !(t2 = calloc(n, sizeof(TTEntry)))) n /= 2;
+    if (!t2) return;
     free(tt);
-    tt = calloc(n, sizeof(TTEntry));
+    tt = t2;
     tt_mask = n - 1;
 }
 
@@ -206,6 +211,12 @@ void pos_finish_setup(Pos *p)
         if (p->sq[56] == PC(BLACK, ROOK)) c |= 8;
     }
     p->castle &= c; // fens love to claim rights the board cant have
+    if (p->ep >= 0) { // turn flips and piece fixes leave stale ones
+        int e = p->ep, ok = e < 64 && p->sq[e] == EMPTY;
+        if (ok && p->side == WHITE) ok = e >> 3 == 5 && p->sq[e - 8] == PC(BLACK, PAWN);
+        else if (ok) ok = e >> 3 == 2 && p->sq[e + 8] == PC(WHITE, PAWN);
+        if (!ok) p->ep = -1;
+    }
     p->key = compute_key(p);
     p->nhist = 0;
 }
@@ -242,12 +253,11 @@ int pos_from_fen(Pos *p, const char *fen)
         if (*c == 'q') p->castle |= 8;
     }
     while (*c == ' ') c++;
-    if (*c && *c != '-' && c[1]) {
+    if (*c >= 'a' && *c <= 'h' && c[1] >= '1' && c[1] <= '8') {
         p->ep = (c[1] - '1') * 8 + (c[0] - 'a');
         c += 2;
-    } else if (*c) {
-        c++;
     }
+    while (*c && *c != ' ') c++;
     p->half = 0;
     p->fullmove = 1;
     sscanf(c, "%d %d", &p->half, &p->fullmove);
@@ -308,6 +318,33 @@ int pos_is_attacked(const Pos *p, int s, int by)
     u64 rq = p->bb[PC(by, ROOK)] | p->bb[PC(by, QUEEN)];
     if (rq && (rook_att(s, p->occ[2]) & rq)) return 1;
     return 0;
+}
+
+int pos_attackers(const Pos *p, int s, int by)
+{
+    int n = POP(pawn_att[by ^ 1][s] & p->bb[PC(by, PAWN)]) + POP(knight_att[s] & p->bb[PC(by, KNIGHT)]) +
+            POP(king_att[s] & p->bb[PC(by, KING)]);
+    n += POP(bishop_att(s, p->occ[2]) & (p->bb[PC(by, BISHOP)] | p->bb[PC(by, QUEEN)]));
+    n += POP(rook_att(s, p->occ[2]) & (p->bb[PC(by, ROOK)] | p->bb[PC(by, QUEEN)]));
+    return n;
+}
+
+// same idea as the king part of evaluate, 0 is cozy, 10 means its getting mated soon
+int king_danger(const Pos *p, int side)
+{
+    u64 k = p->bb[PC(side, KING)];
+    if (!k) return 0;
+    int s = LSB(k), d = 0;
+    u64 zone = king_att[s] | k, shield = king_att[s] | k;
+    shield = side == WHITE ? shield << 8 : shield >> 8;
+    while (zone) {
+        int q = LSB(zone);
+        zone &= zone - 1;
+        d += 2 * pos_attackers(p, q, side ^ 1) - pos_attackers(p, q, side);
+    }
+    d += 3 - POP(shield & p->bb[PC(side, PAWN)]);
+    if (pos_in_check(p, side)) d += 3;
+    return d < 0 ? 0 : d > 20 ? 10 : d / 2;
 }
 
 int pos_in_check(const Pos *p, int side)

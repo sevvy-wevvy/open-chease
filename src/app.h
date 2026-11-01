@@ -4,6 +4,15 @@
 #include <stdint.h>
 
 #include "engine.h"
+#include <stdio.h>
+
+static inline int replace_file(const char *tmp, const char *dst)
+{
+#ifdef _WIN32
+    remove(dst); // windows rename wont overwrite
+#endif
+    return rename(tmp, dst);
+}
 
 #define MAX_OUTPUTS 8
 
@@ -50,6 +59,10 @@ typedef struct {
     uint8_t highlighted[64];
     uint8_t hidden[64]; // popup, promo picker or our own overlay on top
     int nhidden;
+    uint8_t foreign[64]; // hidden by something thats not ours, screen order (row * 8 + col)
+    int has_popup;
+    Rect popup; // frame px, whole squares
+
     float mask[64][FEAT_N * FEAT_N]; // 1 piece, 0 board, 0.5 cant tell
 } BoardRead;
 
@@ -74,7 +87,62 @@ typedef struct Overlay {
     void (*keyboard)(struct Overlay *o, int on);
     int key; // wait_events 2 = key, 3 = scroll (+1 down, -1 up)
     int (*pointer)(struct Overlay *o, double *x, double *y); // 1 if the mouse is over one of our hit areas, logical coords. can be NULL
+    int (*held)(struct Overlay *o, double *x, double *y); // 1 while the left button is down, for dragging sliders. can be NULL
+    int mods; // HK_ bits held during the last wait_events 2 key, 0 if the backend cant tell
+    void (*hotkeys)(struct Overlay *o, const int *combos, int n); // grabs them system wide, wait_events 4 = one got pressed, key = its index. can be NULL
 } Overlay;
+
+// a hotkey is one int, a lowercase unshifted key (? is shift + /) or HK_F1 + n, ored with the mods. 0 = none
+enum { HK_F1 = 0x81, HK_SHIFT = 0x100, HK_CTRL = 0x200, HK_ALT = 0x400, HK_SUPER = 0x800, HK_MODS = 0xF00 };
+
+static const char hk_shifted[] = "~!@#$%^&*()_+{}|:\"<>?", hk_plain[] = "`1234567890-=[]\\;',./"; // us layout
+
+static inline int hk_norm(int ch, int mods) // whatever a backend got for a key press into a combo
+{
+    mods &= HK_MODS;
+    if ((mods & HK_CTRL) && ch >= 1 && ch <= 26) ch += 96; // ctrl+h comes in as backspace
+    if (ch >= 'A' && ch <= 'Z') ch += 32, mods |= HK_SHIFT;
+    for (int i = 0; hk_shifted[i]; i++)
+        if (ch == hk_shifted[i]) ch = hk_plain[i], mods |= HK_SHIFT;
+    if ((ch >= 32 && ch < 127) || (ch >= HK_F1 && ch < HK_F1 + 12)) return ch | mods;
+    return 0;
+}
+
+static inline int hk_lower(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
+
+static inline int hk_word(const char *s, const char *w, int len) // s starts with w, any case
+{
+    for (int i = 0; i < len; i++)
+        if (hk_lower((unsigned char)s[i]) != w[i]) return 0;
+    return 1;
+}
+
+static inline int hk_parse(const char *s) // "alt+shift+/", "Ctrl+F5", "alt+?", 0 if it makes no sense
+{
+    static const struct { const char *n; int m; } mn[] = {{"alt", HK_ALT}, {"opt", HK_ALT}, {"option", HK_ALT}, {"ctrl", HK_CTRL},
+        {"control", HK_CTRL}, {"shift", HK_SHIFT}, {"super", HK_SUPER}, {"win", HK_SUPER}, {"cmd", HK_SUPER}};
+    int mods = 0;
+    for (;;) {
+        int got = 0;
+        for (int i = 0; i < (int)(sizeof(mn) / sizeof(mn[0])) && !got; i++) {
+            int l = 0;
+            while (mn[i].n[l]) l++;
+            if (hk_word(s, mn[i].n, l) && s[l] == '+' && s[l + 1]) mods |= mn[i].m, s += l + 1, got = 1;
+        }
+        if (!got) break;
+    }
+    int len = 0;
+    while (s[len] && s[len] != ' ' && s[len] != '\n' && s[len] != '\r') len++;
+    if (len == 1) return hk_norm((unsigned char)s[0], mods);
+    if (len == 5 && hk_word(s, "space", 5)) return ' ' | mods;
+    if ((len == 2 || len == 3) && hk_lower((unsigned char)s[0]) == 'f' && s[1] >= '1' && s[1] <= '9') {
+        int n = s[1] - '0';
+        if (len == 3) n = s[2] >= '0' && s[2] <= '9' ? n * 10 + s[2] - '0' : 0;
+        if (n >= 1 && n <= 12) return (HK_F1 + n - 1) | mods;
+    }
+    return 0;
+}
+
 
 int backend_wl_init_shared(void);
 Backend *backend_wl(void);
@@ -96,6 +164,8 @@ int canvas_damage(const Canvas *c, int *x0, int *y0, int *x1, int *y1);
 void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double dy, double clip_h); // clip_h < 0 = no clip
 // logical coords from here, the canvas scales them
 void draw_rect(Canvas *c, Rect r, uint32_t argb);
+void canvas_erase(Canvas *c, Rect r);
+void draw_image(Canvas *c, Rect r, const uint32_t *img, int w, int h);
 void draw_frame(Canvas *c, Rect r, double width, uint32_t argb);
 void draw_round_rect(Canvas *c, Rect r, double radius, uint32_t argb);
 void draw_line(Canvas *c, double x0, double y0, double x1, double y1, double width, uint32_t argb);
@@ -110,6 +180,8 @@ int canvas_alpha_at(Canvas *c, double lx, double ly);
 int vision_find_board(const Frame *f, Board *b, const Rect *ignore, int nignore,
                       int (*masked)(void *, int, int), void *mctx);
 int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), void *mctx);
+extern int vision_strict, vision_lite; // 0-4 how picky the board finder is, lite skips the slow blurred pass
+void vision_fill_holes(float *m); // fills enclosed piece outlines in a FEAT_N grid
 void vision_read(const Frame *f, const Board *b, int white_bottom, float color_thr, BoardRead *r,
                  int (*masked)(void *, int, int), void *mctx);
 
@@ -125,6 +197,8 @@ int templates_load(Templates *t, const char *path);
 void templates_save(const Templates *t, const char *path);
 void templates_learn(Templates *t, const BoardRead *r, const Pos *p);
 int classify_piece(const Templates *t, const BoardRead *r, int sq);
+float tracker_confidence(const Templates *t, const BoardRead *r, int sq, int pc);
+void templates_learn_one(Templates *t, const BoardRead *r, int sq, int pc);
 
 typedef struct {
     Pos pos;
@@ -168,7 +242,9 @@ typedef struct {
 } Analysis;
 
 int analyzer_start(const char *engine_path);
-int analyzer_switch(const char *engine_path);
+int analyzer_switch(const char *engine_path); // waits up to 20s
+int analyzer_switch_async(const char *engine_path);
+int analyzer_switch_done(unsigned ticket); // 1 ok, 0 failed, -1 still starting
 void analyzer_set_options(int threads, int hash_mb, int lines);
 void analyzer_set_elo(int elo);
 void analyzer_set_position(const Pos *p);

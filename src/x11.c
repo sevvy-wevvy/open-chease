@@ -7,6 +7,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/keysym.h>
 #include <X11/extensions/Xfixes.h>
 #include <X11/extensions/shapeconst.h>
 
@@ -48,6 +49,10 @@ static struct {
     int (*LookupString)(XKeyEvent *, char *, int, KeySym *, void *);
     void *(*SetErrorHandler)(int (*)(Display *, XErrorEvent *));
     Status (*GetGeometry)(Display *, Drawable, Window *, int *, int *, unsigned *, unsigned *, unsigned *, unsigned *);
+    int (*GrabKey)(Display *, int, unsigned, Window, Bool, int, int);
+    int (*UngrabKey)(Display *, int, unsigned, Window);
+    KeyCode (*KeysymToKeycode)(Display *, KeySym);
+    int (*Sync)(Display *, Bool);
 } X;
 
 typedef struct {
@@ -115,6 +120,10 @@ static int load_x(void)
     L(x11, LookupString, "XLookupString");
     L(x11, SetErrorHandler, "XSetErrorHandler");
     L(x11, GetGeometry, "XGetGeometry");
+    L(x11, GrabKey, "XGrabKey");
+    L(x11, UngrabKey, "XUngrabKey");
+    L(x11, KeysymToKeycode, "XKeysymToKeycode");
+    L(x11, Sync, "XSync");
 #undef L
     loaded = 1;
     return 1;
@@ -161,7 +170,7 @@ static int x_init(Overlay *ov, Backend *cap)
     XserverRegion empty = X.FixesCreateRegion(xs.dpy, NULL, 0);
     X.FixesSetWindowShapeRegion(xs.dpy, xs.win, ShapeInput, 0, 0, empty);
     X.FixesDestroyRegion(xs.dpy, empty);
-    X.SelectInput(xs.dpy, xs.win, ButtonPressMask | ExposureMask | KeyPressMask | PointerMotionMask | EnterWindowMask | LeaveWindowMask);
+    X.SelectInput(xs.dpy, xs.win, ButtonPressMask | ButtonReleaseMask | ExposureMask | KeyPressMask | PointerMotionMask | EnterWindowMask | LeaveWindowMask);
     xs.gc = X.CreateGC(xs.dpy, xs.win, 0, NULL);
     xs.cap = cap;
     xs.gen = cap->out_gen;
@@ -309,8 +318,22 @@ static long now_ms(void)
     return t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 
-static int ptr_in;
+static int ptr_in, ptr_down;
 static double ptr_x, ptr_y;
+static int grab_kc[32], grab_mask[32], ngrab;
+
+static int x_mods(unsigned state)
+{
+    return (state & ShiftMask ? HK_SHIFT : 0) | (state & ControlMask ? HK_CTRL : 0) | (state & Mod1Mask ? HK_ALT : 0) | (state & Mod4Mask ? HK_SUPER : 0);
+}
+
+static int x_held(Overlay *ov, double *x, double *y)
+{
+    double cx, cy;
+    if (ptr_down) ov->wait_events(ov, 0, &cx, &cy); // pulls in the motion and the release
+    *x = ptr_x, *y = ptr_y;
+    return ptr_down;
+}
 
 static int x_pointer(Overlay *ov, double *x, double *y)
 {
@@ -335,7 +358,12 @@ static int x_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
                 ptr_in = 0;
                 continue;
             }
+            if (e.type == ButtonRelease) {
+                if (e.xbutton.button == 1) ptr_down = 0;
+                continue;
+            }
             if (e.type == ButtonPress) {
+                if (e.xbutton.button == 1) ptr_down = 1;
                 *cx = (e.xbutton.x + xs.bx) / xs.scale;
                 *cy = (e.xbutton.y + xs.by) / xs.scale;
                 if (e.xbutton.button == 4 || e.xbutton.button == 5) { // 4/5 = wheel
@@ -346,11 +374,22 @@ static int x_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
                 return 1;
             }
             if (e.type == KeyPress) {
+                unsigned want = e.xkey.state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask); // numlock and capslock dont count
+                for (int i = 0; i < ngrab; i++)
+                    if (grab_kc[i] && grab_kc[i] == (int)e.xkey.keycode && grab_mask[i] == (int)want) {
+                        ov->key = i;
+                        return 4;
+                    }
                 char buf[8] = {0};
                 KeySym sym = 0;
                 int n = X.LookupString(&e.xkey, buf, sizeof(buf), &sym, NULL);
+                ov->mods = x_mods(e.xkey.state);
                 if (n == 1) {
                     ov->key = (unsigned char)buf[0];
+                    return 2;
+                }
+                if (sym >= XK_F1 && sym <= XK_F12) {
+                    ov->key = HK_F1 + (int)(sym - XK_F1);
                     return 2;
                 }
             }
@@ -444,5 +483,34 @@ static int xcap_capture(Backend *b)
 static Backend x_backend = {.name = "x11-getimage", .init = xcap_init, .capture = xcap_capture};
 Backend *backend_x11(void) { return &x_backend; }
 
-static Overlay x_overlay = {"x11", x_init, x_canvas, 0, x_commit, x_wait, NULL, x_keyboard, 0, x_pointer};
+static void x_hotkeys(Overlay *ov, const int *combos, int n)
+{
+    if (!xs.dpy) return;
+    static const unsigned extra[4] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask}; // grabs are exact, so once per capslock/numlock combo
+    Window root = X.RootWindow_(xs.dpy, X.DefaultScreen_(xs.dpy));
+    X.SetErrorHandler(on_xerr); // someone else holding the combo is a BadAccess, the default handler would exit
+    for (int i = 0; i < ngrab; i++)
+        for (int v = 0; grab_kc[i] && v < 4; v++) X.UngrabKey(xs.dpy, grab_kc[i], (unsigned)grab_mask[i] | extra[v], root);
+    ngrab = n < 32 ? n : 32;
+    for (int i = 0; i < ngrab; i++) {
+        int c = combos[i], key = c & 0xFF;
+        grab_kc[i] = 0;
+        if (!c) continue;
+        KeyCode kc = X.KeysymToKeycode(xs.dpy, key >= HK_F1 ? (KeySym)(XK_F1 + key - HK_F1) : (KeySym)key); // ascii keysyms are just the char
+        if (!kc) continue;
+        unsigned mask = (c & HK_SHIFT ? ShiftMask : 0) | (c & HK_CTRL ? ControlMask : 0) | (c & HK_ALT ? Mod1Mask : 0) | (c & HK_SUPER ? Mod4Mask : 0);
+        x_err = 0;
+        for (int v = 0; v < 4; v++) X.GrabKey(xs.dpy, kc, mask | extra[v], root, True, GrabModeAsync, GrabModeAsync);
+        X.Sync(xs.dpy, False);
+        if (x_err) {
+            fprintf(stderr, "another app already has hotkey %d, change it in settings > hotkeys\n", i + 1);
+            for (int v = 0; v < 4; v++) X.UngrabKey(xs.dpy, kc, mask | extra[v], root);
+            continue;
+        }
+        grab_kc[i] = kc, grab_mask[i] = (int)mask;
+    }
+    X.Flush(xs.dpy);
+}
+
+static Overlay x_overlay = {"x11", x_init, x_canvas, 0, x_commit, x_wait, NULL, x_keyboard, 0, x_pointer, x_held, 0, x_hotkeys};
 Overlay *overlay_x11(void) { return &x_overlay; }

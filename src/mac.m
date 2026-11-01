@@ -1,12 +1,18 @@
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define Rect OCRect // carbon has its own Rect
 #include "app.h"
+
+typedef struct {
+    CGImageRef img;
+    atomic_int state; // 1 callback done, 2 we stopped waiting
+} Shot;
 
 typedef struct {
     CGDirectDisplayID id;
@@ -25,12 +31,39 @@ static SCShareableContent *content;
 static Backend *live_cap;
 static Overlay *live_ov;
 static Rect hits[256];
-static int nhits, clicked, keyq[32], nkeys, wheel, kb_on;
+static int nhits, clicked, keyq[32], nkeys, wheel, kb_on; // keyq has the HK_ mods ored in
+static int grabbed[32], ngrabbed, hotq[16], nhot;
+static id global_mon, local_mon;
 static double click_x, click_y, wheel_x, wheel_y;
 static int hot = -1;
 static NSRunningApplication *before_kb;
 static void track_mouse(void);
 static CGColorSpaceRef rgb;
+
+static int ev_mods(NSEvent *e)
+{
+    NSEventModifierFlags f = [e modifierFlags];
+    return (f & NSEventModifierFlagShift ? HK_SHIFT : 0) | (f & NSEventModifierFlagControl ? HK_CTRL : 0) |
+           (f & NSEventModifierFlagOption ? HK_ALT : 0) | (f & NSEventModifierFlagCommand ? HK_SUPER : 0);
+}
+
+static int ev_key(NSEvent *e, NSString *s) // HK_ key or 0, mac backspace is delete
+{
+    if (!s.length) return 0;
+    unichar c = [s characterAtIndex:0];
+    if (c == 127) return 8;
+    if (c >= NSF1FunctionKey && c <= NSF12FunctionKey) return HK_F1 + (c - NSF1FunctionKey);
+    return c < 128 ? c : 0;
+}
+
+static int hot_index(NSEvent *e)
+{
+    int k = ev_key(e, [e charactersIgnoringModifiers]); // ignores everything but shift, hk_norm takes that off again
+    int c = k >= HK_F1 ? k | ev_mods(e) : hk_norm(k, ev_mods(e));
+    for (int i = 0; c && i < ngrabbed; i++)
+        if (grabbed[i] == c) return i;
+    return -1;
+}
 
 static double main_h(void) { return CGDisplayBounds(CGMainDisplayID()).size.height; } // cocoa counts y up from the bottom of this one
 
@@ -46,6 +79,7 @@ static double main_h(void) { return CGDisplayBounds(CGMainDisplayID()).size.heig
 @end
 @implementation OCView
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { return YES; }
+- (BOOL)acceptsFirstResponder { return YES; } // or keyDown just beeps
 - (BOOL)isOpaque { return NO; }
 - (void)drawRect:(NSRect)dirty
 {
@@ -85,11 +119,9 @@ static double main_h(void) { return CGDisplayBounds(CGMainDisplayID()).size.heig
 }
 - (void)keyDown:(NSEvent *)e
 {
-    NSString *s = [e characters];
-    if (!s.length || nkeys >= 32) return;
-    unichar c = [s characterAtIndex:0];
-    if (c == 127) c = 8; // mac backspace is delete
-    if (c < 128) keyq[nkeys++] = c;
+    int mods = ev_mods(e);
+    int k = ev_key(e, mods & (HK_ALT | HK_CTRL | HK_SUPER) ? [e charactersIgnoringModifiers] : [e characters]); // option+h would type a symbol
+    if (k && nkeys < 32) keyq[nkeys++] = k | mods;
 }
 @end
 
@@ -237,21 +269,34 @@ static int grab(Mon *m)
     cfg.height = m->ph;
     cfg.showsCursor = NO;
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
-    __block CGImageRef shot = NULL;
+    // whoever finishes last frees it, a late shot would leak a whole screen
+    Shot *st = calloc(1, sizeof(Shot));
+    if (!st) return 0;
     if (@available(macOS 14.0, *)) {
         [SCScreenshotManager captureImageWithFilter:filter
                                       configuration:cfg
                                   completionHandler:^(CGImageRef img, NSError *err) {
-                                      if (img) shot = CGImageRetain(img);
-                                      dispatch_semaphore_signal(done);
+                                      st->img = img ? CGImageRetain(img) : NULL;
+                                      if (atomic_exchange(&st->state, 1) == 2) {
+                                          if (st->img) CGImageRelease(st->img);
+                                          free(st);
+                                      } else
+                                          dispatch_semaphore_signal(done);
                                   }];
-    } else
+    } else {
+        free(st);
         return 0;
+    }
     int waited = 0;
     while (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_MSEC))) {
         track_mouse();
-        if ((waited += 5) > 2000) return 0;
+        if ((waited += 5) > 2000) {
+            if (atomic_exchange(&st->state, 2) == 1) break;
+            return 0;
+        }
     }
+    CGImageRef shot = st->img;
+    free(st);
     if (!shot) return 0;
     CGContextRef ctx = CGBitmapContextCreate(m->cap, m->pw, m->ph, 8, m->pw * 4, rgb, kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little);
     if (ctx) {
@@ -302,6 +347,10 @@ static void mac_commit(Overlay *ov, const Rect *h, int nh)
     nhits = nh < 256 ? nh : 256;
     memcpy(hits, h, sizeof(Rect) * nhits);
     @autoreleasepool {
+        static int tries;
+        if (++tries % 60 == 0) // a just plugged in screen can show up in CG before NSScreen knows it
+            for (int i = 0; i < nmons; i++)
+                if (!wins[i]) add_win(i);
         for (int i = 0; i < nmons; i++) {
             int x0, y0, x1, y1;
             if (!wins[i] || !canvas_damage(&mons[i].canvas, &x0, &y0, &x1, &y1)) continue;
@@ -353,8 +402,13 @@ static int mac_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
             *cx = click_x, *cy = click_y;
             return 1;
         }
+        if (nhot) {
+            ov->key = hotq[0];
+            memmove(hotq, hotq + 1, sizeof(int) * (size_t)--nhot);
+            return 4;
+        }
         if (nkeys) {
-            ov->key = keyq[0];
+            ov->key = keyq[0] & 0xFF, ov->mods = keyq[0] & HK_MODS;
             memmove(keyq, keyq + 1, sizeof(int) * (size_t)--nkeys);
             return 2;
         }
@@ -375,6 +429,14 @@ static int mac_pointer(Overlay *ov, double *x, double *y)
     return 1;
 }
 
+static int mac_held(Overlay *ov, double *x, double *y)
+{
+    if (!([NSEvent pressedMouseButtons] & 1)) return 0;
+    NSPoint p = [NSEvent mouseLocation];
+    *x = p.x, *y = main_h() - p.y;
+    return 1;
+}
+
 static void mac_keyboard(Overlay *ov, int on)
 {
     if (on && !kb_on) before_kb = [[NSWorkspace sharedWorkspace] frontmostApplication];
@@ -382,12 +444,36 @@ static void mac_keyboard(Overlay *ov, int on)
     nkeys = 0;
     if (on) {
         [NSApp activateIgnoringOtherApps:YES];
-        if (hot >= 0 && wins[hot]) [wins[hot] makeKeyAndOrderFront:nil];
+        if (hot >= 0 && wins[hot]) {
+            [wins[hot] makeKeyAndOrderFront:nil];
+            [wins[hot] makeFirstResponder:[wins[hot] contentView]];
+        }
     } else if (before_kb) {
         [before_kb activateWithOptions:0];
         before_kb = nil;
     }
 }
 
-static Overlay mac_overlay = {"nswindow", mac_ov_init, mac_canvas, 0, mac_commit, mac_wait, NULL, mac_keyboard, 0, mac_pointer};
+static void mac_hotkeys(Overlay *ov, const int *combos, int n)
+{
+    ngrabbed = n < 32 ? n : 32;
+    memcpy(grabbed, combos, sizeof(int) * (size_t)ngrabbed);
+    nhot = 0;
+    if (global_mon) return;
+    // other apps keys, only shows up with accessibility access. without it this just never fires
+    global_mon = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+                                                        handler:^(NSEvent *e) {
+                                                          int i = hot_index(e);
+                                                          if (i >= 0 && nhot < 16) hotq[nhot++] = i;
+                                                        }];
+    local_mon = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown // our own windows, global skips those
+                                                      handler:^NSEvent *(NSEvent *e) {
+                                                        int i = kb_on ? -1 : hot_index(e); // typing in the search box or rebinding gets the raw keys
+                                                        if (i < 0) return e;
+                                                        if (nhot < 16) hotq[nhot++] = i;
+                                                        return nil;
+                                                      }];
+}
+
+static Overlay mac_overlay = {"nswindow", mac_ov_init, mac_canvas, 0, mac_commit, mac_wait, NULL, mac_keyboard, 0, mac_pointer, mac_held, 0, mac_hotkeys};
 Overlay *overlay_mac(void) { return &mac_overlay; }
