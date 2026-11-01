@@ -653,13 +653,12 @@ static int display_to_sq(int r, int c, int white_bottom)
     return white_bottom ? (7 - r) * 8 + c : r * 8 + (7 - c);
 }
 
-// a white piece on a light square only shows its outline, on a dark one its solid.
-// fill the inside so both look the same, the built in shapes are solid too
+// white pieces on light squares only show their outline, on dark ones theyre solid
 void vision_fill_holes(float *m)
 {
     uint8_t wall[FEAT_N * FEAT_N] = {0}, out[FEAT_N * FEAT_N] = {0};
     int stack[FEAT_N * FEAT_N], n = 0;
-    for (int y = 0; y < FEAT_N; y++) // outline grown by 2 so small gaps in it dont leak
+    for (int y = 0; y < FEAT_N; y++) // grow it by 2 so little gaps dont leak
         for (int x = 0; x < FEAT_N; x++)
             for (int dy = -2; dy <= 2 && !wall[y * FEAT_N + x]; dy++)
                 for (int dx = -2; dx <= 2; dx++) {
@@ -680,7 +679,6 @@ void vision_fill_holes(float *m)
         for (int k = 0; k < 4; k++)
             if (nb[k] >= 0 && !wall[nb[k]] && !out[nb[k]]) out[nb[k]] = 1, stack[n++] = nb[k];
     }
-    // the grown wall itself borders the outside, so only fill cells 3+ away from anything the flood reached
     for (int y = 0; y < FEAT_N; y++)
         for (int x = 0; x < FEAT_N; x++) {
             int i = y * FEAT_N + x, near = 0;

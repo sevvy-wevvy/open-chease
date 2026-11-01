@@ -47,7 +47,7 @@ typedef struct {
     uint32_t offered[8];
     int noffered;
     uint8_t *flip, *conv, *rot;
-    int transform; // rotated monitor, screencopy hands us the buffer the unrotated way
+    int transform; // screencopy gives us the unrotated buffer
 } WlOut;
 
 static struct wl_display *dpy;
@@ -124,10 +124,9 @@ static void out_geometry(void *d, struct wl_output *w, int32_t x, int32_t y, int
 static void out_mode(void *d, struct wl_output *w, uint32_t flags, int32_t mw, int32_t mh, int32_t refresh) {}
 static void out_done(void *d, struct wl_output *w) {}
 static void out_scale(void *d, struct wl_output *w, int32_t f) {}
-static void out_text(void *d, struct wl_output *w, const char *t) {} // name and description, only sent past v3
+static void out_text(void *d, struct wl_output *w, const char *t) {}
 static const struct wl_output_listener out_listener = {out_geometry, out_mode, out_done, out_scale, out_text, out_text};
 
-// turns the raw buffer into what you actually see on a rotated or flipped monitor
 static void untransform(const uint8_t *src, int sw, int sh, int sstride, int t, uint8_t *dst, int *dw, int *dh)
 {
     int rot = t & 3, w = rot & 1 ? sh : sw, h = rot & 1 ? sw : sh;

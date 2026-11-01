@@ -206,7 +206,7 @@ static LRESULT CALLBACK wnd_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             if (!on_hit(x, y)) { // missed the buttons, hand the click to the game instead
                 set_clicky(w, 0);
                 hot = NULL;
-                int sw = GetSystemMetrics(SM_SWAPBUTTON); // sendinput and the key state are physical buttons, this message is the logical left one
+                int sw = GetSystemMetrics(SM_SWAPBUTTON); // left handed mouse, sendinput is physical buttons
                 INPUT in[2];
                 memset(in, 0, sizeof(in));
                 in[0].type = in[1].type = INPUT_MOUSE;
@@ -214,9 +214,9 @@ static LRESULT CALLBACK wnd_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                 in[1].mi.dwFlags = sw ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_LEFTUP;
                 if (GetAsyncKeyState(sw ? VK_RBUTTON : VK_LBUTTON) & 0x8000) {
                     SendInput(1, in, sizeof(INPUT));
-                    fwd_down = 1; // the real release goes to the game now, unless it already got queued to us
+                    fwd_down = 1;
                 } else {
-                    SendInput(2, in, sizeof(INPUT)); // already let go, a lone down would leave the piece stuck to the mouse
+                    SendInput(2, in, sizeof(INPUT)); // already let go, a lone down sticks the piece to the mouse
                 }
                 return 0;
             }

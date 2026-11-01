@@ -75,7 +75,7 @@ void engine_tt_resize(int mb)
     u64 n = 1;
     while (n * 2 * sizeof(TTEntry) <= (u64)mb * 1024 * 1024) n *= 2; // power of 2 so the index is just key & mask
     TTEntry *t2 = NULL;
-    while (n > 1 && !(t2 = calloc(n, sizeof(TTEntry)))) n /= 2; // not enough ram, take a smaller one
+    while (n > 1 && !(t2 = calloc(n, sizeof(TTEntry)))) n /= 2;
     if (!t2) return;
     free(tt);
     tt = t2;
@@ -211,7 +211,7 @@ void pos_finish_setup(Pos *p)
         if (p->sq[56] == PC(BLACK, ROOK)) c |= 8;
     }
     p->castle &= c; // fens love to claim rights the board cant have
-    if (p->ep >= 0) { // same for en passant, and a turn flip or piece fix can leave an old one behind
+    if (p->ep >= 0) { // turn flips and piece fixes leave stale ones
         int e = p->ep, ok = e < 64 && p->sq[e] == EMPTY;
         if (ok && p->side == WHITE) ok = e >> 3 == 5 && p->sq[e - 8] == PC(BLACK, PAWN);
         else if (ok) ok = e >> 3 == 2 && p->sq[e + 8] == PC(WHITE, PAWN);

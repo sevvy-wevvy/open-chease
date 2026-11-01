@@ -52,7 +52,7 @@ static double main_h(void) { return CGDisplayBounds(CGMainDisplayID()).size.heig
 @end
 @implementation OCView
 - (BOOL)acceptsFirstMouse:(NSEvent *)e { return YES; }
-- (BOOL)acceptsFirstResponder { return YES; } // or keyDown goes to the window and it just beeps
+- (BOOL)acceptsFirstResponder { return YES; } // or keyDown just beeps
 - (BOOL)isOpaque { return NO; }
 - (void)drawRect:(NSRect)dirty
 {
@@ -244,7 +244,7 @@ static int grab(Mon *m)
     cfg.height = m->ph;
     cfg.showsCursor = NO;
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
-    // shared with the callback, whoever finishes last frees it. a late shot after we gave up would leak a whole screen otherwise
+    // whoever finishes last frees it, a late shot would leak a whole screen
     Shot *st = calloc(1, sizeof(Shot));
     if (!st) return 0;
     if (@available(macOS 14.0, *)) {
@@ -266,7 +266,7 @@ static int grab(Mon *m)
     while (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_MSEC))) {
         track_mouse();
         if ((waited += 5) > 2000) {
-            if (atomic_exchange(&st->state, 2) == 1) break; // it landed right as we gave up
+            if (atomic_exchange(&st->state, 2) == 1) break;
             return 0;
         }
     }

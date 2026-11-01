@@ -168,7 +168,7 @@ static const char *arrow_names[] = {"Off", "Straight", "Knight bends", "Curve", 
 static const char *thick_names[] = {"Thin", "Normal", "Thick", "Huge"};
 static const char *mark_names[] = {"Off", "Outline", "Filled", "Corners", "Dot", "Ring", "Big dot",
                                    "Cross", "Triangles", "Brackets", "Dashed", "Double", "Glow", "Underline"};
-static const char *color_names[] = {"Theme", "Gold", "Green", "Blue", "Red", "Pink", "Purple", "White", "Orange", "Cyan", "Rainbow", "Black"}; // black after rainbow so old saved picks keep their color
+static const char *color_names[] = {"Theme", "Gold", "Green", "Blue", "Red", "Pink", "Purple", "White", "Orange", "Cyan", "Rainbow", "Black"}; // black goes last so old saves dont shift
 static const uint32_t color_vals[] = {0, 0xC8FFC400, 0xC82BD957, 0xC83D9BFF, 0xC8FF4D4D, 0xC8FF5FC8, 0xC8A86BFF,
                                       0xC8F5F5F5, 0xC8FF8A1F, 0xC81FE0E0, 0, 0xD8101010};
 static const char *strength_names[] = {"Full", "2400", "2000", "1700", "1400"};
@@ -453,7 +453,7 @@ static void load_cfg(void)
 static void save_cfg(void)
 {
     char tmp[1100];
-    snprintf(tmp, sizeof(tmp), "%s.tmp", cfg_path); // a crash mid write shouldnt wipe every setting
+    snprintf(tmp, sizeof(tmp), "%s.tmp", cfg_path);
     FILE *f = fopen(tmp, "w");
     if (!f) return;
     for (int i = 0; i < NSET; i++)
@@ -492,7 +492,7 @@ static long now_ms(void)
     clock_gettime(CLOCK_MONOTONIC, &t);
     static time_t t0;
     static int have_t0;
-    if (!have_t0) t0 = t.tv_sec - 1000, have_t0 = 1; // long is 32 bit on windows, ms since boot wraps after 24 days
+    if (!have_t0) t0 = t.tv_sec - 1000, have_t0 = 1; // long is 32 bit on windows
     return (long)(t.tv_sec - t0) * 1000 + t.tv_nsec / 1000000;
 }
 
@@ -1712,7 +1712,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             if (k == *st->v) draw_round_rect(c, it, 5, TH->btn);
             if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.thcolor || st->v == &cfg.theme) {
                 uint32_t sw = (st->v == &cfg.theme ? themes[k].panel : pick_color(k, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : st->v == &cfg.hcolor ? 0xD8FF8A1F : 0xC8FF4D4D)) | 0xFF000000;
-                if (st->v != &cfg.theme && k == 11) draw_round_rect(c, (Rect){it.x + 5, it.y + 4, 14, 14}, 7, 0xFFB0B0B0); // black dot on a dark menu needs a rim
+                if (st->v != &cfg.theme && k == 11) draw_round_rect(c, (Rect){it.x + 5, it.y + 4, 14, 14}, 7, 0xFFB0B0B0); // rim, black on the dark menu is invisible
                 draw_round_rect(c, (Rect){it.x + 6, it.y + 5, 12, 12}, 6, sw);
                 draw_text(c, it.x + 24, it.y + 3, st->names[k], 0, TH->item_fg);
             } else {
@@ -1731,7 +1731,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
 static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
 {
     double s = bl.w / 8;
-    if ((debug_on || fix_mode) && !hushed()) { // on small boards these cover enough to make rescan and teach fail
+    if ((debug_on || fix_mode) && !hushed()) {
         for (int sq = 0; sq < 64; sq++) {
             int pc = tracker.pos.sq[sq];
             if (pc == EMPTY) continue;
@@ -2175,7 +2175,7 @@ static char sans[96][8];
 static Pos san_prev;
 static u64 san_key, counted_key;
 static double acc_sum[2];
-static int new_stats; // picking a team or flipping starts the graph and report over even mid game
+static int new_stats;
 
 static double win_pct(int cp) { return 100 / (1 + exp(-0.00368208 * cp)); } // same curve lichess uses
 
@@ -2582,7 +2582,7 @@ static void redraw(void)
     int have_an = state == TRACKING && analyzer_get(&an) && an.key == tracker.pos.key;
     snprintf(engine_name, sizeof(engine_name), "%s", an.engine);
     if (cfg.engine > 0 && cfg.engine < nengines && *an.engine_base && strcmp(an.engine_base, "open-chease") &&
-        strncmp(engine_labels[cfg.engine], an.engine_base, 31)) { // labels only keep 31 chars // swap the file name for what the engine calls itself
+        strncmp(engine_labels[cfg.engine], an.engine_base, 31)) { // swap the file name for what the engine calls itself
         snprintf(engine_labels[cfg.engine], sizeof(engine_labels[0]), "%.31s", an.engine_base);
         remember_name(engine_paths[cfg.engine], an.engine_base);
     }
@@ -2691,7 +2691,7 @@ static void redraw(void)
                 Analysis fake = an;
                 fake.score = o0.score, fake.mate = o0.mate;
                 format_score(&fake, my_turn, osc, sizeof(osc));
-                int hide = my_turn && (cfg.hint || cfg.chaos || now_ms() - pos_since < delay_secs[cfg.delay] * 1000L); // dont give away what the main box is hiding
+                int hide = my_turn && (cfg.hint || cfg.chaos || now_ms() - pos_since < delay_secs[cfg.delay] * 1000L);
                 if (o0.best == an.best)
                     snprintf(tips[ntips], 100, "%s agrees", o0.name);
                 else if (hide)
@@ -3272,7 +3272,7 @@ static void lose_board(void)
 {
     want_rescan = rescan_hush = 0;
     want_teach = teach_hush = teach_tries = 0;
-    lib_open = 0; // it grabs the keyboard, dont leave that on with nothing showing
+    lib_open = 0; // it holds the keyboard
     if (verbose) fprintf(stderr, "board lost\n");
     if (state == TRACKING) { // scrolling or a quick tab switch shouldnt throw the game away
         saved_tracker = tracker;
@@ -3396,7 +3396,7 @@ static void fix_piece(int action, int arg)
         fix_sq = -1;
     }
     pos_finish_setup(&p);
-    tracker.last_move = 0; // a fix isnt a move, dont grade it
+    tracker.last_move = 0;
     if (!p.bb[KING] || !p.bb[6 + KING] || __builtin_popcountll(p.bb[KING]) > 1 || __builtin_popcountll(p.bb[6 + KING]) > 1) {
         set_note("each side needs exactly one king");
         for (int sq = 0; sq < 64; sq++) // dont keep re-applying a fix that broke the kings
@@ -3470,7 +3470,7 @@ static void scan_engines(const char *extra)
 {
     static char keep[1024];
     char using[1024] = "";
-    if (cfg.engine > 0 && cfg.engine < nengines) snprintf(using, sizeof(using), "%s", engine_paths[cfg.engine]); // the order can shift, keep pointing at the same file
+    if (cfg.engine > 0 && cfg.engine < nengines) snprintf(using, sizeof(using), "%s", engine_paths[cfg.engine]);
     if (extra) snprintf(keep, sizeof(keep), "%s", extra);
     extra = keep;
     nengines = 0;
@@ -3562,7 +3562,7 @@ static void lib_slug(const char *name, char *out, size_t n) // names come off th
 
 static void lib_out_path(int i, char *out, size_t n)
 {
-    char slug[48]; // same size the download job uses, or long names install somewhere we dont look
+    char slug[48]; // has to match DlJob.slug
     lib_slug(lib[i].name, slug, sizeof(slug));
     engine_path_for(data_dir, slug, out, n);
 }
@@ -3803,7 +3803,7 @@ static void choose_engine(int idx)
     if (state == TRACKING) analyzer_set_position(&tracker.pos); // might be paused
 }
 
-// engines like lc0 take a while to load, so we check back every tick instead of freezing the clicks
+// lc0 can take ages to load its net, dont freeze clicks waiting
 static void check_switch(void)
 {
     if (!switch_ticket) return;
@@ -4265,7 +4265,7 @@ int main(int argc, char **argv)
     load_library();
     if (!engine_cli && have_saved_engine && (!*saved_engine || is_exec(saved_engine)))
         engine = *saved_engine ? saved_engine : NULL;
-    scan_engines(engine); // after picking it, a saved engine outside the usual folders still has to get a row
+    scan_engines(engine);
     if (!replay_dir) fetch_library(); // tests stay offline
     const char *want = getenv("OPEN_CHEASE_GET"); // test hook: download one engine from the library, start it, exit
     if (want) {
@@ -4451,7 +4451,7 @@ int main(int argc, char **argv)
     redraw();
     analyzer_stop();
     second_quit();
-    job_kill(dl_pid); // a download finishing after we quit would install stuff behind your back
+    job_kill(dl_pid);
     job_kill(lib_pid);
     usleep(100000);
     fflush(stdout);

@@ -32,7 +32,7 @@ int proc_start(const char *path, int quiet, proc_t *p, int *to_fd, int *from_fd)
     }
     if (pid == 0) {
         setpgid(0, 0);
-        signal(SIGPIPE, SIG_DFL); // we ignore it, engines shouldnt
+        signal(SIGPIPE, SIG_DFL);
         dup2(to[0], 0);
         dup2(from[1], 1);
         if (quiet) {
@@ -121,7 +121,7 @@ int data_dir_ok(const char *dir)
 {
     char up[1100];
     snprintf(up, sizeof(up), "%s", dir);
-    for (char *p = up + 1; *p; p++) // parents first, ~/.local/share isnt there on every system
+    for (char *p = up + 1; *p; p++)
         if (*p == '/') *p = 0, mkdir(up, 0755), *p = '/';
     mkdir(dir, 0700);
     struct stat st;
@@ -198,16 +198,16 @@ static pid_t sh_job(const char *script, const char *const *env)
 {
     pid_t pid = fork();
     if (pid == 0) {
-        setpgid(0, 0); // own group so job_kill gets curl too, not just sh
+        setpgid(0, 0); // so job_kill gets curl too
         signal(SIGPIPE, SIG_DFL);
         for (int fd = 3; fd < 1024; fd++) close(fd); // dont hand the wayland socket and engine pipes to curl
         for (; *env; env += 2) setenv(env[0], env[1], 1);
         char full[8192];
-        snprintf(full, sizeof(full), "trap 'exit 1' INT TERM HUP; %s", script); // so the EXIT trap still cleans up when we get killed
+        snprintf(full, sizeof(full), "trap 'exit 1' INT TERM HUP; %s", script);
         execl("/bin/sh", "sh", "-c", full, (char *)NULL);
         _exit(127);
     }
-    if (pid > 0) setpgid(pid, pid); // both sides, whoever runs first
+    if (pid > 0) setpgid(pid, pid);
     return pid < 0 ? 0 : pid;
 }
 
@@ -252,7 +252,7 @@ void job_kill(intptr_t h)
 {
     if (h <= 0) return;
     kill(-(pid_t)h, SIGTERM);
-    for (int i = 0; i < 20; i++) { // a moment for the trap to clean up its temp folder
+    for (int i = 0; i < 20; i++) { // let the trap clean up first
         if (waitpid((pid_t)h, NULL, WNOHANG) == (pid_t)h) return;
         usleep(25000);
     }
@@ -265,7 +265,7 @@ void engine_path_for(const char *data, const char *slug, char *out, size_t n) { 
 void engine_remove(const char *data, const char *path)
 {
     size_t dl = strlen(data);
-    if (!dl || strncmp(path, data, dl) || path[dl] != '/') return; // not ours, or a folder that just starts with the same name
+    if (!dl || strncmp(path, data, dl) || path[dl] != '/') return;
     unlink(path);
     char dir[1300];
     snprintf(dir, sizeof(dir), "%s.files", path);

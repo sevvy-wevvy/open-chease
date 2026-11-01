@@ -89,7 +89,7 @@ static void handle_go(const char *line)
     limits.cb = print_info;
     atomic_store(&stop_flag, 0);
     limits.max_depth = arg_int(line, " depth ", 0);
-    if (limits.max_depth > 100) limits.max_depth = 100; // tt keeps depth in a signed byte
+    if (limits.max_depth > 100) limits.max_depth = 100; // tt depth is an int8
     int movetime = arg_int(line, " movetime ", 0);
     int wtime = arg_int(line, " wtime ", -1), btime = arg_int(line, " btime ", -1);
     int winc = arg_int(line, " winc ", 0), binc = arg_int(line, " binc ", 0);

@@ -5,13 +5,13 @@
 #include "app.h"
 #include "templates_data.h"
 
-#define TPL_MAGIC 0x4f435433 // OCT3, pieces learned before the outline fill dont match anymore
+#define TPL_MAGIC 0x4f435433 // OCT3, old ones were learned before fill_holes
 
 static void load_builtin(Templates *t, int set, int k)
 {
     static float filled[BUILTIN_SETS][BUILTIN_SCALES][2][6][FEAT_N * FEAT_N];
     static uint8_t done[BUILTIN_SETS][BUILTIN_SCALES];
-    if (!done[set][k]) { // reads get their outlines filled, so the shapes we compare against need it too
+    if (!done[set][k]) {
         for (int c = 0; c < 2; c++)
             for (int p = 0; p < 6; p++) {
                 float *m = filled[set][k][c][p];
@@ -39,10 +39,10 @@ int templates_load(Templates *t, const char *path)
     int ok = fread(&magic, 4, 1, f) == 1 && magic == TPL_MAGIC && fread(tmp.t, sizeof(tmp.t), 1, f) == 1 &&
              fread(&tmp.color_thr, sizeof(float), 1, f) == 1 && fgetc(f) == EOF;
     fclose(f);
-    if (ok) ok = tmp.color_thr >= 0 && tmp.color_thr <= 255; // a broken file would read everything as one color
+    if (ok) ok = tmp.color_thr >= 0 && tmp.color_thr <= 255;
     for (int i = 0; ok && i < 2 * 6 * FEAT_N * FEAT_N; i++) {
         float v = (&tmp.t[0][0][0])[i];
-        ok = v == -1 || (v >= 0 && v <= 1); // catches nan too
+        ok = v == -1 || (v >= 0 && v <= 1); // nan fails this too
     }
     if (!ok) return 0;
     memcpy(t->t, tmp.t, sizeof(tmp.t));
@@ -79,7 +79,7 @@ void templates_learn(Templates *t, const BoardRead *r, const Pos *p)
         if (pc == EMPTY) continue;
         int c = piece_color(pc), ty = piece_type(pc);
         for (int i = 0; i < FEAT_N * FEAT_N; i++)
-            if (r->mask[sq][i] != 0.5f) acc[c][ty][i] += r->mask[sq][i], seen[c][ty][i]++; // covered bits arent part of the piece
+            if (r->mask[sq][i] != 0.5f) acc[c][ty][i] += r->mask[sq][i], seen[c][ty][i]++;
         cnt[c][ty]++;
     }
     float max_black = 0, min_white = 255;
@@ -94,7 +94,7 @@ void templates_learn(Templates *t, const BoardRead *r, const Pos *p)
         for (int ty = 0; ty < 6; ty++)
             if (cnt[c][ty])
                 for (int i = 0; i < FEAT_N * FEAT_N; i++)
-                    t->t[c][ty][i] = seen[c][ty][i] ? acc[c][ty][i] / seen[c][ty][i] : -1; // -1 = never saw this bit
+                    t->t[c][ty][i] = seen[c][ty][i] ? acc[c][ty][i] / seen[c][ty][i] : -1; // -1 = never seen
     t->have = 1;
     t->learned = 1;
 }
@@ -103,7 +103,7 @@ static float similarity(const float *a, const float *b)
 {
     float mn = 0, mx = 0;
     for (int i = 0; i < FEAT_N * FEAT_N; i++) {
-        if (a[i] == 0.5f || b[i] < 0) continue; // coordinate labels and our overlay, or a bit the template never saw
+        if (a[i] == 0.5f || b[i] < 0) continue; // coordinate labels and our overlay
         float x = a[i], y = b[i];
         mn += x < y ? x : y;
         mx += x > y ? x : y;
@@ -454,7 +454,7 @@ static int apply_matching(Tracker *t, const BoardRead *r, Templates *tpl)
         }
     }
     if (heal_types(t, r, tpl)) return 1;
-    for (int k = 0; k < t->nprev && !extra; k++) { // plain takeback, the board is just an older position again
+    for (int k = 0; k < t->nprev && !extra; k++) { // plain takeback
         uint8_t e2[64];
         int od2, cd2;
         expected_obs(&t->prev[k], e2);
@@ -496,7 +496,7 @@ static void verify_promo(Tracker *t, const BoardRead *r, const Templates *tpl)
             t->promo_ticks[k] = 10;
             continue;
         }
-        if (r->obs[sq] == OBS_UNKNOWN || r->obs[sq] == OBS_EMPTY || r->hidden[sq]) continue; // picker still open, a slow knight pick shouldnt lose to fake queen votes
+        if (r->obs[sq] == OBS_UNKNOWN || r->obs[sq] == OBS_EMPTY || r->hidden[sq]) continue; // picker still open
         t->promo_ticks[k]++;
         int ty = promo_type(tpl, r, sq, 0.02f, &t->pos, -1);
         t->promo_votes[k][ty]++;

@@ -79,7 +79,7 @@ static void *builtin_thread(void *arg)
 {
     for (;;) {
         pthread_mutex_lock(&mu);
-        while ((!have_want || external) && !quit_flag) pthread_cond_wait(&cv, &mu); // have_want belongs to the uci engine while its running
+        while ((!have_want || external) && !quit_flag) pthread_cond_wait(&cv, &mu);
         if (quit_flag) {
             pthread_mutex_unlock(&mu);
             break;
@@ -293,7 +293,7 @@ static int read_until(int fd, const char *token, int ms) // raw reads, a hung en
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (;;) {
         clock_gettime(CLOCK_MONOTONIC, &t1);
-        if ((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 > ms * 3) return 0; // one that never stops talking but never says uciok
+        if ((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 > ms * 3) return 0; // chatty engine that never says uciok
         if (fd_wait(fd, ms) <= 0) return 0;
         if (n > sizeof(buf) - 256) { // keep a tail incase the token got split between reads
             memmove(buf, buf + n - 64, 64);
@@ -438,7 +438,7 @@ int analyzer_start(const char *engine_path)
     return analyzer_switch(engine_path);
 }
 
-// returns a ticket for analyzer_switch_done, 0 if it went back to the built in one
+// 0 = back on the built in one
 int analyzer_switch_async(const char *engine_path)
 {
     pthread_mutex_lock(&mu);
