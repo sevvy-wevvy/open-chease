@@ -153,7 +153,7 @@ static struct {
     int threats, hints, level, second;
     int hcolor, hstyle;
     int tharrow, thcolor, ththick; // threat and danger arrows
-    int fade_move, fade_line; // fade is the box and everything else, in 5% steps like these
+    int fade_move, fade_line; // fade is the box and everything else. all three are opacity, 0 = 5% up to 19 = solid
 // positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
          0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5, 4, 1, 0, 0},
@@ -162,7 +162,7 @@ static struct {
 static const char *theme_names[NTHEMES];
 static const char *spot_names[] = {"Top", "Bottom", "Left", "Right"};
 static const char *size_names[] = {"Small", "Normal", "Big"};
-static const char *fade_names[21]; // 0% to 100%, filled in at startup
+static const char *fade_names[20]; // 5% to 100% visible, filled in at startup
 static const char *onoff[] = {"Off", "On"};
 static const char *grid_names[] = {"Off", "Lines", "Outline", "Corners"};
 static const char *arrow_names[] = {"Off", "Straight", "Knight bends", "Curve", "Swoosh", "Dashed", "Dotted", "Glow", "Double"};
@@ -323,9 +323,9 @@ static Setting sets[] = {
     {"Theme", "theme", &cfg.theme, NTHEMES, theme_names, "Look", "the colors for the whole thing, the Themes tab has more and lets you make your own"},
     {"Box spot", "spot", &cfg.spot, 4, spot_names, NULL, "where the info box sits around the board, move it if its covering something"},
     {"Box size", "size", &cfg.size, 3, size_names, NULL, "how big the info box and its text are"},
-    {"Fade box", "fadebox", &cfg.fade, 21, fade_names, NULL, "makes the info box and the other extras see-through so you can still see the game under them"},
-    {"Fade moves", "fademove", &cfg.fade_move, 21, fade_names, NULL, "makes the move arrows, marks and move names see-through"},
-    {"Fade outlines", "fadeline", &cfg.fade_line, 21, fade_names, NULL, "makes the grid, last move squares, hanging piece marks and the check ring see-through"},
+    {"Box opacity", "opbox", &cfg.fade, 20, fade_names, NULL, "how solid the info box and the other extras are, turn it down to see the game under them"},
+    {"Moves opacity", "opmove", &cfg.fade_move, 20, fade_names, NULL, "how solid the move arrows, marks and move names are"},
+    {"Outline opacity", "opline", &cfg.fade_line, 20, fade_names, NULL, "how solid the grid, last move squares, hanging piece marks and the check ring are"},
     {"Grid", "grid", &cfg.grid, 4, grid_names, NULL, "draws lines on the squares, handy to check it found the board right"},
     {"Grid color", "gcolor", &cfg.gcolor, 12, color_names, NULL, "what color the grid is"},
     {"Status line", "status", &cfg.status, 2, onoff, NULL, "the small line with your team, the engine and what its doing"},
@@ -404,7 +404,7 @@ static char cfg_path[1024];
 static uint32_t fade_by(uint32_t argb, int step)
 {
     uint32_t a = argb >> 24;
-    a = a * (100 - step * 5) / 100;
+    a = a * (step + 1) * 5 / 100;
     return (a << 24) | (argb & 0xFFFFFF);
 }
 static uint32_t faded(uint32_t argb) { return fade_by(argb, cfg.fade); } // the box and everything else
@@ -451,8 +451,13 @@ static void load_cfg(void)
             }
             continue;
         }
-        if (!strcmp(k, "fade")) { // one setting for everything back then, 4 steps
-            if (v < 4) cfg.fade = cfg.fade_move = cfg.fade_line = v * 5;
+        if (!strcmp(k, "fade")) { // one setting for everything back then, 4 steps of see-through
+            if (v < 4) cfg.fade = cfg.fade_move = cfg.fade_line = 19 - v * 5;
+            continue;
+        }
+        if (!strcmp(k, "fadebox") || !strcmp(k, "fademove") || !strcmp(k, "fadeline")) { // short lived, counted see-through instead of opacity
+            int op = 19 - (v < 19 ? v : 19);
+            *(k[4] == 'b' ? &cfg.fade : k[4] == 'm' ? &cfg.fade_move : &cfg.fade_line) = op;
             continue;
         }
         if (!strcmp(k, "thick") || !strcmp(k, "tthick") || !strcmp(k, "threatsize")) { // sizes had 4 steps, now 10
@@ -1660,6 +1665,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         Rect row = {m.x + pad + col * (cw + pad), m.y + top + (j % per) * rh, cw, rh - 3};
         draw_round_rect(c, row, 7, TH->item);
         draw_text(c, row.x + 10, row.y + 4, st->label, 0, TH->item_fg);
+        Rect tr = {0};
         if (st->names == onoff) {
             int on = *st->v;
             Rect sw = {row.x + row.w - 46, row.y + 3.5, 38, 18};
@@ -1667,13 +1673,15 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             draw_round_rect(c, sw, 9, mix(TH->btn, TH->title, v));
             draw_round_rect(c, (Rect){sw.x + 2 + (sw.w - d - 4) * v, sw.y + 2, d, d}, d / 2, mix(0xFFE8E8E8, 0xFF181818, v));
         } else if (is_slider(st->v)) {
-            Rect tr = {row.x + row.w - 94, row.y + row.h / 2 - 3, 84, 6};
+            double vw = 0;
+            for (int k = 0; k < st->n; k++) vw = fmax(vw, text_lw(c, st->names[k], 0));
+            tr = (Rect){row.x + row.w - 22 - vw - 58, row.y + row.h / 2 - 3, 58, 6}; // value on the right, long labels need the room
             double f = st->n > 1 ? (double)*st->v / (st->n - 1) : 0, d = 14;
             draw_round_rect(c, tr, 3, TH->btn);
             draw_round_rect(c, (Rect){tr.x, tr.y, fmax(6, tr.w * f), tr.h}, 3, TH->title);
             draw_round_rect(c, (Rect){tr.x + tr.w * f - d / 2, tr.y + 3 - d / 2, d, d}, d / 2, 0xFFE8E8E8);
             const char *vt = st->names[*st->v];
-            draw_text(c, tr.x - 14 - text_lw(c, vt, 0), row.y + 4, vt, 0, TH->item_fg);
+            draw_text(c, row.x + row.w - 8 - text_lw(c, vt, 0), row.y + 4, vt, 0, TH->item_fg);
         } else {
             int act = is_action(st->v);
             Rect box = {row.x + row.w - (act ? 36 : 126), row.y + 3, act ? 30 : 120, row.h - 6};
@@ -1695,7 +1703,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             if (dd_open == i) ddbox = box; // list gets drawn after the panel so it can hang off the bottom
         }
         if (hit) add_hit_arg(row, ACT_SET, i);
-        if (hit && is_slider(st->v)) add_hit_arg((Rect){row.x + row.w - 102, row.y, 100, row.h}, ACT_SLIDE, i); // 8px of slack each side of the bar
+        if (hit && is_slider(st->v)) add_hit_arg((Rect){tr.x - 8, row.y, tr.w + 16, row.h}, ACT_SLIDE, i); // 8px of slack each side of the bar
         tip_spot(row, st->tip);
     }
     if (nhelp) {
@@ -4333,8 +4341,9 @@ int main(int argc, char **argv)
     }
     snprintf(tpl_path, sizeof(tpl_path), "%s/pieces.bin", data);
     snprintf(cfg_path, sizeof(cfg_path), "%s/settings", data);
-    static char pct[21][8];
-    for (int i = 0; i < 21; i++) snprintf(pct[i], sizeof(pct[i]), "%d%%", i * 5), fade_names[i] = pct[i];
+    static char pct[20][8];
+    for (int i = 0; i < 20; i++) snprintf(pct[i], sizeof(pct[i]), "%d%%", (i + 1) * 5), fade_names[i] = pct[i];
+    cfg.fade = cfg.fade_move = cfg.fade_line = 19;
     cfg.thick = cfg.tthick = cfg.ththick = 3;
     cfg_default = cfg; // before load_cfg, reset needs the shipped values
     load_cfg();
