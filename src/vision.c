@@ -399,6 +399,8 @@ static int same_colors(const Chain *a, const Chain *b, int tol)
     return (cdiff(a->a, b->a) < tol && cdiff(a->b, b->b) < tol) || (cdiff(a->a, b->b) < tol && cdiff(a->b, b->a) < tol);
 }
 
+int vision_strict = 2, vision_lite;
+
 static int find_board(const Frame *f, Board *out, const Rect *ignore, int nignore, int (*masked)(void *, int, int),
                       void *mctx, int soft)
 {
@@ -483,7 +485,7 @@ static int find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
         if (best_score >= 60) break; // good enough, dont bother with the other chains
     }
     free(chains);
-    if (best_score >= 52 && best.s * 8 >= 150) { // 52/64, room for highlights + check glow
+    if (best_score >= 44 + vision_strict * 4 && best.s * 8 >= 150) { // 52/64 by default, room for highlights + check glow
         best.found = 1;
         best.score = (int)best_score;
         *out = best;
@@ -522,7 +524,7 @@ int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
         return 1;
     }
     int sc = out->score;
-    if (misses++ % 3 == 0 && find_board(f, out, ignore, nignore, masked, mctx, 1)) { // blurred pass is slow, only every 3rd miss
+    if (!vision_lite && misses++ % 3 == 0 && find_board(f, out, ignore, nignore, masked, mctx, 1)) { // blurred pass is slow, only every 3rd miss
         misses = 0;
         return 1;
     }
@@ -801,6 +803,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
 #undef SAME
 #undef DIFF
                 out->hidden[sq] = (uint8_t)hid;
+                out->foreign[r * 8 + c] = (uint8_t)(hid && !outside); // something of theirs on top, not ours
             }
             uint8_t bg[3];
             memcpy(bg, base, 3);
@@ -949,4 +952,28 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             out->obs[i] = OBS_UNKNOWN;
             out->nhidden++;
         }
+    // biggest patch of covered squares is a popup like "you won", we stop drawing there
+    uint8_t seen[64] = {0};
+    int best = 0;
+    for (int i = 0; i < 64; i++) {
+        if (!out->foreign[i] || seen[i]) continue;
+        int st[64], n = 0, cnt = 0, r0 = 8, r1 = -1, c0 = 8, c1 = -1;
+        st[n++] = i, seen[i] = 1;
+        while (n) {
+            int q = st[--n], r = q / 8, c = q % 8;
+            cnt++;
+            if (r < r0) r0 = r;
+            if (r > r1) r1 = r;
+            if (c < c0) c0 = c;
+            if (c > c1) c1 = c;
+            int nb[4] = {c > 0 ? q - 1 : -1, c < 7 ? q + 1 : -1, r > 0 ? q - 8 : -1, r < 7 ? q + 8 : -1};
+            for (int k = 0; k < 4; k++)
+                if (nb[k] >= 0 && out->foreign[nb[k]] && !seen[nb[k]]) seen[nb[k]] = 1, st[n++] = nb[k];
+        }
+        if (cnt >= 3 && cnt > best) {
+            best = cnt;
+            out->has_popup = 1;
+            out->popup = (Rect){b->x + c0 * s, b->y + r0 * s, (c1 - c0 + 1) * s, (r1 - r0 + 1) * s};
+        }
+    }
 }

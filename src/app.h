@@ -59,6 +59,10 @@ typedef struct {
     uint8_t highlighted[64];
     uint8_t hidden[64]; // popup, promo picker or our own overlay on top
     int nhidden;
+    uint8_t foreign[64]; // hidden by something thats not ours, screen order (row * 8 + col)
+    int has_popup;
+    Rect popup; // frame px, whole squares
+
     float mask[64][FEAT_N * FEAT_N]; // 1 piece, 0 board, 0.5 cant tell
 } BoardRead;
 
@@ -106,6 +110,8 @@ int canvas_damage(const Canvas *c, int *x0, int *y0, int *x1, int *y1);
 void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double dy, double clip_h); // clip_h < 0 = no clip
 // logical coords from here, the canvas scales them
 void draw_rect(Canvas *c, Rect r, uint32_t argb);
+void canvas_erase(Canvas *c, Rect r);
+void draw_image(Canvas *c, Rect r, const uint32_t *img, int w, int h);
 void draw_frame(Canvas *c, Rect r, double width, uint32_t argb);
 void draw_round_rect(Canvas *c, Rect r, double radius, uint32_t argb);
 void draw_line(Canvas *c, double x0, double y0, double x1, double y1, double width, uint32_t argb);
@@ -120,6 +126,7 @@ int canvas_alpha_at(Canvas *c, double lx, double ly);
 int vision_find_board(const Frame *f, Board *b, const Rect *ignore, int nignore,
                       int (*masked)(void *, int, int), void *mctx);
 int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), void *mctx);
+extern int vision_strict, vision_lite; // 0-4 how picky the board finder is, lite skips the slow blurred pass
 void vision_fill_holes(float *m); // fills enclosed piece outlines in a FEAT_N grid
 void vision_read(const Frame *f, const Board *b, int white_bottom, float color_thr, BoardRead *r,
                  int (*masked)(void *, int, int), void *mctx);
@@ -136,6 +143,8 @@ int templates_load(Templates *t, const char *path);
 void templates_save(const Templates *t, const char *path);
 void templates_learn(Templates *t, const BoardRead *r, const Pos *p);
 int classify_piece(const Templates *t, const BoardRead *r, int sq);
+float tracker_confidence(const Templates *t, const BoardRead *r, int sq, int pc);
+void templates_learn_one(Templates *t, const BoardRead *r, int sq, int pc);
 
 typedef struct {
     Pos pos;

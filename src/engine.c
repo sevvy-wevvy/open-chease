@@ -320,6 +320,33 @@ int pos_is_attacked(const Pos *p, int s, int by)
     return 0;
 }
 
+int pos_attackers(const Pos *p, int s, int by)
+{
+    int n = POP(pawn_att[by ^ 1][s] & p->bb[PC(by, PAWN)]) + POP(knight_att[s] & p->bb[PC(by, KNIGHT)]) +
+            POP(king_att[s] & p->bb[PC(by, KING)]);
+    n += POP(bishop_att(s, p->occ[2]) & (p->bb[PC(by, BISHOP)] | p->bb[PC(by, QUEEN)]));
+    n += POP(rook_att(s, p->occ[2]) & (p->bb[PC(by, ROOK)] | p->bb[PC(by, QUEEN)]));
+    return n;
+}
+
+// same idea as the king part of evaluate, 0 is cozy, 10 means its getting mated soon
+int king_danger(const Pos *p, int side)
+{
+    u64 k = p->bb[PC(side, KING)];
+    if (!k) return 0;
+    int s = LSB(k), d = 0;
+    u64 zone = king_att[s] | k, shield = king_att[s] | k;
+    shield = side == WHITE ? shield << 8 : shield >> 8;
+    while (zone) {
+        int q = LSB(zone);
+        zone &= zone - 1;
+        d += 2 * pos_attackers(p, q, side ^ 1) - pos_attackers(p, q, side);
+    }
+    d += 3 - POP(shield & p->bb[PC(side, PAWN)]);
+    if (pos_in_check(p, side)) d += 3;
+    return d < 0 ? 0 : d > 20 ? 10 : d / 2;
+}
+
 int pos_in_check(const Pos *p, int side)
 {
     u64 k = p->bb[PC(side, KING)];

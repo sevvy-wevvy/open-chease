@@ -154,9 +154,12 @@ static struct {
     int hcolor, hstyle;
     int tharrow, thcolor, ththick; // threat and danger arrows
     int fade_move, fade_line; // fade is the box and everything else. all three are opacity, 0 = 5% up to 19 = solid
+    int heatmap, safety, kingdanger, ghost, ghostlook, ghostnum, ghostcolor, arrowanim, style;
+    int confview, eyes, findstrict, lockboard, lowpower, dragwait, popups;
 // positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
-         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5, 4, 1, 0, 0},
+         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5, 4, 1, 0, 0,
+         0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1},
   cfg_default; // copied before load_cfg, the reset button goes back to this
 
 static const char *theme_names[NTHEMES];
@@ -181,6 +184,14 @@ static const char *delay_names[] = {"Right away", "After 3 sec", "After 10 sec"}
 static const int delay_secs[] = {0, 3, 10};
 static const char *mode_names[] = {"Cheats", "Helper", "Both"};
 static const char *hang_names[] = {"Off", "Mine", "Theirs", "Both"};
+static const char *safety_names[] = {"Off", "Mine", "Both"};
+static const char *kd_names[] = {"Off", "Text", "On board", "Both"};
+static const char *ghost_names[] = {"Off", "1 move", "2 moves", "3 moves", "4 moves", "5 moves", "6 moves"};
+static const char *ghostlook_names[] = {"Letters", "Dots", "Arrows"};
+static const char *anim_names[] = {"Off", "Fast", "Slow"};
+static const char *style_names[] = {"Normal", "Aggressive", "Solid"};
+static const char *strict_names[] = {"Loosest", "Loose", "Normal", "Picky", "Pickiest"};
+static const char *power_names[] = {"Off", "Saver", "Max"};
 static const char *hstyle_names[] = {"Outline", "Corners", "Brackets", "Dashed", "Underline"};
 static const int hstyle_mark[] = {1, 3, 9, 10, 13}; // only ones that stay off the piece, a filled square hides it from the vision
 
@@ -301,13 +312,14 @@ static char engine_paths[MAX_ENGINES][1024], engine_labels[MAX_ENGINES][32];
 static int nengines;
 static char saved_engine[1024], saved_second[1024]; // by path, the list order moves around when you add one
 static int have_saved_engine;
-static int btn_teach, btn_forget, btn_rescan; // buttons, not settings, never saved
+static int btn_teach, btn_forget, btn_rescan, btn_teachone; // buttons, not settings, never saved
 
-static int is_action(const int *v) { return v == &btn_teach || v == &btn_forget || v == &btn_rescan; }
+static int is_action(const int *v) { return v == &btn_teach || v == &btn_forget || v == &btn_rescan || v == &btn_teachone; }
 static int is_slider(const int *v) // a bar you click along instead of a dropdown
 {
     return v == &cfg.fade || v == &cfg.fade_move || v == &cfg.fade_line || v == &cfg.size || v == &cfg.thick || v == &cfg.tthick ||
-           v == &cfg.ththick || v == &cfg.think || v == &cfg.rate || v == &cfg.threads || v == &cfg.hash || v == &cfg.strength;
+           v == &cfg.ththick || v == &cfg.think || v == &cfg.rate || v == &cfg.threads || v == &cfg.hash || v == &cfg.strength ||
+           v == &cfg.findstrict || v == &cfg.lowpower;
 }
 static int is_button(const int *v) { return v == &cfg.library || v == &cfg.engine || v == &cfg.second || is_action(v); }
 
@@ -334,6 +346,7 @@ static Setting sets[] = {
     {"Eval bar", "evalbar", &cfg.evalbar, 3, evalbar_names, NULL, "a black and white bar next to the board like on chess sites, shows whos ahead"},
     {"Mode", "mode", &cfg.mode, 3, mode_names, "Fun", "cheats shows moves, helper only gives tips without moves, both does both"},
     {"Move picker", "picker", &cfg.chaos, 12, chaos_names, NULL, "which move it shows you. best is best, the rest are for messing around"},
+    {"Play style", "style", &cfg.style, 3, style_names, NULL, "when a few moves are about as good, aggressive picks the attacking one and solid picks the safe one"},
     {"Strength", "strength", &cfg.strength, 5, strength_names, NULL, "caps how strong the engine plays, lower ones look more human"},
     {"Trash talk", "trash", &cfg.trash, 2, onoff, NULL, "adds a little roast to the move line, just for fun"},
     {"Rate my moves", "rateme", &cfg.rateme, 2, onoff, NULL, "grades every move after you play it, from ! to ??"},
@@ -347,6 +360,7 @@ static Setting sets[] = {
     {"Color", "mcolor", &cfg.mcolor, 12, color_names, NULL, "color of your arrow and marks, theme uses the themes own color"},
     {"Show", "hint", &cfg.hint, 3, hint_names, NULL, "show the whole move, just which piece to move, or just where something goes"},
     {"Show it", "delay", &cfg.delay, 3, delay_names, NULL, "waits a bit before showing the move so you think first"},
+    {"Arrow animation", "arrowanim", &cfg.arrowanim, 3, anim_names, NULL, "arrows grow out from the piece instead of just popping in"},
     {"Engine", "engine", &cfg.engine, 1, engine_names, "Engine", "which chess engine does the thinking, opens the engine list"},
     {"Get engines", "library", &cfg.library, 1, lib_names, NULL, "download more engines, some are stronger and some are just weird"},
     {"Think time", "think", &cfg.think, 5, think_names, NULL, "how long it thinks each move. longer is stronger but slower"},
@@ -381,9 +395,24 @@ static Setting sets[] = {
     {"Threat color", "threatcolor", &cfg.thcolor, 12, color_names, NULL, "color of the threat and danger arrows"},
     {"Threat size", "threatsz", &cfg.ththick, 10, thick_names, NULL, "how thick the threat and danger arrows are"},
     {"Hint button", "hints", &cfg.hints, 2, onoff, NULL, "adds a hint button, each click shows a bit more of the best move"},
+    {"Control heatmap", "heatmap", &cfg.heatmap, 2, onoff, NULL, "tints squares by who controls them more, green is yours and red is theirs"},
+    {"Piece safety", "safety", &cfg.safety, 3, safety_names, NULL, "little numbers on pieces, attackers minus defenders. red means it can get taken"},
+    {"King danger", "kingdanger", &cfg.kingdanger, 4, kd_names, NULL, "how unsafe each king is, 0 is cozy and 10 is about to get mated"},
+    {"Ghost moves", "ghost", &cfg.ghost, 7, ghost_names, NULL, "shows the next few moves the engine expects, as see-through pieces on the board"},
+    {"Ghost look", "ghostlook", &cfg.ghostlook, 3, ghostlook_names, NULL, "letters puts the piece on its square, dots just marks where it goes, arrows draws thin arrows"},
+    {"Ghost numbers", "ghostnum", &cfg.ghostnum, 2, onoff, NULL, "numbers each ghost move so you can see the order"},
+    {"Ghost color", "ghostcolor", &cfg.ghostcolor, 12, color_names, NULL, "theme uses white and black for each side"},
     {"What a ___ plays", "level", &cfg.level, 5, level_names, NULL, "shows what a player at that rating would probably play here"},
     {"Show what it sees", "debug", &cfg.debug, 2, onoff, "Vision", "tags every square with what it thinks is there, good for checking it read right"},
     {"Square names", "sqnames", &cfg.sqnames, 2, onoff, NULL, "writes a1, b2 and so on on every square"},
+    {"Confidence view", "confview", &cfg.confview, 2, onoff, NULL, "colors each piece by how sure it is, green is sure, yellow is unsure and red is guessing"},
+    {"Show its eyes", "eyes", &cfg.eyes, 2, onoff, NULL, "a small panel next to the board that shows the board the way it reads it"},
+    {"Board finder", "findstrict", &cfg.findstrict, 5, strict_names, NULL, "how picky it is about what counts as a board. loose finds weird themes, picky ignores pictures that look like boards"},
+    {"Lock board", "lockboard", &cfg.lockboard, 2, onoff, NULL, "sticks to this board so other boards and popups cant steal it"},
+    {"Power saver", "lowpower", &cfg.lowpower, 3, power_names, NULL, "looks at the screen less often to save cpu, max is for slow pcs"},
+    {"Wait while dragging", "dragwait", &cfg.dragwait, 2, onoff, NULL, "doesnt update while you drag a piece, so it doesnt flash wrong moves"},
+    {"Hide under popups", "popups", &cfg.popups, 2, onoff, NULL, "stops drawing over popups that cover the board, like the game over box"},
+    {"Teach one piece", "teachone", &btn_teachone, 1, NULL, NULL, "click a square it got wrong, pick what it really is, and it learns just that piece"},
     {"Rescan board", "rescan", &btn_rescan, 1, NULL, NULL, "reads the whole board again from scratch if it got lost"},
     {"Teach these pieces", "teach", &btn_teach, 1, NULL, NULL, "learns your piece set from the board right now. fix wrong pieces first"},
     {"Forget learned pieces", "forget", &btn_forget, 1, NULL, NULL, "throws away the pieces it learned and goes back to the built in ones"},
@@ -802,6 +831,32 @@ static void mark_square(Canvas *c, Rect r, int style, uint32_t col)
     }
 }
 
+static int arrow_busy; // an arrow is still growing
+
+// how far along a new arrow is, 0 to 1. it grows when that move first shows up in this position
+static double arrow_grow(Move m)
+{
+    static struct {
+        Move m;
+        long t;
+    } seen[16];
+    static int nseen;
+    static u64 key;
+    if (!cfg.arrowanim) return 1;
+    long n = now_ms();
+    if (tracker.pos.key != key) key = tracker.pos.key, nseen = 0;
+    int i = 0;
+    while (i < nseen && seen[i].m != m) i++;
+    if (i == nseen) {
+        if (nseen == 16) return 1;
+        seen[nseen].m = m, seen[nseen++].t = n;
+    }
+    double f = (n - seen[i].t) / (cfg.arrowanim == 1 ? 180.0 : 450.0);
+    if (f >= 1) return 1;
+    arrow_busy = 1;
+    return f * f * (3 - 2 * f);
+}
+
 static void draw_move(Canvas *c, Rect bl, Move m, int white_bottom, uint32_t col, int arrow, double tk, int from_style,
                       int to_style, const char *label)
 {
@@ -829,6 +884,23 @@ static void draw_move(Canvas *c, Rect bl, Move m, int white_bottom, uint32_t col
             }
         }
         P[np][0] = bx, P[np++][1] = by;
+        double grow = arrow_grow(m);
+        if (grow < 1) { // cut the path off partway, the head rides the tip
+            double tot = 0, want;
+            for (int k = 1; k < np; k++) tot += len2(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]);
+            want = fmax(tot * grow, s * 0.5);
+            for (int k = 1; k < np; k++) {
+                double sl = len2(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]);
+                if (want <= sl) {
+                    double t = sl > 0 ? want / sl : 0;
+                    P[k][0] = P[k - 1][0] + (P[k][0] - P[k - 1][0]) * t, P[k][1] = P[k - 1][1] + (P[k][1] - P[k - 1][1]) * t;
+                    np = k + 1;
+                    break;
+                }
+                want -= sl;
+            }
+            bx = P[np - 1][0], by = P[np - 1][1];
+        }
         double head = s * 0.42 * (0.7 + 0.3 * tk), hw = s * 0.3 * (0.7 + 0.3 * tk), lw = s * 0.16 * tk;
         double cum[48] = {0};
         for (int k = 1; k < np; k++) cum[k] = cum[k - 1] + len2(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]);
@@ -946,6 +1018,9 @@ static void draw_evalbar(Canvas *c, Rect bl, const Analysis *a, int white_bottom
 
 static const char *piece_letters = "PNBRQK";
 
+static BoardRead last_rd; // newest read, for the confidence view, its eyes and teaching one piece
+static int have_last, teach_one;
+static float conf[64];
 static int ui_over_board, learned_here, want_rescan, rescan_hush, want_teach, teach_hush, teach_tries;
 static int lib_open, lib_tab, lib_filter, lib_scroll, lib_del = -1;
 static char lib_query[24];
@@ -1058,7 +1133,7 @@ static int animating(void)
     long n = now_ms();
     // a bit longer than each ease() so the last frame lands at 1
     return n - menu_t < 200 || n - menu_shut < 140 || n - set_t < 220 || n - set_shut < 140 || n - lib_t < 240 ||
-           n - conf_t < 200 || n - tab_t < 200 || n - dd_t < 170 || n - tog_t < 170 || n - pick_t < 240 || bar_moving;
+           n - conf_t < 200 || n - tab_t < 200 || n - dd_t < 170 || n - tog_t < 170 || n - pick_t < 240 || bar_moving || arrow_busy;
 }
 
 static void track_anims(void)
@@ -1675,7 +1750,8 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         } else if (is_slider(st->v)) {
             double vw = 0;
             for (int k = 0; k < st->n; k++) vw = fmax(vw, text_lw(c, st->names[k], 0));
-            tr = (Rect){row.x + row.w - 22 - vw - 58, row.y + row.h / 2 - 3, 58, 6}; // value on the right, long labels need the room
+            double end = row.x + row.w - 22 - vw, x0 = fmax(row.x + 24 + text_lw(c, st->label, 0), end - 58); // value on the right, bar fits between
+            tr = (Rect){x0, row.y + row.h / 2 - 3, fmax(30, end - x0), 6};
             double f = st->n > 1 ? (double)*st->v / (st->n - 1) : 0, d = 14;
             draw_round_rect(c, tr, 3, TH->btn);
             draw_round_rect(c, (Rect){tr.x, tr.y, fmax(6, tr.w * f), tr.h}, 3, TH->title);
@@ -1884,12 +1960,49 @@ static int quick(Pos *p, int depth, int alpha, int beta) // own stack, doesnt to
     return alpha;
 }
 
+static int king_dist(int a, int b)
+{
+    int f = abs((a & 7) - (b & 7)), r = abs((a >> 3) - (b >> 3));
+    return f > r ? f : r;
+}
+
+// play style: among the engine lines that are about as good, take the most attacking or the safest one
+static Move style_pick(const Analysis *an)
+{
+    if (!an->best) return 0;
+    Move cand[3] = {an->best, 0, 0};
+    int nc = 1;
+    for (int k = 0; k < 2; k++)
+        if (an->alt[k] && !an->mate && !an->alt_mate[k] && an->score - an->alt_score[k] <= 35) cand[nc++] = an->alt[k];
+    int me = tracker.pos.side, best = -999, bi = 0;
+    u64 ek = tracker.pos.bb[(me ^ 1) * 6 + KING];
+    int ksq = ek ? __builtin_ctzll(ek) : 0, kd0 = king_danger(&tracker.pos, me);
+    for (int i = 0; i < nc; i++) {
+        Pos t = tracker.pos;
+        Move m = cand[i];
+        int to = M_TO(m), cap = t.sq[to] != EMPTY || M_FLAG(m) == FL_EP, pawn = t.sq[M_FROM(m)] % 6 == PAWN;
+        int closer = king_dist(M_FROM(m), ksq) - king_dist(to, ksq);
+        Undo u;
+        if (!pos_make(&t, m, &u)) continue;
+        int v;
+        if (cfg.style == 1) {
+            v = 3 * pos_in_check(&t, me ^ 1) + 2 * cap + closer + (pawn && (me == WHITE ? to >> 3 >= 4 : to >> 3 <= 3));
+        } else {
+            int safe = pos_attackers(&t, to, me) >= pos_attackers(&t, to, me ^ 1);
+            v = 3 * (M_FLAG(m) == FL_CASTLE) + (safe ? 2 : -2) + (kd0 - king_danger(&t, me)) - cap;
+        }
+        if (v > best) best = v, bi = i; // ties keep the engines order
+    }
+    return cand[bi];
+}
+
 static Move fun_pick(const Analysis *an)
 {
     static u64 ck;
     static int cdeep;
     static int cmode = -1;
     static Move cm;
+    if (!cfg.chaos && cfg.style) return style_pick(an);
     if (!cfg.chaos || !an->best) return an->best;
     int deep = an->depth >= 12;
     if (ck == tracker.pos.key && cmode == cfg.chaos && (cdeep || !deep)) return cm; // same spot same pick, or the arrow jumps around every redraw
@@ -2597,10 +2710,149 @@ static void rate_moves(const Analysis *an, int have_an, int my_turn)
     if (verbose) fprintf(stderr, "%s move rated %s (%+d)\n", rate_mine ? "your" : "their", g[k], d);
 }
 
+static Rect sq_rect(Rect bl, int sq, int bottom)
+{
+    int r, col;
+    double s = bl.w / 8;
+    sq_display(sq, bottom, &r, &col);
+    return (Rect){bl.x + col * s, bl.y + r * s, s, s};
+}
+
+// a band round the inside edge, the middle has to stay clear or the vision cant see the piece
+static void edge_tint(Canvas *c, Rect q, uint32_t col)
+{
+    double t = fmax(2, q.w * 0.08);
+    draw_rect(c, (Rect){q.x, q.y, q.w, t}, col);
+    draw_rect(c, (Rect){q.x, q.y + q.h - t, q.w, t}, col);
+    draw_rect(c, (Rect){q.x, q.y + t, t, q.h - 2 * t}, col);
+    draw_rect(c, (Rect){q.x + q.w - t, q.y + t, t, q.h - 2 * t}, col);
+}
+
+static void draw_heatmap(Canvas *c, Rect bl, int bottom)
+{
+    if (hushed()) return;
+    int me = tracker.user_color;
+    for (int sq = 0; sq < 64; sq++) {
+        int d = pos_attackers(&tracker.pos, sq, me) - pos_attackers(&tracker.pos, sq, me ^ 1);
+        if (!d) continue;
+        int a = (d > 0 ? d : -d) > 3 ? 3 : (d > 0 ? d : -d);
+        edge_tint(c, sq_rect(bl, sq, bottom), faded_line((uint32_t)(0x40 + 0x38 * a) << 24 | (d > 0 ? 0x2BD957 : 0xFF4D4D)));
+    }
+}
+
+static void draw_safety(Canvas *c, Rect bl, int bottom)
+{
+    if (hushed()) return;
+    for (int sq = 0; sq < 64; sq++) {
+        int pc = tracker.pos.sq[sq];
+        if (pc == EMPTY || pc % 6 == KING || (cfg.safety == 1 && pc / 6 != tracker.user_color)) continue;
+        int side = pc / 6, att = pos_attackers(&tracker.pos, sq, side ^ 1);
+        if (!att) continue; // only pieces that are being hit, otherwise its numbers everywhere
+        int v = pos_attackers(&tracker.pos, sq, side) - att;
+        char t[8];
+        snprintf(t, sizeof(t), "%+d", v);
+        Rect q = sq_rect(bl, sq, bottom);
+        double w = text_lw(c, t, 0) + 8;
+        Rect b = {q.x + 3, q.y + q.w - 22, w, 19};
+        draw_round_rect(c, b, 6, faded_move(v < 0 ? 0xE8D93636 : v == 0 ? 0xE8C99A1A : 0xE82A9D4A));
+        draw_text(c, b.x + 4, b.y + 1, t, 0, faded_move(0xFFFFFFFF));
+    }
+}
+
+static void draw_king_meters(Canvas *c, Rect bl, int bottom)
+{
+    if (hushed()) return;
+    for (int side = 0; side < 2; side++) {
+        u64 k = tracker.pos.bb[side * 6 + KING];
+        if (!k) continue;
+        int v = king_danger(&tracker.pos, side);
+        Rect q = sq_rect(bl, __builtin_ctzll(k), bottom);
+        Rect bar = {q.x + q.w * 0.1, q.y + q.h - 7, q.w * 0.8, 5};
+        draw_round_rect(c, bar, 2.5, faded_line(0xC0202020));
+        if (v) draw_round_rect(c, (Rect){bar.x, bar.y, bar.w * v / 10, bar.h}, 2.5, faded_line(mix(0xFF2BD957, 0xFFFF3B3B, v / 10.0)));
+    }
+}
+
+static void draw_ghosts(Canvas *c, Rect bl, int bottom, const Analysis *an)
+{
+    if (hushed() || !an->pvlen) return;
+    Pos t = tracker.pos;
+    double s = bl.w / 8;
+    for (int k = 0; k < an->pvlen && k < cfg.ghost; k++) {
+        Move m = an->pv[k], ms[256];
+        int n = pos_gen_legal(&t, ms), ok = 0;
+        for (int i = 0; i < n; i++) ok |= ms[i] == m;
+        if (!ok) break; // pv went stale
+        int pc = t.sq[M_FROM(m)], white = pc / 6 == WHITE;
+        uint32_t a = (uint32_t)(0xE0 - k * 0x16) << 24;
+        uint32_t fill = cfg.ghostcolor ? (pick_color(cfg.ghostcolor, 0) & 0xFFFFFF) | a : white ? (0xF2F2F2 | a) : (0x1E1E1E | a);
+        uint32_t ink = white && !cfg.ghostcolor ? 0xFF111111 : 0xFFF5F5F5;
+        char num[4];
+        snprintf(num, sizeof(num), "%d", k + 1);
+        Rect q = sq_rect(bl, M_TO(m), bottom);
+        double cx = q.x + s / 2, cy = q.y + s / 2;
+        if (cfg.ghostlook == 2) {
+            draw_move(c, bl, m, bottom, fill, 1, 0.45, 0, 0, cfg.ghostnum ? num : NULL);
+        } else if (cfg.ghostlook == 1) {
+            double d = fmax(10, s * 0.2);
+            draw_round_rect(c, (Rect){cx - d / 2, cy - d / 2, d, d}, d / 2, faded_move(fill));
+            if (cfg.ghostnum) draw_text(c, cx + d / 2 + 2, cy - 9, num, 0, faded_move(0xFFFFFFFF));
+        } else {
+            double d = fmax(20, s * 0.34); // up in the corner, a ghost in the middle would hide the real piece from the vision
+            Rect g = {q.x + s - d - 2, q.y + 2, d, d};
+            cx = g.x + d / 2, cy = g.y + d / 2;
+            draw_round_rect(c, g, d / 2, faded_move(fill));
+            draw_frame(c, g, 1.5, faded_move((a & 0xFF000000) | 0x808080));
+            char l[2] = {piece_letters[pc % 6], 0};
+            draw_text(c, cx - text_lw(c, l, 0) / 2, cy - 9, l, 0, faded_move((a & 0xFF000000) | (ink & 0xFFFFFF)));
+            if (cfg.ghostnum) draw_text(c, g.x - text_lw(c, num, 0) - 1, g.y - 2, num, 0, faded_move(0xFFFFE066));
+        }
+        Undo u;
+        pos_make(&t, m, &u);
+    }
+}
+
+static void draw_confidence(Canvas *c, Rect bl, int bottom)
+{
+    if (hushed() || !have_last) return;
+    for (int sq = 0; sq < 64; sq++) {
+        if (tracker.pos.sq[sq] == EMPTY && conf[sq] > 0) continue;
+        uint32_t col = conf[sq] <= -9 ? 0x808080 : conf[sq] > 0.08f ? 0x2BD957 : conf[sq] > 0 ? 0xFFC400 : 0xFF3B3B;
+        edge_tint(c, sq_rect(bl, sq, bottom), faded_line(0xD0000000 | col));
+    }
+}
+
+// the board the way the vision reads it, pieces as it masks them
+static void draw_eyes(Canvas *c, Rect bl, Rect outr, int bottom)
+{
+    if (!have_last) return;
+    static uint32_t img[8 * FEAT_N * 8 * FEAT_N];
+    const int W = 8 * FEAT_N;
+    for (int sq = 0; sq < 64; sq++) {
+        int r, col;
+        sq_display(sq, bottom, &r, &col);
+        int o = last_rd.obs[sq];
+        const uint8_t *bc = (r + col) & 1 ? board.dark : board.light;
+        uint32_t back = 0xFF000000 | (uint32_t)bc[0] << 16 | (uint32_t)bc[1] << 8 | bc[2];
+        uint32_t ink = o == OBS_WHITE ? 0xFFF4F4F4 : o == OBS_BLACK ? 0xFF262626 : 0xFFFF2BD6;
+        for (int i = 0; i < FEAT_N * FEAT_N; i++) {
+            float v = last_rd.mask[sq][i];
+            img[(r * FEAT_N + i / FEAT_N) * W + col * FEAT_N + i % FEAT_N] = v == 1 && o != OBS_EMPTY ? ink : v == 0.5f ? 0xFF6A2A60 : back;
+        }
+    }
+    double sz = fmin(200, bl.w * 0.45);
+    Rect p = {bl.x - sz - 18, bl.y, sz + 12, sz + 34};
+    if (p.x < outr.x) p.x = bl.x + bl.w + 6;
+    if (p.x + p.w > outr.x + outr.w) p.x = bl.x + 6, p.y = bl.y + 6; // no room either side, sit on the board
+    panel_bg(c, p, 10, faded(TH->panel));
+    draw_text(c, p.x + 8, p.y + 4, "what it sees", 0, TH->title);
+    draw_image(c, (Rect){p.x + 6, p.y + 28, sz, sz}, img, W, W);
+}
+
 static void redraw(void)
 {
     track_anims();
-    bar_moving = 0;
+    bar_moving = arrow_busy = 0;
     tip_wait = tip_shown = 0;
     nhits = 0;
     ui_over_board = 0;
@@ -2657,8 +2909,14 @@ static void redraw(void)
                 if (cfg.mode && cfg.threats) find_threat();
             }
             draw_helper_board(c, bl, bottom);
+            if (cfg.mode && cfg.heatmap) draw_heatmap(c, bl, bottom);
             char extra[96];
             helper_text(extra, sizeof(extra));
+            if (cfg.mode && (cfg.kingdanger & 1)) {
+                size_t l = strlen(extra);
+                snprintf(extra + l, sizeof(extra) - l, "%sking danger %d, theirs %d", l ? ", " : "", king_danger(&tracker.pos, tracker.user_color),
+                         king_danger(&tracker.pos, tracker.user_color ^ 1));
+            }
             int checked = cfg.checkwarn && pos_in_check(&tracker.pos, tracker.pos.side);
             char line1[256], line2[320], san[16] = "", sc[32] = "";
             if (have_an && an.best) {
@@ -2824,6 +3082,19 @@ static void redraw(void)
                 double tw = text_lw(c, badge, 0);
                 draw_text(c, bd.x + (d - tw) / 2, bd.y + (d - 16) / 2, badge, 0, 0xFFFFFFFF);
             }
+            if (cfg.mode && cfg.safety) draw_safety(c, bl, bottom);
+            if (cfg.mode && (cfg.kingdanger & 2)) draw_king_meters(c, bl, bottom);
+            if (cfg.ghost && cfg.mode != 1 && have_an && nlegal &&
+                !(my_turn && (cfg.hint || cfg.chaos || now_ms() - pos_since < delay_secs[cfg.delay] * 1000L))) // same rules as the main arrow
+                draw_ghosts(c, bl, bottom, &an);
+            if (cfg.confview) draw_confidence(c, bl, bottom);
+            if (cfg.popups && have_last && last_rd.has_popup) { // their popup wins, dont paint over it
+                Output *po = &cap->out[board.out];
+                double k = kx(board.out);
+                canvas_erase(c, (Rect){po->logical.x + last_rd.popup.x * k, po->logical.y + last_rd.popup.y * k, last_rd.popup.w * k,
+                                       last_rd.popup.h * k});
+            }
+            if (cfg.eyes) draw_eyes(c, bl, outr, bottom);
             if (cfg.evalbar && have_an && nlegal) draw_evalbar(c, bl, &an, bottom, tracker.pos.side);
             snprintf(line2, sizeof(line2), "You: %s  |  %s d%d  |  %s", wb ? "White" : "Black",
                      engine_name, have_an ? an.depth : 0, now_ms() < note_until ? note : tracker.status);
@@ -3125,12 +3396,61 @@ static int teach_pieces(void)
     return 1;
 }
 
+static void keep_read(const BoardRead *r)
+{
+    last_rd = *r;
+    have_last = 1;
+    if (!cfg.confview) return;
+    for (int sq = 0; sq < 64; sq++) {
+        int pc = tracker.pos.sq[sq], o = r->obs[sq];
+        if (o == OBS_UNKNOWN) conf[sq] = -9; // cant see it
+        else if (pc == EMPTY) conf[sq] = o == OBS_EMPTY ? 1 : -1;
+        else if (o != (pc / 6 == WHITE ? OBS_WHITE : OBS_BLACK)) conf[sq] = -1;
+        else conf[sq] = tracker_confidence(&tpl, r, sq, pc);
+    }
+}
+
+// a piece hanging off its square centre is mid drag or mid animation
+static int dragging(const BoardRead *r)
+{
+    double x, y;
+    Rect bl = board_logical(&board);
+    if (ov->held && ov->held(ov, &x, &y) && x >= bl.x && y >= bl.y && x < bl.x + bl.w && y < bl.y + bl.h) return 1;
+    for (int sq = 0; sq < 64; sq++) {
+        if (r->obs[sq] != OBS_WHITE && r->obs[sq] != OBS_BLACK) continue;
+        double sx = 0, sy = 0;
+        int n = 0;
+        for (int i = 0; i < FEAT_N * FEAT_N; i++)
+            if (r->mask[sq][i] == 1) sx += i % FEAT_N, sy += i / FEAT_N, n++;
+        if (n < 20) continue;
+        double dx = sx / n - (FEAT_N - 1) / 2.0, dy = sy / n - (FEAT_N - 1) / 2.0;
+        if (fabs(dx) > FEAT_N * 0.19 || fabs(dy) > FEAT_N * 0.27) return 1;
+    }
+    return 0;
+}
+
 static void read_and_track(int first)
 {
     Output *o = &cap->out[board.out];
     MaskCtx mc = {o};
     BoardRead *r = malloc(sizeof(BoardRead));
     vision_read(&o->frame, &board, tracker.white_bottom, tpl.color_thr, r, masked_cb, &mc);
+    static long drag_since;
+    if (!first && cfg.dragwait && dragging(r)) {
+        int same = 1;
+        for (int i = 0; i < 64 && same; i++) {
+            int pc = tracker.pos.sq[i], want = pc == EMPTY ? OBS_EMPTY : (pc / 6 == WHITE ? OBS_WHITE : OBS_BLACK);
+            if (r->obs[i] != want && r->obs[i] != OBS_UNKNOWN) same = 0;
+        }
+        if (!drag_since) drag_since = now_ms();
+        if (!same && now_ms() - drag_since < 3000) { // 3s cap, an arrow drawn on the site looks the same and would stall it forever
+            snprintf(tracker.status, sizeof(tracker.status), "piece moving...");
+            keep_read(r);
+            free(r);
+            return;
+        }
+    } else
+        drag_since = 0;
     if (first == 3) {
         if (!r->nhidden) {
             tracker_resync(&tracker, r, &tpl);
@@ -3216,6 +3536,7 @@ static void read_and_track(int first)
         }
         fprintf(stderr, "  fen %s  [%s]\n", fen, tracker.status);
     }
+    keep_read(r);
     free(r);
     if (cfg.theirtoo || tracker.pos.side == tracker.user_color)
         analyzer_set_position(&tracker.pos);
@@ -3325,6 +3646,8 @@ static int seen[MAX_OUTPUTS];
 
 static void tick(void)
 {
+    vision_strict = cfg.findstrict;
+    vision_lite = cfg.lowpower > 0;
     check_download();
     check_switch();
     if (!cap->capture(cap)) {
@@ -3352,6 +3675,9 @@ static void tick(void)
             int hit = vision_find_board(&o->frame, &b, ig, nig, quiet ? NULL : masked_cb, &mc);
             scores[i] = b.score;
             if (!hit) seen[i] = fp == prints[i] ? seen[i] + 1 : 1, prints[i] = fp; // 4 in a row, so the slow blurred pass had a go at it too
+            if (hit && cfg.lockboard && board.s > 0 &&
+                (i != board.out || fabs(b.x - board.x) > board.s / 2 || fabs(b.y - board.y) > board.s / 2 || fabs(b.s - board.s) > board.s * 0.1))
+                hit = 0; // locked, only the board we had counts
             if (hit && !is_ignored(i, &b)) {
                 b.out = i;
                 if (fabs(b.s - board.s) > 1 || b.out != board.out || !colors_close(b.light, board.light)) { // not the board we had, pieces get relearned
@@ -3364,7 +3690,7 @@ static void tick(void)
                     fprintf(stderr, "board found on %s at %.0f,%.0f square %.1fpx score %d, popup goes at %.0f,%.0f\n",
                             o->name, b.x, b.y, b.s, b.score, o->logical.x + b.x * o->logical.w / o->frame.w,
                             o->logical.y + b.y * o->logical.h / o->frame.h);
-                if (have_saved && now_ms() - saved_at < 15000 && colors_close(saved_board.light, b.light) && colors_close(saved_board.dark, b.dark) &&
+                if (have_saved && (now_ms() - saved_at < 15000 || cfg.lockboard) && colors_close(saved_board.light, b.light) && colors_close(saved_board.dark, b.dark) &&
                     fabs(saved_board.s - b.s) < b.s * 0.15) { // same board back soon, pick up where we were. zoom can change the size a bit
                     tracker = saved_tracker;
                     have_saved = 0;
@@ -3963,8 +4289,8 @@ static void pick_setting(const Setting *st, int k)
 {
     *st->v = k;
     if (st->v == &cfg.think) analyzer_set_think_ms(think_secs[cfg.think] * 1000);
-    if (st->v == &cfg.lines || st->v == &cfg.threads || st->v == &cfg.hash || st->v == &cfg.chaos)
-        analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.chaos >= 10 && cfg.lines < 2 ? 3 : cfg.lines + 1);
+    if (st->v == &cfg.lines || st->v == &cfg.threads || st->v == &cfg.hash || st->v == &cfg.chaos || st->v == &cfg.style)
+        analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], (cfg.chaos >= 10 || cfg.style) && cfg.lines < 2 ? 3 : cfg.lines + 1);
     if (st->v == &cfg.engine) choose_engine(cfg.engine);
     if (st->v == &cfg.strength) analyzer_set_elo(strength_elo[cfg.strength]);
     if (st->v == &cfg.second) keep_second();
@@ -4033,7 +4359,7 @@ static void handle_click(double x, double y)
             break;
         case ACT_CLOSE:
         case ACT_STOP:
-            lib_open = menu_open = settings_open = confirm_quit = fix_mode = 0;
+            lib_open = menu_open = settings_open = confirm_quit = fix_mode = teach_one = 0;
             want_teach = teach_hush = teach_tries = 0;
             dd_open = -1;
             ignore_board();
@@ -4071,6 +4397,10 @@ static void handle_click(double x, double y)
                 settings_open = 0, dd_open = -1; // the panel pauses tracking, get it off the board first
                 if (state != TRACKING) set_note("no board yet, open a game first so it can see your pieces");
                 else want_teach = 1, teach_hush = teach_tries = 0, set_note("looking at your pieces, dont move anything...");
+            } else if (st->v == &btn_teachone) {
+                settings_open = 0, dd_open = -1;
+                if (state != TRACKING) set_note("no board yet, open a game first");
+                else fix_mode = teach_one = 1, fix_sq = -1, set_note("click a square it got wrong, then pick what it really is");
             } else if (st->v == &btn_forget) {
                 dd_open = -1;
                 forget_pieces();
@@ -4139,7 +4469,7 @@ static void handle_click(double x, double y)
             dd_open = -1;
             keep_second();
             analyzer_set_think_ms(think_secs[cfg.think] * 1000);
-            analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.chaos >= 10 && cfg.lines < 2 ? 3 : cfg.lines + 1);
+            analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], (cfg.chaos >= 10 || cfg.style) && cfg.lines < 2 ? 3 : cfg.lines + 1);
             analyzer_set_elo(strength_elo[cfg.strength]);
             save_cfg();
             break;
@@ -4236,6 +4566,7 @@ static void handle_click(double x, double y)
             break;
         case ACT_FIX:
             fix_mode = !fix_mode;
+            teach_one = 0;
             fix_sq = -1;
             menu_open = 0;
             if (fix_mode) set_note("click a wrong square, then pick whats really there");
@@ -4249,7 +4580,17 @@ static void handle_click(double x, double y)
                 menu_open = 0;
                 set_note(tracker.pos.side == WHITE ? "ok, black to move" : "ok, white to move");
             }
-            fix_piece(hits[i].action, hits[i].arg);
+            {
+                int sq = fix_sq;
+                fix_piece(hits[i].action, hits[i].arg);
+                if (teach_one && hits[i].action == ACT_PIECE && sq >= 0 && have_last && hits[i].arg != EMPTY &&
+                    last_rd.obs[sq] != OBS_EMPTY && last_rd.obs[sq] != OBS_UNKNOWN) {
+                    templates_learn_one(&tpl, &last_rd, sq, hits[i].arg);
+                    templates_save(&tpl, tpl_path);
+                    profile_save(&board);
+                    set_note("learned that one. click another wrong square or close fix mode");
+                }
+            }
             break;
         case ACT_RESCAN:
             menu_open = 0;
@@ -4385,7 +4726,7 @@ int main(int argc, char **argv)
         _exit(ok ? 0 : 1);
     }
     cfg.engine = engine_index(engine);
-    analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.chaos >= 10 && cfg.lines < 2 ? 3 : cfg.lines + 1);
+    analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], (cfg.chaos >= 10 || cfg.style) && cfg.lines < 2 ? 3 : cfg.lines + 1);
     analyzer_set_elo(strength_elo[cfg.strength]);
     debug_on = cfg.debug;
     srand((unsigned)time(NULL));
@@ -4518,6 +4859,10 @@ int main(int argc, char **argv)
             else if (!scan_since) scan_since = t;
             int gap = 1000 / rate_hz[cfg.rate];
             if (scan_since && t - scan_since > 30000 && gap < 1000) gap = 1000; // nothing for 30s, look once a second
+            if (cfg.lowpower) { // power saver, look less often
+                int lo = state == SCANNING ? (cfg.lowpower == 2 ? 3000 : 1000) : (cfg.lowpower == 2 ? 1000 : 500);
+                if (gap < lo) gap = lo;
+            }
             next = t + gap;
             continue;
         }
