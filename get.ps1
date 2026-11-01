@@ -1,6 +1,6 @@
 # irm https://raw.githubusercontent.com/sevvy-wevvy/open-chease/dev/get.ps1 | iex
 # no param() and no exit in here, iex chokes on the first and exit closes your whole window
-& { # its own scope, iex would leave all of this set in your powershell window
+& { # own scope or iex leaves all this set in your window
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue' # the progress bar makes downloads like 10x slower on powershell 5
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

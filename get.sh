@@ -8,11 +8,11 @@ branch="${OPEN_CHEASE_BRANCH:-dev}"
 if [ "$(uname -s)" = Darwin ]; then
   data="${OPEN_CHEASE_DATA:-$HOME/Library/Application Support/open-chease}" # macs clean out $TMPDIR after a few days
 else
-  data="${OPEN_CHEASE_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/open-chease}" # used to be in /tmp, which a reboot wipes
+  data="${OPEN_CHEASE_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/open-chease}" # used to be /tmp, gone every reboot
   old="${TMPDIR:-/tmp}/open-chease-$(id -u)"
   if [ -z "${OPEN_CHEASE_DATA:-}" ] && [ ! -e "$data" ] && [ -d "$old" ] && [ ! -L "$old" ] && [ -O "$old" ]; then
     if mkdir -p "$(dirname "$data")" && mv "$old" "$data" 2>/dev/null; then # bring your settings and engines along
-      for f in "$data/settings" "$data/engine-names" "$data"/engines/*; do # these remember full paths into the old folder
+      for f in "$data/settings" "$data/engine-names" "$data"/engines/*; do # these have the old path baked in
         [ -f "$f" ] && [ "$(wc -c <"$f")" -lt 65536 ] && grep -qF "$old" "$f" 2>/dev/null && sed -i "s#$old#$data#g" "$f"
       done
     fi
@@ -57,7 +57,7 @@ export OPEN_CHEASE_BRANCH="$branch" # the app reads its engine lists from the sa
 
 dl() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fL --connect-timeout 15 --speed-time 30 --speed-limit 1000 --progress-bar "$1" -o "$2" # dead wifi shouldnt hang it forever
+    curl -fL --connect-timeout 15 --speed-time 30 --speed-limit 1000 --progress-bar "$1" -o "$2"
   elif command -v wget >/dev/null 2>&1; then
     wget -q -T 30 --show-progress -O "$2" "$1"
   else
@@ -84,7 +84,7 @@ if [ ! -x "$app/run.sh" ] || [ "$update" = 1 ]; then
   rm -rf "$app"
   mv "$tmp/app" "$app"
   rm -rf "$tmp"
-  if [ -d "$data/build" ]; then # makes run.sh rebuild from the new source, the old build stays as a fallback
+  if [ -d "$data/build" ]; then # run.sh rebuilds, old one stays as a fallback
     rm -rf "$data/build.old"
     mv "$data/build" "$data/build.old"
   fi

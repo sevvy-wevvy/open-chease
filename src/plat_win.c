@@ -193,7 +193,7 @@ int data_dir_ok(const char *dir)
 
 int open_folder(const char *dir) { return (intptr_t)ShellExecuteA(NULL, "open", dir, NULL, NULL, SW_SHOWNORMAL) > 32 ? 0 : 1; }
 
-// windows tools by full path, a bare name gets looked up in the current folder first
+// bare names get looked up in the current folder first on windows
 static const char *sys_exe(const char *name, char *out, size_t n)
 {
     const char *sub = !strcmp(name, "curl.exe") ? "curl.exe" : !strcmp(name, "tar.exe") ? "tar.exe"

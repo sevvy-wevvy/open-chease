@@ -13,7 +13,7 @@ if ($update) {
 $env:OPEN_CHEASE_DATA = $data
 $env:OPEN_CHEASE_HOME = $here
 $env:OPEN_CHEASE_UPDATE = if (Test-Path -LiteralPath (Join-Path $here '.git')) { 'git' }
-    elseif ((Resolve-Path -LiteralPath $here).Path -eq (Resolve-Path -LiteralPath (Join-Path $data 'app') -ErrorAction SilentlyContinue).Path) { 'get' } # get.ps1 only updates that copy
+    elseif ((Resolve-Path -LiteralPath $here).Path -eq (Resolve-Path -LiteralPath (Join-Path $data 'app') -ErrorAction SilentlyContinue).Path) { 'get' }
     else { $null }
 if (-not $env:OPEN_CHEASE_ENGINE -and -not ($pass -contains '--engine') -and -not ($pass -contains '--builtin')) {
     $sf = Join-Path $data 'stockfish\stockfish.exe'
