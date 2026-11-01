@@ -29,6 +29,10 @@ _cache = {}
 def piece(pset, key, s):
     k = (pset, key, s)
     if k not in _cache:
+        png = os.path.join(here, "pieces", pset, key.lower() + ".png")
+        if os.path.exists(png):  # sets we only have as pictures, like chess.com ones
+            _cache[k] = Image.open(png).convert("RGBA").resize((s, s), Image.LANCZOS)
+            return _cache[k]
         data = open(os.path.join(here, "pieces", pset, key + ".svg"), "rb").read()
         h = rsvg.rsvg_handle_new_from_data(data, len(data), None)
         surf = cairo.cairo_image_surface_create(0, s, s)
@@ -45,6 +49,7 @@ THEMES = {
     "chesscom": ((235, 236, 208), (115, 149, 82), (245, 246, 130), (185, 202, 67)),
     "blue": ((222, 227, 230), (140, 162, 173), (195, 216, 135), (150, 183, 99)),
 }
+PINK = ((245, 241, 242), (235, 148, 164), (236, 208, 188), (226, 156, 140))
 
 
 def pkey(p):
@@ -55,6 +60,8 @@ class Scene:
     def __init__(self, rnd):
         self.theme = rnd.choice(list(THEMES))
         self.pset = rnd.choice(["cburnett"] * 3 + ["staunty", "alpha", "maestro"])
+        if os.environ.get("SIM_PSET"):  # pin one look, for chasing a bug on a single theme
+            self.theme, self.pset = os.environ.get("SIM_THEME", self.theme), os.environ["SIM_PSET"]
         self.sq = rnd.choice([44, 52, 60, 64, 72, 80])
         self.W, self.H = 1000, 760
         self.x = rnd.randint(10, self.W - self.sq * 8 - 220)
@@ -70,7 +77,7 @@ class Scene:
         return self.x + dc * self.sq, self.y + dr * self.sq
 
     def render(self, board, last=None, extra=None):
-        light, dark, hll, hld = THEMES[self.theme]
+        light, dark, hll, hld = THEMES.get(self.theme, PINK)
         img = Image.new("RGB", (self.W, self.H), (38, 36, 33))
         d = ImageDraw.Draw(img, "RGBA")
         d.rectangle([0, 0, self.W, 50], fill=(25, 25, 25))
