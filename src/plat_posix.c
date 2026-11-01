@@ -289,3 +289,37 @@ void engine_list(const char *dir, void (*add)(const char *label, const char *pat
     }
     closedir(d);
 }
+
+int ctl_open(const char *data)
+{
+    char path[1100];
+    snprintf(path, sizeof(path), "%s/control", data);
+    struct stat st;
+    if (lstat(path, &st) && mkfifo(path, 0600)) return -1;
+    int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return -1;
+    if (fstat(fd, &st) || !S_ISFIFO(st.st_mode) || st.st_uid != getuid()) { // something else sitting there, leave it alone
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int ctl_read(int fd, char *buf, int n)
+{
+    ssize_t r = fd >= 0 ? read(fd, buf, (size_t)n) : -1;
+    return r > 0 ? (int)r : 0;
+}
+
+int ctl_send(const char *data, const char *msg)
+{
+    char path[1100];
+    snprintf(path, sizeof(path), "%s/control", data);
+    int fd = open(path, O_WRONLY | O_NONBLOCK | O_CLOEXEC); // no reader = ENXIO instead of hanging
+    if (fd < 0) return -1;
+    struct stat st;
+    size_t len = strlen(msg);
+    int ok = !fstat(fd, &st) && S_ISFIFO(st.st_mode) && write(fd, msg, len) == (ssize_t)len;
+    close(fd);
+    return ok ? 0 : -1;
+}

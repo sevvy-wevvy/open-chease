@@ -31,12 +31,39 @@ static SCShareableContent *content;
 static Backend *live_cap;
 static Overlay *live_ov;
 static Rect hits[256];
-static int nhits, clicked, keyq[32], nkeys, wheel, kb_on;
+static int nhits, clicked, keyq[32], nkeys, wheel, kb_on; // keyq has the HK_ mods ored in
+static int grabbed[32], ngrabbed, hotq[16], nhot;
+static id global_mon, local_mon;
 static double click_x, click_y, wheel_x, wheel_y;
 static int hot = -1;
 static NSRunningApplication *before_kb;
 static void track_mouse(void);
 static CGColorSpaceRef rgb;
+
+static int ev_mods(NSEvent *e)
+{
+    NSEventModifierFlags f = [e modifierFlags];
+    return (f & NSEventModifierFlagShift ? HK_SHIFT : 0) | (f & NSEventModifierFlagControl ? HK_CTRL : 0) |
+           (f & NSEventModifierFlagOption ? HK_ALT : 0) | (f & NSEventModifierFlagCommand ? HK_SUPER : 0);
+}
+
+static int ev_key(NSEvent *e, NSString *s) // HK_ key or 0, mac backspace is delete
+{
+    if (!s.length) return 0;
+    unichar c = [s characterAtIndex:0];
+    if (c == 127) return 8;
+    if (c >= NSF1FunctionKey && c <= NSF12FunctionKey) return HK_F1 + (c - NSF1FunctionKey);
+    return c < 128 ? c : 0;
+}
+
+static int hot_index(NSEvent *e)
+{
+    int k = ev_key(e, [e charactersIgnoringModifiers]); // ignores everything but shift, hk_norm takes that off again
+    int c = k >= HK_F1 ? k | ev_mods(e) : hk_norm(k, ev_mods(e));
+    for (int i = 0; c && i < ngrabbed; i++)
+        if (grabbed[i] == c) return i;
+    return -1;
+}
 
 static double main_h(void) { return CGDisplayBounds(CGMainDisplayID()).size.height; } // cocoa counts y up from the bottom of this one
 
@@ -92,11 +119,9 @@ static double main_h(void) { return CGDisplayBounds(CGMainDisplayID()).size.heig
 }
 - (void)keyDown:(NSEvent *)e
 {
-    NSString *s = [e characters];
-    if (!s.length || nkeys >= 32) return;
-    unichar c = [s characterAtIndex:0];
-    if (c == 127) c = 8; // mac backspace is delete
-    if (c < 128) keyq[nkeys++] = c;
+    int mods = ev_mods(e);
+    int k = ev_key(e, mods & (HK_ALT | HK_CTRL | HK_SUPER) ? [e charactersIgnoringModifiers] : [e characters]); // option+h would type a symbol
+    if (k && nkeys < 32) keyq[nkeys++] = k | mods;
 }
 @end
 
@@ -377,8 +402,13 @@ static int mac_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
             *cx = click_x, *cy = click_y;
             return 1;
         }
+        if (nhot) {
+            ov->key = hotq[0];
+            memmove(hotq, hotq + 1, sizeof(int) * (size_t)--nhot);
+            return 4;
+        }
         if (nkeys) {
-            ov->key = keyq[0];
+            ov->key = keyq[0] & 0xFF, ov->mods = keyq[0] & HK_MODS;
             memmove(keyq, keyq + 1, sizeof(int) * (size_t)--nkeys);
             return 2;
         }
@@ -424,5 +454,26 @@ static void mac_keyboard(Overlay *ov, int on)
     }
 }
 
-static Overlay mac_overlay = {"nswindow", mac_ov_init, mac_canvas, 0, mac_commit, mac_wait, NULL, mac_keyboard, 0, mac_pointer, mac_held};
+static void mac_hotkeys(Overlay *ov, const int *combos, int n)
+{
+    ngrabbed = n < 32 ? n : 32;
+    memcpy(grabbed, combos, sizeof(int) * (size_t)ngrabbed);
+    nhot = 0;
+    if (global_mon) return;
+    // other apps keys, only shows up with accessibility access. without it this just never fires
+    global_mon = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+                                                        handler:^(NSEvent *e) {
+                                                          int i = hot_index(e);
+                                                          if (i >= 0 && nhot < 16) hotq[nhot++] = i;
+                                                        }];
+    local_mon = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown // our own windows, global skips those
+                                                      handler:^NSEvent *(NSEvent *e) {
+                                                        int i = kb_on ? -1 : hot_index(e); // typing in the search box or rebinding gets the raw keys
+                                                        if (i < 0) return e;
+                                                        if (nhot < 16) hotq[nhot++] = i;
+                                                        return nil;
+                                                      }];
+}
+
+static Overlay mac_overlay = {"nswindow", mac_ov_init, mac_canvas, 0, mac_commit, mac_wait, NULL, mac_keyboard, 0, mac_pointer, mac_held, 0, mac_hotkeys};
 Overlay *overlay_mac(void) { return &mac_overlay; }

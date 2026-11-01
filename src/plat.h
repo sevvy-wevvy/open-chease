@@ -42,6 +42,9 @@ int run_wait(char *const argv[]);
 void relaunch_self(char **argv, const char *home);
 int spawn_detached(char *const argv[]); // windows wont replace a running exe, so updates need us gone
 void quit_signals(void (*fn)(int));
+int ctl_open(const char *data); // fifo for open-chease --send, wayland has no global hotkeys. -1 = none (windows)
+int ctl_read(int fd, char *buf, int n); // never blocks, bytes read
+int ctl_send(const char *data, const char *msg); // 0 sent, -1 nothing is listening
 
 typedef struct {
     char url[600], kind[8], pick[256], out[1200], data[1100], helper[1024], slug[48];
