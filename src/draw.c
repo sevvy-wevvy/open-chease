@@ -124,6 +124,42 @@ static void to_px(const Canvas *c, double lx, double ly, double *px, double *py)
     *py = (ly - c->oy) * c->scale;
 }
 
+static void px_box(const Canvas *c, Rect r, int *x0, int *y0, int *x1, int *y1)
+{
+    double a, b, e, f;
+    to_px(c, r.x, r.y, &a, &b);
+    to_px(c, r.x + r.w, r.y + r.h, &e, &f);
+    *x0 = a < 0 ? 0 : (int)floor(a), *y0 = b < 0 ? 0 : (int)floor(b);
+    *x1 = e > c->w ? c->w : (int)ceil(e), *y1 = f > c->h ? c->h : (int)ceil(f);
+}
+
+// wipes whatever we drew in r, for popups the site puts over the board
+void canvas_erase(Canvas *c, Rect r)
+{
+    int x0, y0, x1, y1;
+    px_box(c, r, &x0, &y0, &x1, &y1);
+    if (x1 <= x0 || y1 <= y0) return;
+    mark(c, x0, y0, x1, y1);
+    for (int y = y0; y < y1; y++) memset(c->px + (size_t)y * c->w + x0, 0, (size_t)(x1 - x0) * 4);
+}
+
+// nearest neighbour, img is plain argb
+void draw_image(Canvas *c, Rect r, const uint32_t *img, int w, int h)
+{
+    int x0, y0, x1, y1;
+    px_box(c, r, &x0, &y0, &x1, &y1);
+    if (x1 <= x0 || y1 <= y0 || r.w <= 0 || r.h <= 0) return;
+    mark(c, x0, y0, x1, y1);
+    for (int y = y0; y < y1; y++) {
+        int sy = (int)((y / c->scale + c->oy - r.y) / r.h * h);
+        if (sy < 0 || sy >= h) continue;
+        for (int x = x0; x < x1; x++) {
+            int sx = (int)((x / c->scale + c->ox - r.x) / r.w * w);
+            if (sx >= 0 && sx < w) blend(&c->px[(size_t)y * c->w + x], premul(img[sy * w + sx], 1));
+        }
+    }
+}
+
 void draw_rect(Canvas *c, Rect r, uint32_t argb)
 {
     double x0, y0, x1, y1;

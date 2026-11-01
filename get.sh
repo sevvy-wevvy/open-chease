@@ -81,6 +81,10 @@ if [ ! -x "$app/run.sh" ] || [ "$update" = 1 ]; then
   mkdir -p "$tmp/app"
   tar xzf "$tmp/app.tar.gz" -C "$tmp/app" --strip-components=1
   chmod +x "$tmp/app/run.sh" "$tmp/app/build.sh" "$tmp/app/bin/"* 2>/dev/null || true
+  api="https://api.github.com/repos/$repo/commits/$branch" # so the app can tell when its behind, no .commit just means no update dot
+  curl -fsL --max-time 10 "$api" -o "$tmp/c.json" 2>/dev/null || wget -q -T 10 -O "$tmp/c.json" "$api" 2>/dev/null || true
+  sha="$(grep -o '"sha": *"[0-9a-f]\{40\}"' "$tmp/c.json" 2>/dev/null | sed -n '1s/.*"\([0-9a-f]\{40\}\)"/\1/p')" || sha=""
+  [ -n "$sha" ] && printf '%s\n%s\n' "$sha" "$branch" > "$tmp/app/.commit" || true
   rm -rf "$app"
   mv "$tmp/app" "$app"
   rm -rf "$tmp"

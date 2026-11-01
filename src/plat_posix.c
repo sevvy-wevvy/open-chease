@@ -240,6 +240,13 @@ intptr_t lists_start(const char *data, const char *a, const char *b)
                   "&& grep -q '|' \"$D/$n.new\" && mv \"$D/$n.new\" \"$D/$n\"; rm -f \"$D/$n.new\"; done", env);
 }
 
+intptr_t fetch_start(const char *url, const char *out)
+{
+    const char *env[] = {"U", url, "O", out, NULL};
+    return sh_job("rm -f \"$O.new\"; if command -v curl >/dev/null; then curl -fsL --max-time 10 \"$U\" -o \"$O.new\"; "
+                  "else wget -q -T 10 -O \"$O.new\" \"$U\"; fi && mv \"$O.new\" \"$O\" || { rm -f \"$O.new\"; exit 1; }", env);
+}
+
 int job_done(intptr_t h, int *ok)
 {
     int st;
@@ -288,4 +295,38 @@ void engine_list(const char *dir, void (*add)(const char *label, const char *pat
         if (e->d_name[0] != '.' && !stat(f, &st) && S_ISREG(st.st_mode) && access(f, X_OK) == 0) add(e->d_name, f);
     }
     closedir(d);
+}
+
+int ctl_open(const char *data)
+{
+    char path[1100];
+    snprintf(path, sizeof(path), "%s/control", data);
+    struct stat st;
+    if (lstat(path, &st) && mkfifo(path, 0600)) return -1;
+    int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return -1;
+    if (fstat(fd, &st) || !S_ISFIFO(st.st_mode) || st.st_uid != getuid()) { // something else sitting there, leave it alone
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+int ctl_read(int fd, char *buf, int n)
+{
+    ssize_t r = fd >= 0 ? read(fd, buf, (size_t)n) : -1;
+    return r > 0 ? (int)r : 0;
+}
+
+int ctl_send(const char *data, const char *msg)
+{
+    char path[1100];
+    snprintf(path, sizeof(path), "%s/control", data);
+    int fd = open(path, O_WRONLY | O_NONBLOCK | O_CLOEXEC); // no reader = ENXIO instead of hanging
+    if (fd < 0) return -1;
+    struct stat st;
+    size_t len = strlen(msg);
+    int ok = !fstat(fd, &st) && S_ISFIFO(st.st_mode) && write(fd, msg, len) == (ssize_t)len;
+    close(fd);
+    return ok ? 0 : -1;
 }

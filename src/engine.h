@@ -67,6 +67,8 @@ void pos_unmake(Pos *p, const Undo *u);
 int pos_in_check(const Pos *p, int side);
 int pos_gen_legal(Pos *p, Move *out);
 int pos_is_attacked(const Pos *p, int sq, int by);
+int pos_attackers(const Pos *p, int sq, int by); // how many, no x-rays
+int king_danger(const Pos *p, int side); // 0 safe to 10
 void pos_put(Pos *p, int sq, int piece);
 void pos_finish_setup(Pos *p); // after pos_put, fixes castling, the key and clears hist
 

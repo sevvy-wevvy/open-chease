@@ -121,6 +121,29 @@ static void type_scores(const Templates *t, const BoardRead *r, int sq, float *o
     }
 }
 
+// how sure the shapes are about pc on sq: its score minus the best other type, under 0 means it looks like something else
+float tracker_confidence(const Templates *t, const BoardRead *r, int sq, int pc)
+{
+    float sc[6], other = 0;
+    type_scores(t, r, sq, sc);
+    for (int ty = 0; ty < 6; ty++)
+        if (ty != piece_type(pc) && sc[ty] > other) other = sc[ty];
+    return sc[piece_type(pc)] - other;
+}
+
+// one square fixed by hand, nudge that pieces shape towards it
+void templates_learn_one(Templates *t, const BoardRead *r, int sq, int pc)
+{
+    float *d = t->t[piece_color(pc)][piece_type(pc)];
+    for (int i = 0; i < FEAT_N * FEAT_N; i++) {
+        float v = r->mask[sq][i];
+        if (v == 0.5f) continue;
+        d[i] = d[i] < 0 ? v : d[i] * 0.4f + v * 0.6f;
+    }
+    t->have = 1;
+    t->learned = 1;
+}
+
 int classify_piece(const Templates *t, const BoardRead *r, int sq)
 {
     float sc[6];

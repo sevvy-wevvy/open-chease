@@ -44,6 +44,10 @@
                 if (-not $moved) { throw 'open-chease is still running, close it and try again' }
             }
             try { Move-Item -LiteralPath $inner.FullName $app } catch { Move-Item -LiteralPath $old $app; throw }
+            try { # so the app can tell when its behind, no .commit just means no update dot
+                $c = Invoke-RestMethod -UseBasicParsing -TimeoutSec 10 "https://api.github.com/repos/$repo/commits/$branch"
+                if ($c.sha -match '^[0-9a-f]{40}$') { [IO.File]::WriteAllText((Join-Path $app '.commit'), "$($c.sha)`n$branch`n") }
+            } catch {}
             Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
         } catch {
             Write-Host "couldnt download open-chease from github, check your internet and try again ($_)"
