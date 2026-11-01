@@ -410,6 +410,19 @@ static DWORD WINAPI lists_thread(void *arg)
     return 0;
 }
 
+static DWORD WINAPI fetch_thread(void *arg)
+{
+    Job *jb = arg;
+    char tmp[1300];
+    snprintf(tmp, sizeof(tmp), "%s.new", jb->j.out);
+    DeleteFileA(tmp);
+    char *curl[] = {"curl.exe", "-fsL", "--max-time", "10", jb->j.url, "-o", tmp, NULL};
+    int ok = run_wait(curl) == 0 && MoveFileExA(tmp, jb->j.out, MOVEFILE_REPLACE_EXISTING);
+    DeleteFileA(tmp);
+    free(jb);
+    return ok ? 0 : 1;
+}
+
 static intptr_t start_job(Job *jb, LPTHREAD_START_ROUTINE fn)
 {
     HANDLE h = CreateThread(NULL, 0, fn, jb, 0, NULL);
@@ -433,6 +446,15 @@ intptr_t lists_start(const char *data, const char *a, const char *b)
     snprintf(jb->a, sizeof(jb->a), "%s", a);
     snprintf(jb->b, sizeof(jb->b), "%s", b);
     return start_job(jb, lists_thread);
+}
+
+intptr_t fetch_start(const char *url, const char *out)
+{
+    Job *jb = calloc(1, sizeof(Job));
+    if (!jb) return 0;
+    snprintf(jb->j.url, sizeof(jb->j.url), "%s", url);
+    snprintf(jb->j.out, sizeof(jb->j.out), "%s", out);
+    return start_job(jb, fetch_thread);
 }
 
 int job_done(intptr_t h, int *ok)
