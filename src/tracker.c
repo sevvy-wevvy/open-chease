@@ -535,16 +535,25 @@ static void verify_promo(Tracker *t, const BoardRead *r, const Templates *tpl)
 }
 
 // our own overlay reads as unknown, and the last games check ring sits right on the start squares
+// one wrong color is still the start, 32 pieces on the start squares cant be anything else
 static int is_start_obs(const uint8_t *obs, int rotated)
 {
-    int seen = 0;
+    int seen = 0, flips = 0;
     for (int i = 0; i < 64; i++) {
         int want = i < 16 ? OBS_WHITE : (i >= 48 ? OBS_BLACK : OBS_EMPTY), got = obs[rotated ? 63 - i : i];
         if (got == OBS_UNKNOWN) continue;
-        if (got != want) return 0;
+        if ((got == OBS_EMPTY) != (want == OBS_EMPTY)) return 0;
+        if (got != want && ++flips > 1) return 0;
         seen++;
     }
     return seen >= 52;
+}
+
+static int is_startpos(const Pos *p)
+{
+    Pos s;
+    pos_startpos(&s);
+    return !memcmp(p->sq, s.sq, sizeof(s.sq));
 }
 
 static float board_fit(const Templates *t, const BoardRead *r)
@@ -566,7 +575,10 @@ static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *ou
 void tracker_resync(Tracker *t, const BoardRead *r, Templates *tpl)
 {
     Pos np;
-    if (!read_position(t, r, tpl, &np)) return;
+    if (is_start_obs(r->obs, 0))
+        pos_startpos(&np); // the shapes can be way off on a new piece set, the start is the start
+    else if (!read_position(t, r, tpl, &np))
+        return;
     t->pos = np;
     apply_locks(t, r);
     t->synced = 1;
@@ -703,7 +715,8 @@ void tracker_update(Tracker *t, const BoardRead *r, Templates *tpl)
     expected_obs(&t->pos, exp);
     int od, cd;
     diff2(exp, r->obs, &od, &cd);
-    if (od == 0 && cd <= 1) {
+    int start = is_start_obs(r->obs, 0) ? 1 : is_start_obs(r->obs, 1) ? 2 : 0;
+    if (od == 0 && cd <= 1 && !(start == 1 && !is_startpos(&t->pos))) { // colors can match the start with the wrong pieces after a bad read
         t->pending_count = 0;
         t->mismatch_ticks = 0;
         t->implausible_ticks = 0;
@@ -711,9 +724,9 @@ void tracker_update(Tracker *t, const BoardRead *r, Templates *tpl)
         snprintf(t->status, sizeof(t->status), "in sync");
         return;
     }
-    if (is_start_obs(r->obs, 0) || is_start_obs(r->obs, 1)) {
+    if (start) {
         int uc = t->user_color, wb = t->white_bottom;
-        int rotated = !is_start_obs(r->obs, 0);
+        int rotated = start == 2;
         tracker_start(t, rotated ? uc ^ 1 : uc);
         t->white_bottom = rotated ? !wb : wb;
         t->flip_pending = rotated;
