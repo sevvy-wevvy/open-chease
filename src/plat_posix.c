@@ -235,7 +235,7 @@ intptr_t dl_start(const DlJob *j)
 intptr_t lists_start(const char *data, const char *a, const char *b)
 {
     const char *env[] = {"D", data, "A", a, "B", b, NULL};
-    return sh_job("for n in $A $B; do u=https://raw.githubusercontent.com/sevvy-wevvy/open-chease/${OPEN_CHEASE_BRANCH:-main}/$n; "
+    return sh_job("for n in $A $B; do u=https://raw.githubusercontent.com/sevvy-wevvy/open-chease/${OPEN_CHEASE_BRANCH:-main}/engines/$n; "
                   "(curl -fsL --max-time 15 \"$u\" -o \"$D/$n.new\" || wget -q -T 15 -O \"$D/$n.new\" \"$u\") "
                   "&& grep -q '|' \"$D/$n.new\" && mv \"$D/$n.new\" \"$D/$n\"; rm -f \"$D/$n.new\"; done", env);
 }

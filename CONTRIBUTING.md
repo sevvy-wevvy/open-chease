@@ -23,7 +23,7 @@ Boards it cant find and pieces it reads wrong are the most useful things to fix.
 <p align="center">
 Small fixes can go straight to a PR.<br>
 For a new feature or anything big, <a href="https://github.com/sevvy-wevvy/open-chease/issues">open an issue</a> first so we can talk about it. Nobody wants to spend a week on something that doesnt fit.<br> <br>
-Changes to the engine lists (<code>engines*.txt</code>) or where anything gets downloaded from always need an issue first, those files decide what runs on peoples computers.
+Changes to the engine lists (the <code>engines</code> folder) or where anything gets downloaded from always need an issue first, those files decide what runs on peoples computers.
 </p>
 </details>
 

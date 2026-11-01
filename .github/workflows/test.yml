@@ -52,7 +52,7 @@ jobs:
       - name: engine downloads
         run: |
           export OPEN_CHEASE_DATA=$PWD/dl-test
-          mkdir -p dl-test && chmod 700 dl-test && cp engines.txt engines-cpu.txt dl-test/
+          mkdir -p dl-test && chmod 700 dl-test && cp engines/engines.txt engines/engines-cpu.txt dl-test/
           for e in "Sirius 9" "Inanis 1.6" "Arasan 26.1" "Stockfish 16"; do OPEN_CHEASE_GET="$e" timeout 600 out-linux/open-chease; done
           OPEN_CHEASE_GET="Inanis 1.6" OPEN_CHEASE_GET_DEL=1 timeout 600 out-linux/open-chease
           test ! -e dl-test/engines/inanis-1.6 && test ! -e dl-test/engines/inanis-1.6.files && test -e dl-test/engines/arasan-26.1 && echo "delete only took inanis"
@@ -97,7 +97,7 @@ jobs:
       - name: engine downloads
         run: |
           export OPEN_CHEASE_DATA="$(cygpath -w "$PWD/dl-test")"
-          mkdir -p dl-test && cp engines-win.txt engines-cpu-win.txt dl-test/
+          mkdir -p dl-test && cp engines/engines-win.txt engines/engines-cpu-win.txt dl-test/
           for e in "Sirius 9" "Inanis 1.6" "Arasan 26.1" "Stockfish 19"; do OPEN_CHEASE_GET="$e" timeout 600 out-win/open-chease.exe; done
           find dl-test/engines -maxdepth 2 | head -30
           OPEN_CHEASE_GET="Inanis 1.6" OPEN_CHEASE_GET_DEL=1 timeout 600 out-win/open-chease.exe
@@ -186,7 +186,7 @@ jobs:
       - name: engine downloads
         run: |
           export OPEN_CHEASE_DATA=$PWD/dl-test
-          mkdir -p dl-test && chmod 700 dl-test && cp ${{ matrix.engines }} dl-test/
+          mkdir -p dl-test && chmod 700 dl-test && cp engines/${{ matrix.engines }} dl-test/
           for e in ${{ matrix.get }}; do OPEN_CHEASE_GET="$e" out-mac/open-chease; done
           OPEN_CHEASE_GET="Stockfish 16" OPEN_CHEASE_GET_DEL=1 out-mac/open-chease || OPEN_CHEASE_GET="Stockfish 19" OPEN_CHEASE_GET_DEL=1 out-mac/open-chease
       - name: start it (ci has no screen recording permission)
