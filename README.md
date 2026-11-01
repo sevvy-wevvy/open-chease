@@ -114,8 +114,9 @@ Open a game on lichess, chess.com or pretty much anywhere with a flat colored bo
 <p align="center">
 Dont want it playing for you? Hit <b>Helper mode</b> in the ... menu (or Gear > Fun > Mode). It stops showing moves completely and just tells you stuff about the game instead. Clicking it again goes to <b>Both</b>, which keeps the moves and adds all the helper stuff on top, and once more goes back to plain cheats.<br> <br>
 The box always has whose turn it is, your win % (and how much the last move changed it, like +6) and a warning when someone's in check.<br> <br>
-<b>Danger alerts</b> - "your queen is in danger" when something of yours can get taken for cheap, and "they have mate in 3" when its coming<br>
-<b>Threats</b> - what they'd play if they got another move right now, like "Nc2+ would fork your king and rook". Draws a red dashed arrow too unless you turn that off<br>
+<b>Danger alerts</b> - "your queen is in danger" when something of yours can get taken for cheap, and "they have mate in 3" when its coming. Set it to With arrow and it also draws an arrow from the piece thats attacking it<br>
+<b>Threats</b> - what they'd play if they got another move right now, like "Nc2+ would fork your king and rook". With arrow draws it on the board too<br>
+Both arrows are red and dashed by default, Threat arrow, Threat color and Threat size in Gear > Helper change that<br>
 <b>Hint button</b> - the ? next to the gear. First click shows which piece, second where it goes, third the whole move<br>
 <b>What a ___ plays</b> - pick 1400 to 2400 and it tells you what someone that rated would probably play. Its your engine turned down, so dont take it as gospel<br>
 With a second opinion engine picked in Gear > Engine it also tells you when the two engines dont agree. Usually means its a tricky spot<br> <br>
@@ -130,7 +131,7 @@ All of it is under Gear > Helper and you can turn each one off. The win graph, c
 <summary align="center"><b>🎛 Settings 🎛</b></summary>
 
 <p align="center">
-Settings are split into tabs: Look, Yours, Theirs, Engine, Fun, Helper, Vision and Themes. Every tab has a <b>Reset this tab</b> button if you mess something up.<br> <br>
+Settings are split into tabs: Look, Yours, Theirs, Engine, Fun, Helper, Vision and Themes. Every tab has a <b>Reset this tab</b> button if you mess something up. Not sure what something does? Leave the mouse on it for a sec and a little tip pops up<br> <br>
 <b>Look</b><br>
 14 themes, where the box sits (top, bottom, or stacked on the left or right), box size and how see-through it is<br>
 The grid can be lines, just the outline, corners or off, in any color<br>
@@ -155,10 +156,16 @@ Mode is Cheats, Helper or Both (see Helper Mode above)<br>
 The move picker can give you the best move, one thats close enough, a random top 3, a coin flip, a totally random move, the worst move or only blunders. Theres also 5 human ones from 800 to 2400. They pick like a person that rated would (recaptures first, checks, early queen moves when its low rated) and the higher ones lean on the real engine move a lot more. In my tests 800 loses about a pawn a move on average and 2400 about a fifth of one<br>
 A strength cap (Full down to 1400), trash talk, grades for your moves and theirs with a roast attached, and confetti when you win<br> <br>
 <b>Helper</b><br>
-Material, taken pieces, opening & phase, win graph, turn timer, game report, last move, check warning, hanging pieces, move list, danger alerts, session score, threats, the hint button and what a ___ plays. Each one is its own setting<br> <br>
+Material, taken pieces, opening & phase, win graph, turn timer, game report, last move, check warning, hanging pieces, move list, danger alerts, session score, threats, the hint button and what a ___ plays. Each one is its own setting<br>
+Danger alerts and threats can be off, just text or text with an arrow, and the arrow gets its own style, color and size<br> <br>
 <b>Vision</b><br>
 "Show what it sees" on from the start, square names on every square, and Rescan board (same as the one in the ... menu)<br>
-If your piece set keeps getting misread (rooks as knights, that kind of thing) fix the wrong ones with ... > Fix pieces, then hit <b>Teach these pieces</b>. It learns the shapes from the board as it is right now and remembers them for that board. <b>Forget learned pieces</b> throws that away and goes back to the built in shapes<br> <br>
+If your piece set keeps getting misread (rooks as knights, that kind of thing) you can teach it your pieces, the steps are in the Vision tab too:<br>
+1. open a game so the board is on screen<br>
+2. hit ... > Fix pieces, click a wrong square and pick whats really there<br>
+3. do that for every wrong one, then hit Done fixing<br>
+4. come back to Gear > Vision and hit <b>Teach these pieces</b>. It learns the shapes from the board as it is right now and remembers them for that board<br>
+<b>Forget learned pieces</b> throws that away and goes back to the built in shapes<br> <br>
 <b>Themes</b><br>
 Every theme as a little preview card, click one to use it. Under that you can make up to 3 of your own: pick a slot and a part (box, text, buttons, grid, menus...), then click a color. It changes live. <b>Copy current theme</b> starts you off from whatever theme youre on. Your themes save with the rest of the settings
 </p>

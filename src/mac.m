@@ -314,6 +314,9 @@ static void mac_commit(Overlay *ov, const Rect *h, int nh)
     }
 }
 
+static int mouse_over;
+static double mouse_x, mouse_y;
+
 static void track_mouse(void)
 {
     NSPoint p = [NSEvent mouseLocation];
@@ -321,6 +324,7 @@ static void track_mouse(void)
     int over = 0;
     for (int i = 0; i < nhits && !over; i++)
         over = lx >= hits[i].x && lx < hits[i].x + hits[i].w && ly >= hits[i].y && ly < hits[i].y + hits[i].h;
+    mouse_over = over, mouse_x = lx, mouse_y = ly;
     int want = -1;
     if (over)
         for (int i = 0; i < nmons; i++)
@@ -364,6 +368,13 @@ static int mac_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
     }
 }
 
+static int mac_pointer(Overlay *ov, double *x, double *y)
+{
+    if (!mouse_over) return 0;
+    *x = mouse_x, *y = mouse_y;
+    return 1;
+}
+
 static void mac_keyboard(Overlay *ov, int on)
 {
     if (on && !kb_on) before_kb = [[NSWorkspace sharedWorkspace] frontmostApplication];
@@ -378,5 +389,5 @@ static void mac_keyboard(Overlay *ov, int on)
     }
 }
 
-static Overlay mac_overlay = {"nswindow", mac_ov_init, mac_canvas, 0, mac_commit, mac_wait, NULL, mac_keyboard, 0};
+static Overlay mac_overlay = {"nswindow", mac_ov_init, mac_canvas, 0, mac_commit, mac_wait, NULL, mac_keyboard, 0, mac_pointer};
 Overlay *overlay_mac(void) { return &mac_overlay; }
