@@ -390,7 +390,7 @@ static DWORD WINAPI lists_thread(void *arg)
         if (!*names[i]) continue;
         char url[300], dst[1300], tmp[1400];
         const char *br = getenv("OPEN_CHEASE_BRANCH");
-        snprintf(url, sizeof(url), "https://raw.githubusercontent.com/sevvy-wevvy/open-chease/%.40s/%s", br && *br ? br : "main", names[i]);
+        snprintf(url, sizeof(url), "https://raw.githubusercontent.com/sevvy-wevvy/open-chease/%.40s/engines/%s", br && *br ? br : "main", names[i]);
         snprintf(dst, sizeof(dst), "%s\\%s", jb->j.data, names[i]);
         snprintf(tmp, sizeof(tmp), "%s.new", dst);
         char *curl[] = {"curl.exe", "-fsL", "--max-time", "15", url, "-o", tmp, NULL};
