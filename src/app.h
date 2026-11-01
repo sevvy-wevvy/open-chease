@@ -74,6 +74,8 @@ typedef struct Backend {
     Output out[MAX_OUTPUTS];
     void *priv;
     int out_gen;
+    int cur_ok; // the mouse might be baked into the frame, cur_x/y is where (logical) and cur_sz how big
+    double cur_x, cur_y, cur_sz;
 } Backend;
 
 typedef struct Overlay {

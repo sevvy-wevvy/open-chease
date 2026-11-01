@@ -3,6 +3,8 @@
 #include <dlfcn.h>
 #include <poll.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -123,7 +125,11 @@ static void out_geometry(void *d, struct wl_output *w, int32_t x, int32_t y, int
 }
 static void out_mode(void *d, struct wl_output *w, uint32_t flags, int32_t mw, int32_t mh, int32_t refresh) {}
 static void out_done(void *d, struct wl_output *w) {}
-static void out_scale(void *d, struct wl_output *w, int32_t f) {}
+static int max_scale = 1;
+static void out_scale(void *d, struct wl_output *w, int32_t f)
+{
+    if (f > max_scale) max_scale = f;
+}
 static void out_text(void *d, struct wl_output *w, const char *t) {}
 static const struct wl_output_listener out_listener = {out_geometry, out_mode, out_done, out_scale, out_text, out_text};
 
@@ -167,8 +173,43 @@ static void xo_name(void *d, struct zxdg_output_v1 *x, const char *n)
 static void xo_desc(void *d, struct zxdg_output_v1 *x, const char *n) {}
 static const struct zxdg_output_v1_listener xo_listener = {xo_pos, xo_size, xo_done, xo_name, xo_desc};
 
+static const char *arrow_art[19] = {
+    "X           ", "XX          ", "X.X         ", "X..X        ", "X...X       ", "X....X      ", "X.....X     ",
+    "X......X    ", "X.......X   ", "X........X  ", "X.........X ", "X......XXXXX", "X...X..X    ", "X..XX..X    ",
+    "X.X  X..X   ", "XX   X..X   ", "X     X..X  ", "      X..X  ", "       XX   "};
+static struct wl_surface *arrow_surf;
+static ShmBuf arrow_buf;
+static int arrow_scale;
+
+// we have to pick the mouse look ourselves, or it stays whatever the last app had. games like roblox hide it
+static void set_arrow(uint32_t serial)
+{
+    if (!pointer || !compositor || !shm) return;
+    int k = max_scale < 1 ? 1 : max_scale > 3 ? 3 : max_scale;
+    if (wl_proxy_get_version((struct wl_proxy *)compositor) < 3) k = 1; // no buffer scale before v3
+    if (!arrow_surf) arrow_surf = wl_compositor_create_surface(compositor);
+    if (!arrow_surf) return;
+    if (arrow_scale != k) {
+        free_shm(&arrow_buf);
+        if (!make_shm(&arrow_buf, 12 * k, 19 * k, 12 * k * 4, WL_SHM_FORMAT_ARGB8888)) return;
+        uint32_t *px = arrow_buf.data;
+        for (int y = 0; y < 19 * k; y++)
+            for (int x = 0; x < 12 * k; x++) {
+                char ch = arrow_art[y / k][x / k];
+                px[y * 12 * k + x] = ch == 'X' ? 0xFF000000 : ch == '.' ? 0xFFFFFFFF : 0;
+            }
+        if (k > 1) wl_surface_set_buffer_scale(arrow_surf, k);
+        wl_surface_attach(arrow_surf, arrow_buf.buf, 0, 0);
+        wl_surface_damage(arrow_surf, 0, 0, 12, 19);
+        wl_surface_commit(arrow_surf);
+        arrow_scale = k;
+    }
+    wl_pointer_set_cursor(pointer, serial, arrow_surf, 0, 0);
+}
+
 static void ptr_enter(void *d, struct wl_pointer *p, uint32_t serial, struct wl_surface *s, wl_fixed_t x, wl_fixed_t y)
 {
+    set_arrow(serial);
     ptr_surface = s;
     ptr_x = wl_fixed_to_double(x);
     ptr_y = wl_fixed_to_double(y);
@@ -534,9 +575,64 @@ static int wl_cap_init(Backend *b)
     return 1;
 }
 
+static int read_int(const char **p)
+{
+    int neg = **p == '-', v = 0;
+    if (neg) (*p)++;
+    if (**p < '0' || **p > '9') return -99999;
+    while (**p >= '0' && **p <= '9' && v < 1000000) v = v * 10 + *(*p)++ - '0';
+    return neg ? -v : v;
+}
+
+// hyprland with software cursors draws the mouse into screencopy even when we ask it not to, so ask where it is
+static int hypr_cursor(double *x, double *y)
+{
+    const char *sig = getenv("HYPRLAND_INSTANCE_SIGNATURE"), *rt = getenv("XDG_RUNTIME_DIR");
+    if (!sig || !*sig || strchr(sig, '/')) return 0;
+    struct sockaddr_un a = {.sun_family = AF_UNIX};
+    for (int k = 0; k < 2; k++) {
+        if (k == 0 && (!rt || !*rt)) continue;
+        int n = k == 0 ? snprintf(a.sun_path, sizeof(a.sun_path), "%s/hypr/%s/.socket.sock", rt, sig)
+                       : snprintf(a.sun_path, sizeof(a.sun_path), "/tmp/hypr/%s/.socket.sock", sig); // older hyprland
+        if (n < 0 || n >= (int)sizeof(a.sun_path)) continue;
+        int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (fd < 0) return 0;
+        struct timeval tv = {0, 100000};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        char buf[64] = {0};
+        int got = 0;
+        if (connect(fd, (struct sockaddr *)&a, sizeof(a)) == 0 && write(fd, "cursorpos", 9) == 9) {
+            ssize_t r;
+            while (got < (int)sizeof(buf) - 1 && (r = read(fd, buf + got, sizeof(buf) - 1 - got)) > 0) got += (int)r;
+        }
+        close(fd);
+        if (got <= 0) continue;
+        const char *p = buf; // "123, 456"
+        int cx = read_int(&p);
+        while (*p == ',' || *p == ' ') p++;
+        int cy = read_int(&p);
+        if (cx == -99999 || cy == -99999) return 0;
+        *x = cx, *y = cy;
+        return 1;
+    }
+    return 0;
+}
+
+static int cursor_size(void)
+{
+    const char *e = getenv("HYPRCURSOR_SIZE");
+    if (!e || !*e) e = getenv("XCURSOR_SIZE");
+    int v = 0;
+    while (e && *e >= '0' && *e <= '9' && v < 1000) v = v * 10 + *e++ - '0';
+    return v >= 8 && v <= 256 ? v : 24;
+}
+
 static int wl_capture(Backend *b)
 {
     sync_outputs();
+    b->cur_ok = hypr_cursor(&b->cur_x, &b->cur_y);
+    b->cur_sz = cursor_size();
     for (int i = 0; i < nouts; i++) {
         WlOut *o = &outs[i];
         if (!o->alive) {

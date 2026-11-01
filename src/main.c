@@ -30,7 +30,7 @@ enum {
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
     ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE, ACT_HIDE, ACT_KEYROW, ACT_SHEET, ACT_SEARCH, ACT_EXPORT,
-    ACT_IMPORT
+    ACT_IMPORT, ACT_EYES
 };
 
 typedef struct {
@@ -157,10 +157,11 @@ static struct {
     int fade_move, fade_line; // fade is the box and everything else. all three are opacity, 0 = 5% up to 19 = solid
     int heatmap, safety, kingdanger, ghost, ghostlook, ghostnum, ghostcolor, arrowanim, style;
     int confview, eyes, findstrict, lockboard, lowpower, dragwait, popups;
+    int eyespos, eyessize;
 // positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
          0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5, 4, 1, 0, 0,
-         0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1},
+         0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1, 0, 2},
   cfg_default; // copied before load_cfg, the reset button goes back to this
 
 static const char *theme_names[NTHEMES];
@@ -171,6 +172,7 @@ static const char *onoff[] = {"Off", "On"};
 static const char *grid_names[] = {"Off", "Lines", "Outline", "Corners"};
 static const char *arrow_names[] = {"Off", "Straight", "Knight bends", "Curve", "Swoosh", "Dashed", "Dotted", "Glow", "Double"};
 static const char *thick_names[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
+static const char *eyespos_names[] = {"Auto", "Left", "Right", "Top", "Bottom"};
 static const char *mark_names[] = {"Off", "Outline", "Filled", "Corners", "Dot", "Ring", "Big dot",
                                    "Cross", "Triangles", "Brackets", "Dashed", "Double", "Glow", "Underline"};
 static const char *color_names[] = {"Theme", "Gold", "Green", "Blue", "Red", "Pink", "Purple", "White", "Orange", "Cyan", "Rainbow", "Black"}; // black goes last so old saves dont shift
@@ -320,7 +322,7 @@ static int is_slider(const int *v) // a bar you click along instead of a dropdow
 {
     return v == &cfg.fade || v == &cfg.fade_move || v == &cfg.fade_line || v == &cfg.size || v == &cfg.thick || v == &cfg.tthick ||
            v == &cfg.ththick || v == &cfg.think || v == &cfg.rate || v == &cfg.threads || v == &cfg.hash || v == &cfg.strength ||
-           v == &cfg.findstrict || v == &cfg.lowpower;
+           v == &cfg.findstrict || v == &cfg.lowpower || v == &cfg.eyessize;
 }
 static int is_button(const int *v) { return v == &cfg.library || v == &cfg.engine || v == &cfg.second || is_action(v); }
 
@@ -407,7 +409,9 @@ static Setting sets[] = {
     {"Show what it sees", "debug", &cfg.debug, 2, onoff, "Vision", "tags every square with what it thinks is there, good for checking it read right"},
     {"Square names", "sqnames", &cfg.sqnames, 2, onoff, NULL, "writes a1, b2 and so on on every square"},
     {"Confidence view", "confview", &cfg.confview, 2, onoff, NULL, "colors each piece by how sure it is, green is sure, yellow is unsure and red is guessing"},
-    {"Show its eyes", "eyes", &cfg.eyes, 2, onoff, NULL, "a small panel next to the board that shows the board the way it reads it"},
+    {"Show its eyes", "eyes", &cfg.eyes, 2, onoff, NULL, "a small panel next to the board that shows the board the way it reads it. click it to make it big"},
+    {"Eyes spot", "eyespos", &cfg.eyespos, 5, eyespos_names, NULL, "where the eyes panel sits, auto picks a side with room"},
+    {"Eyes size", "eyessize", &cfg.eyessize, 10, thick_names, NULL, "how big the eyes panel is"},
     {"Board finder", "findstrict", &cfg.findstrict, 5, strict_names, NULL, "how picky it is about what counts as a board. loose finds weird themes, picky ignores pictures that look like boards"},
     {"Lock board", "lockboard", &cfg.lockboard, 2, onoff, NULL, "sticks to this board so other boards and popups cant steal it"},
     {"Power saver", "lowpower", &cfg.lowpower, 3, power_names, NULL, "looks at the screen less often to save cpu, max is for slow pcs"},
@@ -648,6 +652,10 @@ static int masked_cb(void *ctx, int fx, int fy)
     Output *o = m->o;
     double lx = o->logical.x + fx * o->logical.w / o->frame.w;
     double ly = o->logical.y + fy * o->logical.h / o->frame.h;
+    if (cap->cur_ok) { // the mouse, room for a hand cursor whose tip is in the middle
+        double z = cap->cur_sz;
+        if (lx >= cap->cur_x - z * 0.6 && lx <= cap->cur_x + z * 1.1 && ly >= cap->cur_y - z * 0.3 && ly <= cap->cur_y + z * 1.1) return 1;
+    }
     for (int i = 0; i < ov->ncanvas; i++) {
         Canvas *c = ov->canvas(ov, i);
         if (!c) continue;
@@ -1226,12 +1234,16 @@ static double ease(long since, int ms)
     return 1 - (1 - t) * (1 - t) * (1 - t);
 }
 
+static long eyes_t = -100000;
+static int eyes_big;
+
 static int animating(void)
 {
     long n = now_ms();
     // a bit longer than each ease() so the last frame lands at 1
     return n - menu_t < 200 || n - menu_shut < 140 || n - set_t < 220 || n - set_shut < 140 || n - lib_t < 240 ||
-           n - conf_t < 200 || n - tab_t < 200 || n - dd_t < 170 || n - tog_t < 170 || n - pick_t < 240 || bar_moving || arrow_busy;
+           n - conf_t < 200 || n - tab_t < 200 || n - dd_t < 170 || n - tog_t < 170 || n - pick_t < 240 || n - eyes_t < 340 || bar_moving ||
+           arrow_busy;
 }
 
 static void track_anims(void)
@@ -2963,7 +2975,7 @@ static void draw_confidence(Canvas *c, Rect bl, int bottom)
 }
 
 // the board the way the vision reads it, pieces as it masks them
-static void draw_eyes(Canvas *c, Rect bl, Rect outr, int bottom)
+static void draw_eyes(Canvas *c, Rect bl, Rect outr, int bottom, int hit)
 {
     if (!have_last) return;
     static uint32_t img[8 * FEAT_N * 8 * FEAT_N];
@@ -2980,13 +2992,32 @@ static void draw_eyes(Canvas *c, Rect bl, Rect outr, int bottom)
             img[(r * FEAT_N + i / FEAT_N) * W + col * FEAT_N + i % FEAT_N] = v == 1 && o != OBS_EMPTY ? ink : v == 0.5f ? 0xFF6A2A60 : back;
         }
     }
-    double sz = fmin(200, bl.w * 0.45);
-    Rect p = {bl.x - sz - 18, bl.y, sz + 12, sz + 34};
-    if (p.x < outr.x) p.x = bl.x + bl.w + 6;
-    if (p.x + p.w > outr.x + outr.w) p.x = bl.x + 6, p.y = bl.y + 6; // no room either side, sit on the board
-    panel_bg(c, p, 10, faded(TH->panel));
-    draw_text(c, p.x + 8, p.y + 4, "what it sees", 0, TH->title);
-    draw_image(c, (Rect){p.x + 6, p.y + 28, sz, sz}, img, W, W);
+    double sz = 100 + 40 * cfg.eyessize;
+    Rect p = {0, 0, sz + 12, sz + 34};
+    Rect left = {bl.x - p.w - 6, bl.y, p.w, p.h}, right = {bl.x + bl.w + 6, bl.y, p.w, p.h}, top = {bl.x, bl.y - p.h - 6, p.w, p.h},
+         under = {bl.x, bl.y + bl.w + 6, p.w, p.h};
+    Rect *try[4] = {&left, &right, &top, &under};
+    int pick = cfg.eyespos ? cfg.eyespos - 1 : 0;
+    for (int k = 0; k < 4; k++) { // the one asked for, or the next one that fits on the screen
+        Rect *t = try[(pick + k) % 4];
+        if (t->x >= outr.x && t->y >= outr.y && t->x + p.w <= outr.x + outr.w && t->y + p.h <= outr.y + outr.h) {
+            p.x = t->x, p.y = t->y;
+            break;
+        }
+        if (k == 3) p.x = bl.x + 6, p.y = bl.y + 6; // no room anywhere, sit on the board
+    }
+    double big = fmin(outr.w, outr.h) * 0.92 - 34;
+    Rect f = {outr.x + (outr.w - big - 12) / 2, outr.y + (outr.h - big - 34) / 2, big + 12, big + 34};
+    double e = ease(eyes_t, 320);
+    if (!eyes_big) e = 1 - e;
+    Rect q = {p.x + (f.x - p.x) * e, p.y + (f.y - p.y) * e, p.w + (f.w - p.w) * e, p.h + (f.h - p.h) * e};
+    if (e > 0) draw_rect(c, outr, (uint32_t)(e * 0x90) << 24); // dims the rest while its big
+    panel_bg(c, q, 10, e > 0 ? TH->panel | 0xFF000000 : faded(TH->panel));
+    draw_text(c, q.x + 8, q.y + 4, eyes_big ? "what it sees  (paused, click anywhere to close)" : "what it sees", 0, TH->title);
+    draw_image(c, (Rect){q.x + 6, q.y + 28, q.w - 12, q.h - 34}, img, W, W);
+    if (!hit) return;
+    if (eyes_big) add_hit(outr, ACT_EYES); // any click puts it back
+    else add_hit(p, ACT_EYES);
 }
 
 static void redraw(void)
@@ -3237,7 +3268,7 @@ static void redraw(void)
                 canvas_erase(c, (Rect){po->logical.x + last_rd.popup.x * k, po->logical.y + last_rd.popup.y * k, last_rd.popup.w * k,
                                        last_rd.popup.h * k});
             }
-            if (cfg.eyes) draw_eyes(c, bl, outr, bottom);
+            if (cfg.eyes && !eyes_big && now_ms() - eyes_t >= 340) draw_eyes(c, bl, outr, bottom, i == lead);
             if (cfg.evalbar && have_an && nlegal) draw_evalbar(c, bl, &an, bottom, tracker.pos.side);
             snprintf(line2, sizeof(line2), "You: %s  |  %s d%d  |  %s", wb ? "White" : "Black",
                      engine_name, have_an ? an.depth : 0, now_ms() < note_until ? note : tracker.status);
@@ -3389,6 +3420,8 @@ static void redraw(void)
             }
             draw_extras(c, bl, p, outr, i == lead);
         }
+        if (state == TRACKING && cfg.eyes && (eyes_big || now_ms() - eyes_t < 340)) // big or growing, goes over everything
+            draw_eyes(c, bl, outr, tracker.white_bottom, i == lead);
     }
     keys_finish();
     Rect hr[MAX_HITS];
@@ -3810,6 +3843,7 @@ static void tick(void)
     }
     dump_frame();
     log_analysis();
+    if (state == TRACKING && (eyes_big || now_ms() - eyes_t < 450)) return; // the big eyes cover the board, nothing to read till its small again
     if (state == SCANNING) {
         static int scores[MAX_OUTPUTS];
         int quiet = overlay_empty(); // nothing of ours on screen, so skip asking about every pixel
@@ -5552,6 +5586,11 @@ static void handle_click(double x, double y)
             break;
         case ACT_QUIT_NO:
             confirm_quit = 0;
+            break;
+        case ACT_EYES:
+            eyes_big = !eyes_big;
+            eyes_t = now_ms();
+            redraw();
             break;
         case ACT_HIDE:
         case ACT_KEYROW:
