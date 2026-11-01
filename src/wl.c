@@ -182,8 +182,10 @@ static void ptr_motion(void *d, struct wl_pointer *p, uint32_t t, wl_fixed_t x, 
     ptr_x = wl_fixed_to_double(x);
     ptr_y = wl_fixed_to_double(y);
 }
+static int ptr_down;
 static void ptr_button(void *d, struct wl_pointer *p, uint32_t serial, uint32_t t, uint32_t button, uint32_t state)
 {
+    if (button == 0x110) ptr_down = state == WL_POINTER_BUTTON_STATE_PRESSED; // BTN_LEFT
     if (state != WL_POINTER_BUTTON_STATE_PRESSED || !ptr_surface) return;
     for (int i = 0; i < nouts; i++)
         if (outs[i].surface == ptr_surface) {
@@ -779,6 +781,15 @@ static int wl_pointer_at(Overlay *ov, double *x, double *y)
     return 0;
 }
 
+static int wl_held(Overlay *ov, double *x, double *y)
+{
+    if (!ptr_down) return 0;
+    wl_display_dispatch_pending(dpy); // motion events land here while you drag
+    for (int i = 0; i < nouts; i++) // the press grabs the pointer, so it keeps reporting even off our hit areas
+        if (outs[i].surface == ptr_surface) *x = outs[i].lx + ptr_x, *y = outs[i].ly + ptr_y;
+    return ptr_down;
+}
+
 static void wl_keyboard_mode(Overlay *ov, int on)
 {
     kb_on = on;
@@ -791,5 +802,5 @@ static void wl_keyboard_mode(Overlay *ov, int on)
     wl_display_flush(dpy);
 }
 
-static Overlay wl_overlay = {"layer-shell", wl_ov_init, wl_canvas, 0, wl_commit, wl_wait, NULL, wl_keyboard_mode, 0, wl_pointer_at};
+static Overlay wl_overlay = {"layer-shell", wl_ov_init, wl_canvas, 0, wl_commit, wl_wait, NULL, wl_keyboard_mode, 0, wl_pointer_at, wl_held};
 Overlay *overlay_wl(void) { return &wl_overlay; }

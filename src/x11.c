@@ -161,7 +161,7 @@ static int x_init(Overlay *ov, Backend *cap)
     XserverRegion empty = X.FixesCreateRegion(xs.dpy, NULL, 0);
     X.FixesSetWindowShapeRegion(xs.dpy, xs.win, ShapeInput, 0, 0, empty);
     X.FixesDestroyRegion(xs.dpy, empty);
-    X.SelectInput(xs.dpy, xs.win, ButtonPressMask | ExposureMask | KeyPressMask | PointerMotionMask | EnterWindowMask | LeaveWindowMask);
+    X.SelectInput(xs.dpy, xs.win, ButtonPressMask | ButtonReleaseMask | ExposureMask | KeyPressMask | PointerMotionMask | EnterWindowMask | LeaveWindowMask);
     xs.gc = X.CreateGC(xs.dpy, xs.win, 0, NULL);
     xs.cap = cap;
     xs.gen = cap->out_gen;
@@ -309,8 +309,16 @@ static long now_ms(void)
     return t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 
-static int ptr_in;
+static int ptr_in, ptr_down;
 static double ptr_x, ptr_y;
+
+static int x_held(Overlay *ov, double *x, double *y)
+{
+    double cx, cy;
+    if (ptr_down) ov->wait_events(ov, 0, &cx, &cy); // pulls in the motion and the release
+    *x = ptr_x, *y = ptr_y;
+    return ptr_down;
+}
 
 static int x_pointer(Overlay *ov, double *x, double *y)
 {
@@ -335,7 +343,12 @@ static int x_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
                 ptr_in = 0;
                 continue;
             }
+            if (e.type == ButtonRelease) {
+                if (e.xbutton.button == 1) ptr_down = 0;
+                continue;
+            }
             if (e.type == ButtonPress) {
+                if (e.xbutton.button == 1) ptr_down = 1;
                 *cx = (e.xbutton.x + xs.bx) / xs.scale;
                 *cy = (e.xbutton.y + xs.by) / xs.scale;
                 if (e.xbutton.button == 4 || e.xbutton.button == 5) { // 4/5 = wheel
@@ -444,5 +457,5 @@ static int xcap_capture(Backend *b)
 static Backend x_backend = {.name = "x11-getimage", .init = xcap_init, .capture = xcap_capture};
 Backend *backend_x11(void) { return &x_backend; }
 
-static Overlay x_overlay = {"x11", x_init, x_canvas, 0, x_commit, x_wait, NULL, x_keyboard, 0, x_pointer};
+static Overlay x_overlay = {"x11", x_init, x_canvas, 0, x_commit, x_wait, NULL, x_keyboard, 0, x_pointer, x_held};
 Overlay *overlay_x11(void) { return &x_overlay; }

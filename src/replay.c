@@ -194,5 +194,13 @@ static int ro_pointer(Overlay *ov, double *x, double *y)
     return got;
 }
 
-static Overlay ro_overlay = {"replay", ro_init, ro_canvas, 0, ro_commit, ro_wait, NULL, NULL, 0, ro_pointer};
+static int ro_held(Overlay *ov, double *x, double *y)
+{
+    const char *h = getenv("OPEN_CHEASE_HELD"); // test hook, "a-b" holds the button down from frame a to b
+    if (!h) return 0;
+    int a = num(&h), b = *h == '-' ? (h++, num(&h)) : a;
+    return frame_no - 1 >= a && frame_no - 1 <= b && ro_pointer(ov, x, y);
+}
+
+static Overlay ro_overlay = {"replay", ro_init, ro_canvas, 0, ro_commit, ro_wait, NULL, NULL, 0, ro_pointer, ro_held};
 Overlay *overlay_replay(void) { return &ro_overlay; }

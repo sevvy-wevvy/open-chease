@@ -350,6 +350,14 @@ static int win_pointer(Overlay *ov, double *x, double *y)
     return 1;
 }
 
+static int win_held(Overlay *ov, double *x, double *y)
+{
+    POINT p;
+    if (!(GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON) & 0x8000) || !GetCursorPos(&p)) return 0;
+    *x = p.x / scale, *y = p.y / scale;
+    return 1;
+}
+
 static int win_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
 {
     DWORD end = GetTickCount() + (DWORD)(timeout_ms > 0 ? timeout_ms : 0);
@@ -398,5 +406,5 @@ static void win_keyboard(Overlay *ov, int on)
     if (!on) before_kb = NULL;
 }
 
-static Overlay win_overlay = {"layered window", win_ov_init, win_canvas, 0, win_commit, win_wait, NULL, win_keyboard, 0, win_pointer};
+static Overlay win_overlay = {"layered window", win_ov_init, win_canvas, 0, win_commit, win_wait, NULL, win_keyboard, 0, win_pointer, win_held};
 Overlay *overlay_win(void) { return &win_overlay; }
