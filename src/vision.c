@@ -647,7 +647,28 @@ static double piece_fill_lum(const Frame *f, double x0, double y0, double s, con
                 dark++;
         }
     if (cnt < n * n / 40 || bright + dark < cnt / 8) return -1;
-    return 255.0 * bright / (bright + dark);
+    double ratio = 255.0 * bright / (bright + dark);
+    // some sets have a grey fill with a light glow round it, peel the edge off and the middle is the real color
+    int peel = (int)(n * 0.07);
+    for (int it = 0; it < peel; it++) {
+        for (int j = 1; j <= n; j++)
+            for (int i = 1; i <= n; i++) {
+                int q = j * W + i;
+                if (m[q] != 2 && (m[q - 1] == 2 || m[q + 1] == 2 || m[q - W] == 2 || m[q + W] == 2)) m[q] = 3;
+            }
+        for (int q = 0; q < W * W; q++)
+            if (m[q] == 3) m[q] = 2;
+    }
+    int h[256] = {0}, nh = 0;
+    for (int j = 1; j <= n; j++)
+        for (int i = 1; i <= n; i++) {
+            int q = j * W + i;
+            if (m[q] != 2 && lm[q] != 128) h[lm[q]]++, nh++;
+        }
+    if (nh < cnt / 6) return ratio;
+    int v = 0, acc = 0;
+    while (v < 255 && (acc += h[v]) <= nh / 2) v++;
+    return v > 80 && v < 170 ? v : ratio; // only steps in where the old count is blind
 }
 
 static int display_to_sq(int r, int c, int white_bottom)
