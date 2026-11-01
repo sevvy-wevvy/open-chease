@@ -73,6 +73,7 @@ typedef struct Overlay {
     void *priv;
     void (*keyboard)(struct Overlay *o, int on);
     int key; // wait_events 2 = key, 3 = scroll (+1 down, -1 up)
+    int (*pointer)(struct Overlay *o, double *x, double *y); // 1 if the mouse is over one of our hit areas, logical coords. can be NULL
 } Overlay;
 
 int backend_wl_init_shared(void);

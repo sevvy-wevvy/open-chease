@@ -161,7 +161,7 @@ static int x_init(Overlay *ov, Backend *cap)
     XserverRegion empty = X.FixesCreateRegion(xs.dpy, NULL, 0);
     X.FixesSetWindowShapeRegion(xs.dpy, xs.win, ShapeInput, 0, 0, empty);
     X.FixesDestroyRegion(xs.dpy, empty);
-    X.SelectInput(xs.dpy, xs.win, ButtonPressMask | ExposureMask | KeyPressMask);
+    X.SelectInput(xs.dpy, xs.win, ButtonPressMask | ExposureMask | KeyPressMask | PointerMotionMask | EnterWindowMask | LeaveWindowMask);
     xs.gc = X.CreateGC(xs.dpy, xs.win, 0, NULL);
     xs.cap = cap;
     xs.gen = cap->out_gen;
@@ -309,6 +309,16 @@ static long now_ms(void)
     return t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
 
+static int ptr_in;
+static double ptr_x, ptr_y;
+
+static int x_pointer(Overlay *ov, double *x, double *y)
+{
+    if (!ptr_in) return 0;
+    *x = ptr_x, *y = ptr_y;
+    return 1;
+}
+
 static int x_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
 {
     long deadline = now_ms() + timeout_ms;
@@ -316,6 +326,15 @@ static int x_wait(Overlay *ov, int timeout_ms, double *cx, double *cy)
         while (X.Pending(xs.dpy)) {
             XEvent e;
             X.NextEvent(xs.dpy, &e);
+            if (e.type == MotionNotify || e.type == EnterNotify) {
+                int mx = e.type == MotionNotify ? e.xmotion.x : e.xcrossing.x, my = e.type == MotionNotify ? e.xmotion.y : e.xcrossing.y;
+                ptr_in = 1, ptr_x = (mx + xs.bx) / xs.scale, ptr_y = (my + xs.by) / xs.scale;
+                continue;
+            }
+            if (e.type == LeaveNotify) {
+                ptr_in = 0;
+                continue;
+            }
             if (e.type == ButtonPress) {
                 *cx = (e.xbutton.x + xs.bx) / xs.scale;
                 *cy = (e.xbutton.y + xs.by) / xs.scale;
@@ -425,5 +444,5 @@ static int xcap_capture(Backend *b)
 static Backend x_backend = {.name = "x11-getimage", .init = xcap_init, .capture = xcap_capture};
 Backend *backend_x11(void) { return &x_backend; }
 
-static Overlay x_overlay = {"x11", x_init, x_canvas, 0, x_commit, x_wait, NULL, x_keyboard, 0};
+static Overlay x_overlay = {"x11", x_init, x_canvas, 0, x_commit, x_wait, NULL, x_keyboard, 0, x_pointer};
 Overlay *overlay_x11(void) { return &x_overlay; }

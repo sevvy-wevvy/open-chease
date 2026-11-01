@@ -152,9 +152,10 @@ static struct {
     int movelist, danger, session;
     int threats, hints, level, second;
     int hcolor, hstyle;
+    int tharrow, thcolor, ththick; // threat and danger arrows
 // positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
-         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0},
+         0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5, 4, 1},
   cfg_default; // copied before load_cfg, the reset button goes back to this
 
 static const char *theme_names[NTHEMES];
@@ -310,71 +311,75 @@ typedef struct {
     int *v, n;
     const char **names;
     const char *section;
+    const char *tip; // shows when the mouse sits on the row
 } Setting;
 
 static Setting sets[] = {
-    {"Theme", "theme", &cfg.theme, NTHEMES, theme_names, "Look"},
-    {"Box spot", "spot", &cfg.spot, 4, spot_names, NULL},
-    {"Box size", "size", &cfg.size, 3, size_names, NULL},
-    {"See-through", "fade", &cfg.fade, 4, fade_names, NULL},
-    {"Grid", "grid", &cfg.grid, 4, grid_names, NULL},
-    {"Grid color", "gcolor", &cfg.gcolor, 11, color_names, NULL},
-    {"Status line", "status", &cfg.status, 2, onoff, NULL},
-    {"Show score", "score", &cfg.score, 2, onoff, NULL},
-    {"Score as", "scorefmt", &cfg.scorefmt, 3, scorefmt_names, NULL},
-    {"Eval bar", "evalbar", &cfg.evalbar, 3, evalbar_names, NULL},
-    {"Mode", "mode", &cfg.mode, 3, mode_names, "Fun"},
-    {"Move picker", "picker", &cfg.chaos, 12, chaos_names, NULL},
-    {"Strength", "strength", &cfg.strength, 5, strength_names, NULL},
-    {"Trash talk", "trash", &cfg.trash, 2, onoff, NULL},
-    {"Rate my moves", "rateme", &cfg.rateme, 2, onoff, NULL},
-    {"Confetti", "confetti", &cfg.confetti, 2, onoff, NULL},
-    {"Arrow", "arrow", &cfg.arrow, 9, arrow_names, "Yours"},
-    {"Arrow size", "thick", &cfg.thick, 4, thick_names, NULL},
-    {"Piece to move", "from", &cfg.from, 14, mark_names, NULL},
-    {"Where it goes", "to", &cfg.to, 14, mark_names, NULL},
-    {"Move name", "label", &cfg.label, 2, onoff, NULL},
-    {"Top moves", "lines", &cfg.lines, 3, lines_names, NULL},
-    {"Color", "mcolor", &cfg.mcolor, 11, color_names, NULL},
-    {"Show", "hint", &cfg.hint, 3, hint_names, NULL},
-    {"Show it", "delay", &cfg.delay, 3, delay_names, NULL},
-    {"Engine", "engine", &cfg.engine, 1, engine_names, "Engine"},
-    {"Get engines", "library", &cfg.library, 1, lib_names, NULL},
-    {"Think time", "think", &cfg.think, 5, think_names, NULL},
-    {"Updates", "rate", &cfg.rate, 3, rate_names, NULL},
-    {"Threads", "threads", &cfg.threads, 5, threads_names, NULL},
-    {"Memory", "hash", &cfg.hash, 5, hash_names, NULL},
-    {"Their turn too", "theirtoo", &cfg.theirtoo, 2, onoff, NULL},
-    {"Second opinion", "second", &cfg.second, 1, second_names, NULL},
-    {"Show", "theirs", &cfg.theirs, 4, theirs_names, "Theirs"},
-    {"Arrow", "tarrow", &cfg.tarrow, 9, arrow_names, NULL},
-    {"Arrow size", "tthick", &cfg.tthick, 4, thick_names, NULL},
-    {"Piece to move", "tfrom", &cfg.tfrom, 14, mark_names, NULL},
-    {"Where it goes", "tto", &cfg.tto, 14, mark_names, NULL},
-    {"Move name", "tlabel", &cfg.tlabel, 2, onoff, NULL},
-    {"Color", "tcolor", &cfg.tcolor, 11, color_names, NULL},
-    {"Material", "material", &cfg.material, 2, onoff, "Helper"},
-    {"Taken pieces", "taken", &cfg.taken, 2, onoff, NULL},
-    {"Opening & phase", "opening", &cfg.opening, 2, onoff, NULL},
-    {"Win graph", "wgraph", &cfg.wgraph, 2, onoff, NULL},
-    {"Turn timer", "timer", &cfg.timer, 2, onoff, NULL},
-    {"Game report", "report", &cfg.report, 2, onoff, NULL},
-    {"Last move", "lastmove", &cfg.lastmove, 2, onoff, NULL},
-    {"Check warning", "checkwarn", &cfg.checkwarn, 2, onoff, NULL},
-    {"Hanging pieces", "hanging", &cfg.hanging, 4, hang_names, NULL},
-    {"Hanging color", "hcolor", &cfg.hcolor, 11, color_names, NULL},
-    {"Hanging look", "hstyle", &cfg.hstyle, 5, hstyle_names, NULL},
-    {"Move list", "movelist", &cfg.movelist, 2, onoff, NULL},
-    {"Danger alerts", "danger", &cfg.danger, 2, onoff, NULL},
-    {"Session score", "session", &cfg.session, 2, onoff, NULL},
-    {"Threats", "threats", &cfg.threats, 3, threat_names, NULL},
-    {"Hint button", "hints", &cfg.hints, 2, onoff, NULL},
-    {"What a ___ plays", "level", &cfg.level, 5, level_names, NULL},
-    {"Show what it sees", "debug", &cfg.debug, 2, onoff, "Vision"},
-    {"Square names", "sqnames", &cfg.sqnames, 2, onoff, NULL},
-    {"Rescan board", "rescan", &btn_rescan, 1, NULL, NULL},
-    {"Teach these pieces", "teach", &btn_teach, 1, NULL, NULL},
-    {"Forget learned pieces", "forget", &btn_forget, 1, NULL, NULL},
+    {"Theme", "theme", &cfg.theme, NTHEMES, theme_names, "Look", "the colors for the whole thing, the Themes tab has more and lets you make your own"},
+    {"Box spot", "spot", &cfg.spot, 4, spot_names, NULL, "where the info box sits around the board, move it if its covering something"},
+    {"Box size", "size", &cfg.size, 3, size_names, NULL, "how big the info box and its text are"},
+    {"See-through", "fade", &cfg.fade, 4, fade_names, NULL, "makes the box and arrows see-through so you can still see the game under them"},
+    {"Grid", "grid", &cfg.grid, 4, grid_names, NULL, "draws lines on the squares, handy to check it found the board right"},
+    {"Grid color", "gcolor", &cfg.gcolor, 11, color_names, NULL, "what color the grid is"},
+    {"Status line", "status", &cfg.status, 2, onoff, NULL, "the small line with your team, the engine and what its doing"},
+    {"Show score", "score", &cfg.score, 2, onoff, NULL, "shows whos winning as a number next to the move"},
+    {"Score as", "scorefmt", &cfg.scorefmt, 3, scorefmt_names, NULL, "pawns is +1.5 style, centipawns is +150, win % is your chance of winning"},
+    {"Eval bar", "evalbar", &cfg.evalbar, 3, evalbar_names, NULL, "a black and white bar next to the board like on chess sites, shows whos ahead"},
+    {"Mode", "mode", &cfg.mode, 3, mode_names, "Fun", "cheats shows moves, helper only gives tips without moves, both does both"},
+    {"Move picker", "picker", &cfg.chaos, 12, chaos_names, NULL, "which move it shows you. best is best, the rest are for messing around"},
+    {"Strength", "strength", &cfg.strength, 5, strength_names, NULL, "caps how strong the engine plays, lower ones look more human"},
+    {"Trash talk", "trash", &cfg.trash, 2, onoff, NULL, "adds a little roast to the move line, just for fun"},
+    {"Rate my moves", "rateme", &cfg.rateme, 2, onoff, NULL, "grades every move after you play it, from ! to ??"},
+    {"Confetti", "confetti", &cfg.confetti, 2, onoff, NULL, "confetti on the board when you checkmate them"},
+    {"Arrow", "arrow", &cfg.arrow, 9, arrow_names, "Yours", "how the arrow for your best move looks, or off for no arrow"},
+    {"Arrow size", "thick", &cfg.thick, 4, thick_names, NULL, "how thick your move arrow is"},
+    {"Piece to move", "from", &cfg.from, 14, mark_names, NULL, "marks the piece you should move"},
+    {"Where it goes", "to", &cfg.to, 14, mark_names, NULL, "marks the square it should go to"},
+    {"Move name", "label", &cfg.label, 2, onoff, NULL, "writes the move like Nf3 on the board"},
+    {"Top moves", "lines", &cfg.lines, 3, lines_names, NULL, "shows the 2nd and 3rd best moves too, as thinner arrows with a number on them"},
+    {"Color", "mcolor", &cfg.mcolor, 11, color_names, NULL, "color of your arrow and marks, theme uses the themes own color"},
+    {"Show", "hint", &cfg.hint, 3, hint_names, NULL, "show the whole move, just which piece to move, or just where something goes"},
+    {"Show it", "delay", &cfg.delay, 3, delay_names, NULL, "waits a bit before showing the move so you think first"},
+    {"Engine", "engine", &cfg.engine, 1, engine_names, "Engine", "which chess engine does the thinking, opens the engine list"},
+    {"Get engines", "library", &cfg.library, 1, lib_names, NULL, "download more engines, some are stronger and some are just weird"},
+    {"Think time", "think", &cfg.think, 5, think_names, NULL, "how long it thinks each move. longer is stronger but slower"},
+    {"Updates", "rate", &cfg.rate, 3, rate_names, NULL, "how often it looks at the screen, faster catches moves quicker but uses more cpu"},
+    {"Threads", "threads", &cfg.threads, 5, threads_names, NULL, "how many cpu cores the engine gets, auto is fine for most pcs"},
+    {"Memory", "hash", &cfg.hash, 5, hash_names, NULL, "how much ram the engine gets, more helps a bit on long thinks"},
+    {"Their turn too", "theirtoo", &cfg.theirtoo, 2, onoff, NULL, "keeps the engine thinking on their turn too so it can guess their move"},
+    {"Second opinion", "second", &cfg.second, 1, second_names, NULL, "a second engine checks the first one and tells you when they disagree"},
+    {"Show", "theirs", &cfg.theirs, 4, theirs_names, "Theirs", "shows what they will probably play, as text, on the board or both"},
+    {"Arrow", "tarrow", &cfg.tarrow, 9, arrow_names, NULL, "how the arrow for their move looks"},
+    {"Arrow size", "tthick", &cfg.tthick, 4, thick_names, NULL, "how thick their move arrow is"},
+    {"Piece to move", "tfrom", &cfg.tfrom, 14, mark_names, NULL, "marks the piece theyll probably move"},
+    {"Where it goes", "tto", &cfg.tto, 14, mark_names, NULL, "marks where theyll probably move it"},
+    {"Move name", "tlabel", &cfg.tlabel, 2, onoff, NULL, "writes their move like Nf3 on the board"},
+    {"Color", "tcolor", &cfg.tcolor, 11, color_names, NULL, "color of their arrow and marks"},
+    {"Material", "material", &cfg.material, 2, onoff, "Helper", "shows whos up in material, like +3"},
+    {"Taken pieces", "taken", &cfg.taken, 2, onoff, NULL, "lists the pieces each side has taken"},
+    {"Opening & phase", "opening", &cfg.opening, 2, onoff, NULL, "names the opening youre in and if its the opening, middlegame or endgame"},
+    {"Win graph", "wgraph", &cfg.wgraph, 2, onoff, NULL, "a little graph of who was winning over the game"},
+    {"Turn timer", "timer", &cfg.timer, 2, onoff, NULL, "how long the current turn has been going"},
+    {"Game report", "report", &cfg.report, 2, onoff, NULL, "when the game ends it shows how accurate you both played"},
+    {"Last move", "lastmove", &cfg.lastmove, 2, onoff, NULL, "outlines the two squares of the last move"},
+    {"Check warning", "checkwarn", &cfg.checkwarn, 2, onoff, NULL, "puts a red ring on the king when its in check"},
+    {"Hanging pieces", "hanging", &cfg.hanging, 4, hang_names, NULL, "marks pieces that can be taken for free, yours, theirs or both"},
+    {"Hanging color", "hcolor", &cfg.hcolor, 11, color_names, NULL, "color of the hanging piece marks"},
+    {"Hanging look", "hstyle", &cfg.hstyle, 5, hstyle_names, NULL, "how hanging pieces get marked"},
+    {"Move list", "movelist", &cfg.movelist, 2, onoff, NULL, "shows the last few moves of the game"},
+    {"Danger alerts", "danger", &cfg.danger, 3, threat_names, NULL, "warns when something of yours can get taken cheap. with arrow also draws who attacks it"},
+    {"Session score", "session", &cfg.session, 2, onoff, NULL, "counts your wins, losses and draws since you opened it"},
+    {"Threats", "threats", &cfg.threats, 3, threat_names, NULL, "shows what theyd do if they got a free move, like a fork. with arrow draws it too"},
+    {"Threat arrow", "threatarrow", &cfg.tharrow, 9, arrow_names, NULL, "how the threat and danger arrows look"},
+    {"Threat color", "threatcolor", &cfg.thcolor, 11, color_names, NULL, "color of the threat and danger arrows"},
+    {"Threat size", "threatsize", &cfg.ththick, 4, thick_names, NULL, "how thick the threat and danger arrows are"},
+    {"Hint button", "hints", &cfg.hints, 2, onoff, NULL, "adds a hint button, each click shows a bit more of the best move"},
+    {"What a ___ plays", "level", &cfg.level, 5, level_names, NULL, "shows what a player at that rating would probably play here"},
+    {"Show what it sees", "debug", &cfg.debug, 2, onoff, "Vision", "tags every square with what it thinks is there, good for checking it read right"},
+    {"Square names", "sqnames", &cfg.sqnames, 2, onoff, NULL, "writes a1, b2 and so on on every square"},
+    {"Rescan board", "rescan", &btn_rescan, 1, NULL, NULL, "reads the whole board again from scratch if it got lost"},
+    {"Teach these pieces", "teach", &btn_teach, 1, NULL, NULL, "learns your piece set from the board right now. fix wrong pieces first"},
+    {"Forget learned pieces", "forget", &btn_forget, 1, NULL, NULL, "throws away the pieces it learned and goes back to the built in ones"},
 };
 #define NSET ((int)(sizeof(sets) / sizeof(sets[0])))
 static int dd_open = -1;
@@ -460,7 +465,7 @@ static void save_cfg(void)
     }
     fclose(f);
 }
-static char note[96];
+static char note[128];
 static long note_until;
 static char **g_argv;
 static int nhits;
@@ -1373,6 +1378,76 @@ static int tab_of(int i)
     return t;
 }
 
+static double hov_x, hov_y;
+static long hov_t;
+static int hov_in, tip_wait, tip_shown;
+static const char *tip_text;
+
+static int hover_moved(void) // 1 = the tooltip has to show up or go away
+{
+    double x = 0, y = 0;
+    int in = ov->pointer && ov->pointer(ov, &x, &y);
+    if (in != hov_in || fabs(x - hov_x) > 1 || fabs(y - hov_y) > 1) {
+        hov_in = in, hov_x = x, hov_y = y, hov_t = now_ms();
+        return tip_shown;
+    }
+    return tip_wait && now_ms() - hov_t >= 500;
+}
+
+static void tip_spot(Rect r, const char *t)
+{
+    if (t && hov_in && hov_x >= r.x && hov_x < r.x + r.w && hov_y >= r.y && hov_y < r.y + r.h) tip_text = t;
+}
+
+static int wrap_text(Canvas *c, const char *t, double maxw, char out[][100], int max)
+{
+    int n = 0;
+    while (*t == ' ') t++;
+    while (*t && n < max) {
+        size_t end = 0, k = 0;
+        while (t[k]) {
+            size_t w = k;
+            while (t[w] == ' ') w++;
+            while (t[w] && t[w] != ' ') w++;
+            if (w > 98) break;
+            char buf[100];
+            memcpy(buf, t, w), buf[w] = 0;
+            if (end && text_lw(c, buf, 0) > maxw) break;
+            end = k = w;
+        }
+        if (!end) end = 98;
+        if (n == max - 1 && t[end]) snprintf(out[n], 100, "%s", fit_text(c, t, maxw)); // out of lines, ... the rest
+        else memcpy(out[n], t, end), out[n][end] = 0;
+        n++;
+        t += end;
+        while (*t == ' ') t++;
+    }
+    return n;
+}
+
+static void draw_tip(Canvas *c, Rect outr, Rect bl)
+{
+    char ln[3][100];
+    int n = wrap_text(c, tip_text, 250, ln, 3);
+    double w = 0;
+    for (int k = 0; k < n; k++) w = fmax(w, text_lw(c, ln[k], 0));
+    Rect r = {hov_x + 14, hov_y + 22, w + 20, n * 18 + 10};
+    if (r.x + r.w > outr.x + outr.w - 4) r.x = outr.x + outr.w - 4 - r.w;
+    if (r.x < outr.x + 4) r.x = outr.x + 4;
+    if (r.y + r.h > outr.y + outr.h - 4) r.y = hov_y - r.h - 10; // no room under the mouse, go above it
+    covers(r, bl);
+    panel_bg(c, r, 8, TH->menu);
+    for (int k = 0; k < n; k++) draw_text(c, r.x + 10, r.y + 5 + k * 18, ln[k], 0, TH->item_fg);
+}
+
+static const char *teach_steps[] = {
+    "1. open a game so the board is on screen",
+    "2. hit ... > Fix pieces, click a wrong square and pick whats really there",
+    "3. do that for every wrong one, then hit Done fixing",
+    "4. come back here and hit Teach these pieces, it remembers them for this board",
+};
+#define TAB_VISION 6
+
 static uint32_t swatch(int i)
 {
     if (i >= 60) { // 12 hues x 5 shades, then a row of greys
@@ -1402,6 +1477,7 @@ static void draw_theme_card(Canvas *c, Rect r, int ti, int hit)
     for (int k = 0; k < 4; k++)
         draw_round_rect(c, (Rect){r.x + 8 + k * 15, r.y + r.h - 16, 11, 11}, 5.5, dots[k] | 0xFF000000);
     if (hit) add_hit_arg(r, ACT_THEME, ti);
+    tip_spot(r, "click to use this theme");
 }
 
 static double themes_tab(Canvas *c, Rect m, double y, double pad, int draw, int hit)
@@ -1426,6 +1502,7 @@ static double themes_tab(Canvas *c, Rect m, double y, double pad, int draw, int 
         if (draw) {
             draw_button(c, b, themes[CUSTOM0 + k].name, on ? TH->title : TH->btn, on ? 0xFF181818 : TH->btn_fg);
             if (hit) add_hit_arg(b, ACT_CSLOT, k);
+            tip_spot(b, "your own themes, pick one to edit it. hit it in the list above to use it");
         }
         bx += 90;
     }
@@ -1435,6 +1512,7 @@ static double themes_tab(Canvas *c, Rect m, double y, double pad, int draw, int 
     if (draw) {
         draw_button(c, cp, cpl, TH->btn, TH->btn_fg);
         if (hit) add_hit(cp, ACT_CCOPY);
+        tip_spot(cp, "fills this slot with a theme you already have so you dont start from nothing");
     }
     y += 34;
     double lw = 150, sw = 22, sg = 4, pw = 12 * (sw + sg);
@@ -1447,6 +1525,7 @@ static double themes_tab(Canvas *c, Rect m, double y, double pad, int draw, int 
             draw_round_rect(c, (Rect){r.x + 6, r.y + 5, 12, 12}, 6, *part(&themes[CUSTOM0 + cslot], k) | 0xFF000000);
             draw_text(c, r.x + 24, r.y + 2, part_names[k], 0, TH->item_fg);
             if (hit) add_hit_arg(r, ACT_CPART, k);
+            tip_spot(r, "pick a part, then click a color to change it");
         }
     }
     double py = side ? y : y + NPARTS * 24 + 8, px = side ? x0 + lw + 12 : x0;
@@ -1482,13 +1561,19 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         tabr[k] = (Rect){tx, ty, tw, tabh};
         tx += tw + tg;
     }
-    double top = ty + tabh + 14, body;
-    int per = (n + ncol - 1) / ncol;
+    double top = ty + tabh + 14, body, helpw = mw - 2 * pad - 32;
+    int per = (n + ncol - 1) / ncol, nhelp = 0, wrapped[12] = {0};
+    char help[12][100];
+    for (int k = 0; set_tab == TAB_VISION && k < 4; k++) {
+        int got = wrap_text(c, teach_steps[k], helpw, help + nhelp, 3);
+        for (int j = 1; j < got; j++) wrapped[nhelp + j] = 1;
+        nhelp += got;
+    }
     Rect m = {0, 0, mw, 0};
     if (set_tab == TAB_THEMES)
         body = themes_tab(c, m, top, pad, 0, 0) - top; // draw 0 = just measure it
     else
-        body = per * rh + 40;
+        body = per * rh + 40 + (nhelp ? nhelp * 18 + 40 : 0);
     double mh = top + body + pad;
     static double from_h, to_h;
     static long h_t = -99999;
@@ -1537,6 +1622,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     Rect area = {m.x, m.y + top - 6, m.w, m.h - top + 6};
     if (tq < 1 && (c = layer(1, panel, area)) == NULL) c = panel; // only needs its own layer while it slides
     Rect ddbox = {0};
+    tip_text = NULL;
     if (set_tab == TAB_THEMES) themes_tab(c, m, m.y + top, pad, 1, hit);
     for (int j = 0; set_tab != TAB_THEMES && j < n; j++) {
         int i = idx[j];
@@ -1556,7 +1642,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             Rect box = {row.x + row.w - (act ? 36 : 126), row.y + 3, act ? 30 : 120, row.h - 6};
             draw_round_rect(c, box, 5, dd_open == i ? TH->title : TH->btn);
             uint32_t fg = dd_open == i ? 0xFF181818 : TH->btn_fg;
-            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.theme) {
+            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.thcolor || st->v == &cfg.theme) {
                 uint32_t sw = st->v == &cfg.theme ? TH->panel : pick_color(*st->v, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : st->v == &cfg.hcolor ? 0xD8FF8A1F : 0xC8FF4D4D);
                 draw_round_rect(c, (Rect){box.x - 18, box.y + 4, 12, 12}, 6, sw | 0xFF000000);
             }
@@ -1572,11 +1658,19 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             if (dd_open == i) ddbox = box; // list gets drawn after the panel so it can hang off the bottom
         }
         if (hit) add_hit_arg(row, ACT_SET, i);
+        tip_spot(row, st->tip);
+    }
+    if (nhelp) {
+        Rect hb = {m.x + pad, m.y + top + per * rh + 4, m.w - 2 * pad, nhelp * 18 + 30};
+        draw_round_rect(c, hb, 7, TH->item);
+        draw_text(c, hb.x + 8, hb.y + 5, "How to teach it your pieces", 0, TH->title);
+        for (int k = 0; k < nhelp; k++) draw_text(c, hb.x + (wrapped[k] ? 24 : 8), hb.y + 25 + k * 18, help[k], 0, TH->item_fg);
     }
     Rect rs = {m.x + pad, m.y + top + body - 30, 150, 26};
     if (set_tab != TAB_THEMES) {
         draw_button(c, rs, "Reset this tab", TH->btn, TH->btn_fg);
         if (hit) add_hit(rs, ACT_RESET);
+        tip_spot(rs, "puts every setting in this tab back to how it started");
     }
     if (set_tab == 0) {
         Rect tt = {rs.x + rs.w + 8, rs.y, 140, 26};
@@ -1606,7 +1700,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         for (int k = 0; k < st->n; k++) {
             Rect it = {l.x + 3, l.y + 3 + k * ih, l.w - 6, ih - 2};
             if (k == *st->v) draw_round_rect(c, it, 5, TH->btn);
-            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.theme) {
+            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.thcolor || st->v == &cfg.theme) {
                 uint32_t sw = (st->v == &cfg.theme ? themes[k].panel : pick_color(k, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : st->v == &cfg.hcolor ? 0xD8FF8A1F : 0xC8FF4D4D)) | 0xFF000000;
                 draw_round_rect(c, (Rect){it.x + 6, it.y + 5, 12, 12}, 6, sw);
                 draw_text(c, it.x + 24, it.y + 3, st->names[k], 0, TH->item_fg);
@@ -1616,6 +1710,10 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             if (hit) add_hit_arg(it, ACT_PICK, dd_open * 64 + k); // setting and choice in one int, no list has 64 things
         }
         if (c != base) canvas_blit(base, c, fmin(1, dq * 1.5), 0, -5 * (1 - dq), 18 + l.h * dq); // clip_h unrolls it top down
+    }
+    if (tip_text && dd_open < 0) {
+        if (now_ms() - hov_t >= 500) draw_tip(dst, outr, bl), tip_shown = 1;
+        else tip_wait = 1;
     }
 }
 
@@ -2192,9 +2290,12 @@ static void moves_text(char *out, size_t n, int last)
     }
 }
 
+static Move danger_mv;
+
 static void danger_text(char *out, size_t n, const Analysis *an, int have_an, int my_turn)
 {
     out[0] = 0;
+    danger_mv = 0;
     if (!cfg.danger) return;
     int mate = have_an ? (my_turn ? an->mate : -an->mate) : 0;
     if (mate < 0) {
@@ -2213,7 +2314,7 @@ static void danger_text(char *out, size_t n, const Analysis *an, int have_an, in
         int vic = tracker.pos.sq[M_TO(ms[q])], att = tracker.pos.sq[M_FROM(ms[q])];
         if (vic == EMPTY || vic / 6 != me || vic % 6 == PAWN || vic % 6 == KING) continue; // a pawn isnt worth yelling about
         int cheap = val[att % 6] < val[vic % 6], loose = !pos_is_attacked(&tracker.pos, M_TO(ms[q]), me);
-        if ((cheap || loose) && (worst < 0 || val[vic % 6] > val[worst])) worst = vic % 6;
+        if ((cheap || loose) && (worst < 0 || val[vic % 6] > val[worst])) worst = vic % 6, danger_mv = ms[q];
     }
     static const char *nm6[] = {"pawn", "knight", "bishop", "rook", "queen", "king"};
     if (worst >= 0) snprintf(out, n, "your %s is in danger", nm6[worst]);
@@ -2451,6 +2552,7 @@ static void redraw(void)
 {
     track_anims();
     bar_moving = 0;
+    tip_wait = tip_shown = 0;
     nhits = 0;
     ui_over_board = 0;
     for (int i = 0; i < ov->ncanvas; i++) {
@@ -2533,9 +2635,13 @@ static void redraw(void)
             if (cfg.mode && nlegal) {
                 danger_text(alert, sizeof(alert), &an, have_an, my_turn);
                 if (cfg.movelist) moves_text(mvs, sizeof(mvs), 8);
+                uint32_t thc = faded((pick_color(cfg.thcolor, 0xC8FF4D4D) & 0xFFFFFF) | 0xB0000000);
+                double thk = arrow_tk(cfg.ththick) * 0.75;
+                if (cfg.danger == 2 && danger_mv && !(my_turn && cfg.threats == 2 && danger_mv == threat_mv))
+                    draw_move(c, bl, danger_mv, bottom, thc, cfg.tharrow, thk, 0, 0, NULL);
                 if (my_turn && cfg.threats && threat_mv) {
                     if (cfg.threats == 2)
-                        draw_move(c, bl, threat_mv, bottom, faded(0xB0FF4D4D), 5, arrow_tk(cfg.thick) * 0.75, 0, 0, NULL);
+                        draw_move(c, bl, threat_mv, bottom, thc, cfg.tharrow, thk, 0, 0, NULL);
                     snprintf(tips[ntips], 100, "%s", threat_txt), tipc[ntips++] = 0xFFFF7A5A;
                 }
                 if (my_turn && cfg.hints && hint_key == tracker.pos.key && hint_lv && have_an && an.best) {
@@ -2927,7 +3033,7 @@ static void forget_pieces(void)
     learned_here = 0;
     remove(tpl_path);
     if (state != SCANNING && profile_find(&board, path, sizeof(path))) remove(path);
-    set_note("back to the built in piece shapes, start a game so it can learn again");
+    set_note("back to the built in pieces. start a new game or hit Teach to learn them again");
 }
 
 static int teach_pieces(void)
@@ -2951,15 +3057,15 @@ static int teach_pieces(void)
         return 0;
     }
     if (r->nhidden) {
-        set_note("cant see the whole board, close menus and try again");
+        set_note("something is covering the board, close popups and menus then hit Teach again");
     } else if (!same) {
-        set_note("board doesnt match, fix the wrong squares and try again");
+        set_note("some squares look wrong, fix them with ... > Fix pieces then hit Teach again");
     } else {
         templates_learn(&tpl, r, &tracker.pos);
         learned_here = 1;
         templates_save(&tpl, tpl_path);
         profile_save(&board);
-        set_note("learned your pieces from this board");
+        set_note("got it, learned your pieces. itll know them every time it sees this board");
         if (verbose) fprintf(stderr, "learned piece set from the tracked position\n");
     }
     want_teach = teach_hush = teach_tries = 0;
@@ -3256,7 +3362,7 @@ static void tick(void)
 static void set_note(const char *msg)
 {
     snprintf(note, sizeof(note), "%s", msg);
-    note_until = now_ms() + 4000;
+    note_until = now_ms() + (strlen(msg) > 60 ? 7000 : 4000); // long ones need time to read
 }
 
 static void fix_piece(int action, int arg)
@@ -3279,6 +3385,7 @@ static void fix_piece(int action, int arg)
         return;
     }
     if (pos_in_check(&p, p.side ^ 1)) set_note("the side that just moved cant be in check");
+    else if (action == ACT_PIECE) set_note("fixed it. once theyre all right, Gear > Vision > Teach these pieces");
     tracker.pos = p;
     tracker.mismatch_ticks = 0;
     tracker.pending_count = 0;
@@ -3769,6 +3876,7 @@ static void sync_keyboard(void) // the game needs the keys when the library's cl
 
 static void handle_click(double x, double y)
 {
+    hov_t = now_ms();
     for (int i = nhits - 1; i >= 0; i--) {
         Rect r = hits[i].r;
         if (x < r.x || y < r.y || x >= r.x + r.w || y >= r.y + r.h) continue;
@@ -3817,8 +3925,8 @@ static void handle_click(double x, double y)
                 save_cfg();
             } else if (st->v == &btn_teach) {
                 settings_open = 0, dd_open = -1; // the panel pauses tracking, get it off the board first
-                if (state != TRACKING) set_note("find a board first");
-                else want_teach = 1, teach_hush = teach_tries = 0, set_note("looking at your pieces");
+                if (state != TRACKING) set_note("no board yet, open a game first so it can see your pieces");
+                else want_teach = 1, teach_hush = teach_tries = 0, set_note("looking at your pieces, dont move anything...");
             } else if (st->v == &btn_forget) {
                 dd_open = -1;
                 forget_pieces();
@@ -3993,7 +4101,7 @@ static void handle_click(double x, double y)
             fix_mode = !fix_mode;
             fix_sq = -1;
             menu_open = 0;
-            if (fix_mode) set_note("click a square to fix it");
+            if (fix_mode) set_note("click a wrong square, then pick whats really there");
             break;
         case ACT_SQ:
             fix_sq = hits[i].arg;
@@ -4176,6 +4284,7 @@ int main(int argc, char **argv)
             if (open_a >= 0) settings_open = replay_frame() >= open_a && replay_frame() <= open_b;
             tick();
             if (slow) usleep(400000); // so the shots have a move in them
+            hover_moved();
             redraw();
             double cx, cy;
             int ev;
@@ -4270,16 +4379,19 @@ int main(int argc, char **argv)
             continue;
         }
         double cx, cy;
-        int rainbow = state == TRACKING && (cfg.mcolor == 10 || cfg.tcolor == 10 || cfg.gcolor == 10 || (cfg.hanging && cfg.hcolor == 10) || (lib_open && dl_pid > 0));
+        int rainbow = state == TRACKING && (cfg.mcolor == 10 || cfg.tcolor == 10 || cfg.gcolor == 10 || (cfg.hanging && cfg.hcolor == 10) ||
+                                              ((cfg.threats == 2 || cfg.danger == 2) && cfg.thcolor == 10) || (lib_open && dl_pid > 0));
         int wait = (int)(next - t), busy = animating();
         if (rainbow && wait > 80) wait = 80; // rainbow fades instead of jumping
         if (busy && wait > 15) wait = 15; // ~60fps while something slides
+        if (settings_open && ov->pointer && wait > 100) wait = 100; // keeps an eye on the mouse for the tooltips
         int r = ov->wait_events(ov, wait, &cx, &cy);
         if (r < 0) break;
+        int tipr = settings_open && hover_moved();
         if (r == 1) handle_click(cx, cy);
         else if (r == 2) handle_key(ov->key), redraw();
         else if (r == 3 && lib_open) lib_scroll += ov->key, redraw();
-        else if (rainbow || busy) redraw();
+        else if (rainbow || busy || tipr) redraw();
         sync_keyboard();
     }
     state = SCANNING;
