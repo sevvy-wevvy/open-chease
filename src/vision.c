@@ -803,7 +803,10 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
 #undef SAME
 #undef DIFF
                 out->hidden[sq] = (uint8_t)hid;
-                out->foreign[r * 8 + c] = (uint8_t)(hid && !outside); // something of theirs on top, not ours
+                int nfar = 0, far_t = b->soft ? (int)fmax(110, cdiff(b->light, b->dark) * 0.6) : 60;
+                for (int k = 0; k < 4; k++) nfar += valid[k] && cdiff(cc[k], b->light) > far_t && cdiff(cc[k], b->dark) > far_t;
+                // something of theirs on top, not ours. popups have pictures and text in them so 2 odd corners is enough
+                out->foreign[r * 8 + c] = (uint8_t)(!outside && (hid || nfar >= 2));
             }
             uint8_t bg[3];
             memcpy(bg, base, 3);
@@ -970,7 +973,13 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             for (int k = 0; k < 4; k++)
                 if (nb[k] >= 0 && out->foreign[nb[k]] && !seen[nb[k]]) seen[nb[k]] = 1, st[n++] = nb[k];
         }
-        if (cnt >= 3 && cnt > best) {
+        int block = 0; // a 2x2 of covered squares, highlights and check glows never make one
+        for (int rr = r0; rr < r1 && !block; rr++)
+            for (int cc2 = c0; cc2 < c1 && !block; cc2++) {
+                int q = rr * 8 + cc2;
+                block = seen[q] && out->foreign[q] && out->foreign[q + 1] && out->foreign[q + 8] && out->foreign[q + 9];
+            }
+        if (block && cnt >= 4 && cnt > best) {
             best = cnt;
             out->has_popup = 1;
             out->popup = (Rect){b->x + c0 * s, b->y + r0 * s, (c1 - c0 + 1) * s, (r1 - r0 + 1) * s};

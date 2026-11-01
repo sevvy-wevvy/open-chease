@@ -1109,6 +1109,16 @@ static const char *piece_letters = "PNBRQK";
 static BoardRead last_rd; // newest read, for the confidence view, its eyes and teaching one piece
 static int have_last, teach_one;
 static float conf[64];
+
+static int under_popup(int sq) // a site popup covers this square, so leave it alone
+{
+    if (!cfg.popups || !have_last || !last_rd.has_popup) return 0;
+    int r, c;
+    sq_display(sq, tracker.white_bottom, &r, &c);
+    double x = board.x + (c + 0.5) * board.s, y = board.y + (r + 0.5) * board.s;
+    const Rect *p = &last_rd.popup;
+    return x > p->x && x < p->x + p->w && y > p->y && y < p->y + p->h;
+}
 static int ui_over_board, learned_here, want_rescan, rescan_hush, want_teach, teach_hush, teach_tries;
 static int lib_open, lib_tab, lib_filter, lib_scroll, lib_del = -1;
 static char lib_query[24];
@@ -1976,7 +1986,7 @@ static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
     if ((debug_on || fix_mode) && !hushed()) {
         for (int sq = 0; sq < 64; sq++) {
             int pc = tracker.pos.sq[sq];
-            if (pc == EMPTY) continue;
+            if (pc == EMPTY || under_popup(sq)) continue;
             int r, col;
             sq_display(sq, tracker.white_bottom, &r, &col);
             Rect lb = {bl.x + col * s + 4, bl.y + r * s + 4, 18, 19};
@@ -3558,6 +3568,9 @@ static int dragging(const BoardRead *r)
     if (ov->held && ov->held(ov, &x, &y) && x >= bl.x && y >= bl.y && x < bl.x + bl.w && y < bl.y + bl.h) return 1;
     for (int sq = 0; sq < 64; sq++) {
         if (r->obs[sq] != OBS_WHITE && r->obs[sq] != OBS_BLACK) continue;
+        int dr, dc;
+        sq_display(sq, tracker.white_bottom, &dr, &dc);
+        if (r->foreign[dr * 8 + dc]) continue; // popup stuff isnt a piece
         double sx = 0, sy = 0;
         int n = 0;
         for (int i = 0; i < FEAT_N * FEAT_N; i++)
