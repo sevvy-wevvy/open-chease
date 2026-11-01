@@ -1,0 +1,33 @@
+name: pr rules
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  check:
+    if: github.event.pull_request.author_association != 'OWNER'
+    runs-on: ubuntu-latest
+    steps:
+      # never checks out the pr code, only reads the file list
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          why=""
+          if [ "$BASE" != "dev" ]; then
+            why="PRs go to the dev branch, this one is against $BASE."
+          fi
+          if gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)' | grep -q '^bin/'; then
+            why="$why It changes files in bin/, those get rebuilt before shipping so PRs cant touch them."
+          fi
+          if [ -n "$why" ]; then
+            gh pr close "$PR" -R "$REPO" --comment "Closed automatically. $why Check [CONTRIBUTING.md](https://github.com/$REPO/blob/dev/CONTRIBUTING.md), fix it and open a new PR against dev."
+          else
+            echo "follows the rules"
+          fi

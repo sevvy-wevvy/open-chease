@@ -2,6 +2,7 @@ name: test
 
 on:
   push:
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -56,6 +57,7 @@ jobs:
           OPEN_CHEASE_GET="Inanis 1.6" OPEN_CHEASE_GET_DEL=1 timeout 600 out-linux/open-chease
           test ! -e dl-test/engines/inanis-1.6 && test ! -e dl-test/engines/inanis-1.6.files && test -e dl-test/engines/arasan-26.1 && echo "delete only took inanis"
       - name: one liner
+        if: github.event_name != 'pull_request' # installs from a pushed branch, a fork pr isnt one
         run: |
           u="$RAW/get.sh"
           curl -fsSL "$u" | OPEN_CHEASE_BRANCH=$BRANCH OPEN_CHEASE_DATA=/tmp/oc-b bash -s -- --fetch-only
@@ -101,6 +103,7 @@ jobs:
           OPEN_CHEASE_GET="Inanis 1.6" OPEN_CHEASE_GET_DEL=1 timeout 600 out-win/open-chease.exe
           test ! -e dl-test/engines/inanis-1.6 && test -e dl-test/engines/arasan-26.1 && echo "delete only took inanis"
       - name: get.ps1
+        if: github.event_name != 'pull_request' # installs from a pushed branch, a fork pr isnt one
         shell: pwsh
         run: |
           $env:OPEN_CHEASE_BRANCH = $env:BRANCH
@@ -110,6 +113,7 @@ jobs:
           if (-not (Test-Path "$env:OPEN_CHEASE_DATA\stockfish\stockfish.exe")) { throw 'no stockfish' }
           'flags ok'
       - name: live on the desktop
+        if: github.event_name != 'pull_request' # installs from a pushed branch, a fork pr isnt one
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -190,6 +194,7 @@ jobs:
           OPEN_CHEASE_DATA=/tmp/oc-run perl -e 'alarm 30; exec @ARGV' out-mac/open-chease -v 2>&1 | tee run.txt || true
           grep -q "screen recording\|couldnt start\|open-chease is running" run.txt
       - name: one liner
+        if: github.event_name != 'pull_request' # installs from a pushed branch, a fork pr isnt one
         run: |
           u="$RAW/get.sh"
           zsh -c "curl -fsSL $u | OPEN_CHEASE_BRANCH=$BRANCH OPEN_CHEASE_DATA=/tmp/oc-z bash -s -- --fetch-only"

@@ -322,7 +322,8 @@ tests/page/index.html is a board that plays a game by itself (add <code>?flip=1<
 <p align="center">
 Want to help with this? <a href="https://github.com/sevvy-wevvy/open-chease/pulls">Make A pull request!</a><br>
 Pull request allow for anyone to request a change to this code. In turn meaning that <b>YOU</b> can contribute to this project.<br>
-Boards it cant find or pieces it reads wrong are the most useful ones to fix. Run <code>tests/perft.sh</code> and the vision test before you send it.<br> <br>
+Boards it cant find or pieces it reads wrong are the most useful ones to fix. Keep it small, one thing per PR, and send it to the <b>dev</b> branch.<br>
+Read <a href="CONTRIBUTING.md">CONTRIBUTING.md</a> first, it says how to test and whats ok (AI help is fine, as long as you know what it does and tested it).<br> <br>
 As long as it works, and doesnt vary off too far from the main idea its very likely it get accepted!
 </p>
 </details>
