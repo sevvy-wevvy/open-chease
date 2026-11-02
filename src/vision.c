@@ -136,9 +136,33 @@ static double score_board(const Frame *f, double bx, double by, double s, const 
     return ok;
 }
 
+static int flip_tol = 40;
+
 static int is_flip(const uint8_t *a, const uint8_t *b, const Board *bd)
 {
-    return (cdiff(a, bd->light) < 40 && cdiff(b, bd->dark) < 40) || (cdiff(a, bd->dark) < 40 && cdiff(b, bd->light) < 40);
+    int t = flip_tol;
+    return (cdiff(a, bd->light) < t && cdiff(b, bd->dark) < t) || (cdiff(a, bd->dark) < t && cdiff(b, bd->light) < t);
+}
+
+// squares lighter on top than on the bottom? then the colors we got from one scan row only match half of each square
+static int shaded(const Frame *f, const Board *b)
+{
+    int n = 0, hits = 0, pr = (int)fmax(1, b->s * 0.01);
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++) {
+            uint8_t e[2][2][3];
+            int ok = 1;
+            for (int v = 0; v < 2 && ok; v++)
+                for (int k = 0; k < 2 && ok; k++) {
+                    double x = b->x + (c + (k ? 0.92 : 0.08)) * b->s, y = b->y + (r + (v ? 0.8 : 0.25)) * b->s;
+                    if (!sample_ok(f, x - pr, y - pr) || !sample_ok(f, x + pr, y + pr)) ok = 0;
+                    else patch(f, x, y, pr, e[v][k]);
+                }
+            if (!ok || cdiff(e[0][0], e[0][1]) > 20 || cdiff(e[1][0], e[1][1]) > 20) continue;
+            n++;
+            hits += cdiff(e[0][0], e[1][0]) > 30 && lum(e[0][0]) > lum(e[1][0]);
+        }
+    return n >= 24 && hits * 4 >= n * 3;
 }
 
 // 2 per clean edge pixel, 1 for a blurry one. dir 0 = vertical line at x=pos, 1 = horizontal at y=pos, from a0 to a1
@@ -531,8 +555,10 @@ static int find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
         memcpy(cand.light, light, 3);
         memcpy(cand.dark, dark, 3);
         cand.soft = soft;
+        if (shaded(f, &cand)) flip_tol = (int)fmax(40, cdiff(light, dark) * 0.45);
         refine(f, &cand);
         refine(f, &cand);
+        flip_tol = 40;
         int pen = 0;
         double sc = score_board(f, cand.x, cand.y, cand.s, light, dark, masked, mctx, &pen, soft) - pen;
         if (sc > best_score) {
@@ -1376,8 +1402,52 @@ int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), voi
 
 static int soft_colors;
 
-static double piece_fill_lum(const Frame *f, double x0, double y0, double s, const uint8_t *bg, const uint8_t *base,
-                             int (*masked)(void *, int, int), void *mctx, int thr)
+#define BG_ROWS 32
+
+// boards that shade each square top to bottom (roblox), take the color row by row off both side edges
+static int square_rows(const Frame *f, double x0, double y0, double s, const uint8_t *bg, const uint8_t *base,
+                       const uint8_t *other, int (*masked)(void *, int, int), void *mctx, uint8_t rows[BG_ROWS][3])
+{
+    int ok[BG_ROWS], nok = 0, far = 0, pr = (int)fmax(0, s * 0.012);
+    for (int j = 0; j < BG_ROWS; j++) {
+        double y = y0 + (j + 0.5) / BG_ROWS * s;
+        uint8_t e[2][3];
+        ok[j] = 0;
+        int nv = 0;
+        for (int k = 0; k < 2; k++) {
+            double x = x0 + (k ? 0.95 : 0.05) * s;
+            if (!sample_ok(f, x - pr, y - pr) || !sample_ok(f, x + pr, y + pr) || (masked && masked(mctx, (int)x, (int)y))) break;
+            patch(f, x, y, pr, e[k]);
+            nv++;
+        }
+        if (nv < 2 || cdiff(e[0], e[1]) > 24) continue; // a letter or a piece on one side
+        for (int k = 0; k < 3; k++) rows[j][k] = (uint8_t)((e[0][k] + e[1][k]) / 2);
+        if (cdiff(rows[j], base) >= cdiff(rows[j], other) || cdiff(rows[j], bg) > 120) continue;
+        ok[j] = 1;
+        nok++;
+        far += cdiff(rows[j], bg) > 30;
+    }
+    if (nok < BG_ROWS / 2 || !far) return 0; // flat square, the ring color does fine
+    for (int j = 0; j < BG_ROWS; j++) {
+        if (ok[j]) continue;
+        int a = j - 1, b = j + 1;
+        while (a >= 0 && !ok[a]) a--;
+        while (b < BG_ROWS && !ok[b]) b++;
+        int src = a < 0 ? b : b >= BG_ROWS ? a : (j - a <= b - j ? a : b);
+        memcpy(rows[j], rows[src], 3);
+    }
+    return 1;
+}
+
+static inline const uint8_t *row_bg(const uint8_t (*rows)[3], const uint8_t *bg, double y0, double s, double y)
+{
+    if (!rows) return bg;
+    int j = (int)((y - y0) / s * BG_ROWS);
+    return rows[j < 0 ? 0 : j >= BG_ROWS ? BG_ROWS - 1 : j];
+}
+
+static double piece_fill_lum(const Frame *f, double x0, double y0, double s, const uint8_t *bg, const uint8_t (*rows)[3],
+                             const uint8_t *base, int (*masked)(void *, int, int), void *mctx, int thr, int *colored)
 {
     int step = s > 90 ? 2 : 1;
     int a = (int)(x0 + s * 0.05), b = (int)(y0 + s * 0.05);
@@ -1385,7 +1455,7 @@ static double piece_fill_lum(const Frame *f, double x0, double y0, double s, con
     if (n < 8) return -1;
     if (n > 128) n = 128;
     static uint8_t m[130 * 130];
-    static uint8_t lm[130 * 130];
+    static uint8_t lm[130 * 130], col[130 * 130];
     static int stack[130 * 130];
     int W = n + 2;
     memset(m, 0, (size_t)W * W);
@@ -1396,7 +1466,7 @@ static double piece_fill_lum(const Frame *f, double x0, double y0, double s, con
             int fg = 0;
             if (sample_ok(f, x, y)) {
                 rgb(f, x, y, px);
-                fg = cdiff(px, bg) > thr && cdiff(px, base) > thr / 2;
+                fg = cdiff(px, row_bg(rows, bg, y0, s, y)) > thr && cdiff(px, base) > thr / 2;
                 if (masked && masked(mctx, x, y)) fg = 0;
             }
             m[(j + 1) * W + i + 1] = fg ? 1 : 0;
@@ -1404,6 +1474,7 @@ static double piece_fill_lum(const Frame *f, double x0, double y0, double s, con
             int mn = px[0] < px[1] ? (px[0] < px[2] ? px[0] : px[2]) : (px[1] < px[2] ? px[1] : px[2]);
             int reddish = px[0] - px[1] > 15 && px[0] - px[2] > 15; // check glow makes the king look black
             int glow = reddish && px[1] < px[0] * 0.55;
+            col[(j + 1) * W + i + 1] = (mx - mn > 30 || reddish) && !glow;
             lm[(j + 1) * W + i + 1] = (soft_colors ? glow : (mx - mn > 30 || reddish)) ? 128 : (uint8_t)lum(px); // 128 = no vote either way
         }
     // flood the bg in from the border, whats left is the piece plus its insides
@@ -1424,17 +1495,19 @@ static double piece_fill_lum(const Frame *f, double x0, double y0, double s, con
             }
         }
     }
-    long cnt = 0, bright = 0, dark = 0;
+    long cnt = 0, bright = 0, dark = 0, ncol = 0;
     for (int j = 1; j <= n; j++)
         for (int i = 1; i <= n; i++) {
             int q = j * W + i;
             if (m[q] == 2) continue;
             cnt++;
+            ncol += col[q];
             if (lm[q] > 170)
                 bright++;
             else if (lm[q] < 80)
                 dark++;
         }
+    if (colored) *colored = cnt >= n * n / 40 && ncol * 2 > cnt;
     if (cnt < n * n / 40 || bright + dark < cnt / 8) return -1;
     double ratio = 255.0 * bright / (bright + dark);
     // some sets have a grey fill with a light glow round it, peel the edge off and the middle is the real color
@@ -1560,7 +1633,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
     memset(out, 0, sizeof(*out));
     double s = b->s;
     float lums[64];
-    int occ[64], board_nz = 0;
+    int occ[64], board_nz = 0, ncolored = 0;
     // how noisy the texture is over the whole board, the thresholds below scale off it
     if (b->soft) {
         int per[64], np = 0, pr = (int)fmax(1, s * 0.025);
@@ -1622,6 +1695,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                 continue;
             }
             uint8_t ring[64][3];
+            double ringy[64];
             int nring = 0;
             for (int k = 0; k < 16 && nring < 64; k++) {
                 double t = 0.14 + 0.72 * k / 15.0;
@@ -1634,7 +1708,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                         patch(f, x, y, (int)fmax(1, s * 0.025), ring[nring]);
                     else
                         rgb(f, (int)x, (int)y, ring[nring]);
-                    nring++;
+                    ringy[nring++] = y;
                 }
             }
             const uint8_t *base = ((r + c) & 1) ? b->dark : b->light;
@@ -1698,15 +1772,18 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             for (int i = 0; i < nring; i++) nbase += cdiff(ring[i], base) < 30;
             if (bestn < nring / 4 || nbase * 8 >= nring) memcpy(bg, base, 3); // only trust the ring color if the theme color is basically gone (last move tint)
             int fthr = 60, sthr = 40;
-            if (b->soft && nring) {
+            if (b->soft && nring)
                 for (int k = 0; k < 3; k++) {
                     int h[256] = {0}, acc = 0, v = 0;
                     for (int i = 0; i < nring; i++) h[ring[i][k]]++;
                     while (v < 255 && (acc += h[v]) <= nring / 2) v++;
                     bg[k] = (uint8_t)v;
                 }
+            uint8_t rowc[BG_ROWS][3];
+            const uint8_t(*rows)[3] = square_rows(f, x0, y0, s, bg, base, ((r + c) & 1) ? b->light : b->dark, masked, mctx, rowc) ? (const uint8_t(*)[3])rowc : NULL;
+            if (b->soft && nring) {
                 int dev[64], nd = 0;
-                for (int i = 0; i < nring; i++) dev[nd++] = cdiff(ring[i], bg);
+                for (int i = 0; i < nring; i++) dev[nd++] = cdiff(ring[i], row_bg(rows, bg, y0, s, ringy[i]));
                 for (int a2 = 1; a2 < nd; a2++)
                     for (int b2 = a2; b2 > 0 && dev[b2 - 1] > dev[b2]; b2--) {
                         int t = dev[b2];
@@ -1732,7 +1809,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                         else
                             rgb(f, (int)x, (int)y, px);
                         valid++;
-                        if (cdiff(px, bg) > fthr && cdiff(px, b->light) > sthr && cdiff(px, b->dark) > sthr) {
+                        if (cdiff(px, row_bg(rows, bg, y0, s, y)) > fthr && cdiff(px, b->light) > sthr && cdiff(px, b->dark) > sthr) {
                             fg++;
                             v = 1;
                             cell_lum[gy * FEAT_N + gx] = (uint8_t)lum(px);
@@ -1765,7 +1842,9 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             for (int v = 0; v < 256; v++) lsum += (long)v * hist[v];
             out->lum[sq] = nh ? (float)lsum / nh : 0;
             if (out->occ_frac[sq] > 0.075f) {
-                double fl = piece_fill_lum(f, x0, y0, s, bg, base, masked, mctx, fthr);
+                int colored = 0;
+                double fl = piece_fill_lum(f, x0, y0, s, bg, rows, base, masked, mctx, fthr, &colored);
+                ncolored += colored && !out->hidden[sq];
                 if (fl >= 0) out->lum[sq] = (float)fl;
             }
             occ[sq] = out->occ_frac[sq] > 0.075f;
@@ -1816,15 +1895,15 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             double score = gap * bal * pull;
             if (score > best) best = score, thr = mid;
         }
-        if (vals[n - 1] - vals[0] < 25) { // one blob of grey? maybe recolored pieces, retry without dropping the colored pixels
-            if (!soft_colors && n >= 4 && color_thr <= 0) {
-                soft_colors = 1;
-                vision_read(f, b, white_bottom, color_thr, out, masked, mctx);
-                soft_colors = 0;
-                return;
-            }
-            thr = vals[0] > 110 ? 0 : 255;
+        int flat = vals[n - 1] - vals[0] < 25;
+        // one blob of grey, or most pieces filled with color? recolored pieces, retry without dropping the colored pixels
+        if (((flat && color_thr <= 0) || ncolored * 3 >= n * 2) && !soft_colors && n >= 4) {
+            soft_colors = 1;
+            vision_read(f, b, white_bottom, color_thr, out, masked, mctx);
+            soft_colors = 0;
+            return;
         }
+        if (flat) thr = vals[0] > 110 ? 0 : 255;
     }
     if (thr > 0 && thr < 255) {
         if (thr < 45) thr = 45;
