@@ -178,6 +178,7 @@ Open a game on lichess, chess.com or pretty much anywhere with a flat colored bo
 <b>Gear on the top box</b> - Settings, they save so they stick next time (theres a whole section on them below)<br>
 <b>... on the top box</b> - Opens the menu:<br>
 &nbsp;&nbsp;<b>Helper mode</b> - Click it to go Helper, again for Both, again for back to cheats (more below)<br>
+&nbsp;&nbsp;<b>Compact</b> - Shrinks the box to a tiny pill with just the move, like Nf3 +0.4. The eye, gear and ... stay on it<br>
 &nbsp;&nbsp;<b>Show what it sees</b> - Puts a little tag on every square with the piece it thinks is there (white tag = white piece, black tag = black piece)<br>
 &nbsp;&nbsp;<b>Fix pieces</b> - Click a square, then pick what's really there (or Empty, or whose turn it is). Your fixes stick until that piece moves. Click Done fixing in the menu when youre done, the board isnt clickable for the game while this is on<br>
 &nbsp;&nbsp;<b>Its black's/white's turn</b> - If it got whose turn it is wrong<br>
@@ -220,7 +221,9 @@ Settings are split into tabs: Look, Yours, Theirs, Engine, Fun, Helper, Vision a
 <b>Look</b><br>
 14 themes, where the box sits (top, bottom, or stacked on the left or right), box size and how see-through it is<br>
 The grid can be lines, just the outline, corners or off, in any color<br>
-Score as pawns (+0.4), centipawns (+40) or win %, plus an eval bar next to the board if you want one<br> <br>
+Score as pawns (+0.4), centipawns (+40) or win %, plus an eval bar next to the board if you want one<br>
+Fonts: Normal, Pixel (blocky with a shadow, like a block game), Mono, Serif, Lato and Narrow<br>
+Compact turns the box into a tiny pill with just the move<br> <br>
 <b>Yours</b> (your move)<br>
 Arrows can be straight, bent for knights, curved, a swoosh, dashed, dotted, glowing or double<br>
 The piece to move and where it goes each get their own marker, theres 13 to pick from<br>
@@ -340,7 +343,7 @@ As long as it works, and doesnt vary off too far from the main idea its very lik
 
 <p align="center">
 The built in piece shapes come from the lichess piece sets (cburnett, merida, leipzig, tatiana, companion, chessnut, kosal, cardinal, governor, fresca and riohacha), squished down to tiny 24x24 outlines.<br>
-The overlay font is DejaVu Sans Bold.<br>
+The overlay fonts are DejaVu Sans Bold, Sans Mono Bold and Serif Bold (Bitstream Vera license), Lato Black by Łukasz Dziedzic and Liberation Sans Narrow Bold (both SIL Open Font License 1.1), baked into bitmaps by tools/gen_font.py. The Pixel font is drawn by hand in that same file.<br>
 The Wayland and X11 headers in third_party/ are MIT licensed.
 </p>
 </details>

@@ -294,7 +294,9 @@ void draw_triangle(Canvas *c, double ax, double ay, double bx, double by, double
         }
 }
 
-static const FontFace *face(int big) { return big ? &font_20 : &font_14; }
+static int font_pick;
+void set_font(int k) { font_pick = k >= 0 && k < NFONTS ? k : 0; }
+static const FontFace *face(int big) { return fonts[font_pick][!!big]; }
 
 static int text_zoom = 1;
 void set_text_zoom(int z) { text_zoom = z < 1 ? 1 : z; }
@@ -313,6 +315,18 @@ double text_width(const char *s, int big)
 
 double text_lw(const Canvas *c, const char *s, int big) { return text_width(s, big) * (c->scale >= 1.75 ? 2 : 1) / c->scale; }
 
+static void glyph(Canvas *c, const FontFace *f, const Glyph *g, int x, int y, int sc, uint32_t argb)
+{
+    int b = f->px * sc; // whole pixel blocks, the blocky font stays crisp
+    for (int gy = 0; gy < g->h; gy++)
+        for (int gx = 0; gx < g->w; gx++) {
+            int i = g->off + gy * g->w + gx, a = (f->bits[i >> 1] >> (i & 1 ? 4 : 0)) & 15;
+            if (!a) continue;
+            for (int dy = 0; dy < b; dy++)
+                for (int dx = 0; dx < b; dx++) plot(c, x + g->x * sc + gx * b + dx, y + g->y * sc + gy * b + dy, argb, a / 15.0);
+        }
+}
+
 double draw_text(Canvas *c, double lx, double ly, const char *s, int big, uint32_t argb)
 {
     const FontFace *f = face(big);
@@ -320,18 +334,14 @@ double draw_text(Canvas *c, double lx, double ly, const char *s, int big, uint32
     to_px(c, lx, ly, &x, &y);
     int sc = (c->scale >= 1.75 ? 2 : 1) * text_zoom; // hidpi
     double start = lx;
+    uint32_t sh = (argb & 0xFF000000) | (argb >> 2 & 0x3F3F3F); // same color but a quarter as bright, like a game font
+    int lum = (argb >> 16 & 255) + (argb >> 8 & 255) + (argb & 255); // dark text on a light button looks smudged with one
     for (; *s; s++) {
         int ch = (unsigned char)*s;
         if (ch < 32 || ch > 126) ch = '?';
         const Glyph *g = &f->glyphs[ch - 32];
-        for (int gy = 0; gy < g->h; gy++)
-            for (int gx = 0; gx < g->w; gx++) {
-                uint8_t a = f->bits[g->off + gy * g->w + gx];
-                if (!a) continue;
-                for (int dy = 0; dy < sc; dy++)
-                    for (int dx = 0; dx < sc; dx++)
-                        plot(c, (int)x + (g->x + gx) * sc + dx, (int)y + (g->y + gy) * sc + dy, argb, a / 255.0);
-            }
+        if (f->px > 1 && lum > 300) glyph(c, f, g, (int)x + f->px * sc, (int)y + f->px * sc, sc, sh);
+        glyph(c, f, g, (int)x, (int)y, sc, argb);
         x += g->adv * sc;
         lx += g->adv * sc / c->scale; // whole px steps, so track logical x separately
     }

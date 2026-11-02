@@ -176,6 +176,7 @@ double draw_text(Canvas *c, double x, double y, const char *s, int big, uint32_t
 double text_width(const char *s, int big);
 double text_lw(const Canvas *c, const char *s, int big);
 void set_text_zoom(int z);
+void set_font(int k); // index into fonts[] in font_data.h
 int canvas_alpha_at(Canvas *c, double lx, double ly);
 
 // masked(mctx, x, y) says if a frame pixel is under our own overlay
