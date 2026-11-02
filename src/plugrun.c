@@ -105,11 +105,12 @@ static int poll_tools(long now)
         while ((room = (int)sizeof(tools[t].out) - 1 - tools[t].nout) > 0 && (got = fd_read_some(tools[t].from, tools[t].out + tools[t].nout, room)) > 0)
             tools[t].nout += got;
         if (got >= 0 && room > 0 && now - tools[t].t0 < 4000) continue;
-        proc_kill(tools[t].pid);
-        proc_reap(tools[t].pid);
+        proc_kill(tools[t].pid); // already gone unless it hung, then it counts as a fail
+        int code = proc_reap_code(tools[t].pid);
         fd_close(tools[t].from);
         tools[t].out[tools[t].nout] = 0;
-        if (t == TS_NODE) tools[t].state = strstr(tools[t].out, "strip") || strstr(tools[t].out, "transform") ? TS_FOUND : TS_MISSING;
+        if (code || (t == PT_PYTHON && strncmp(tools[t].out, "Python 3", 8))) tool_next(t); // the windows store stub says nothing and fails
+        else if (t == TS_NODE) tools[t].state = strstr(tools[t].out, "strip") || strstr(tools[t].out, "transform") ? TS_FOUND : TS_MISSING;
         else if (find_ver(tools[t].out, tools[t].ver, sizeof(tools[t].ver))) tools[t].state = TS_FOUND;
         else tool_next(t); // no version out of it, a stub or something broken
         dirty = 1;

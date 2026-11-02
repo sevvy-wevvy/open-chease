@@ -69,6 +69,13 @@ void proc_reap(proc_t p)
     if (p > 0) waitpid((pid_t)p, NULL, 0);
 }
 
+int proc_reap_code(proc_t p)
+{
+    int st;
+    if (p <= 0 || waitpid((pid_t)p, &st, 0) != (pid_t)p) return -1;
+    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+}
+
 int fd_wait(int fd, int ms)
 {
     struct pollfd pf = {fd, POLLIN, 0};

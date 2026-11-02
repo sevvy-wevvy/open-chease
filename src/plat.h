@@ -27,6 +27,7 @@ typedef intptr_t proc_t; // pid on unix, process HANDLE on windows, 0 = none
 int proc_start(const char *path, int quiet, proc_t *p, int *to_fd, int *from_fd);
 void proc_kill(proc_t p);
 void proc_reap(proc_t p);
+int proc_reap_code(proc_t p); // reap and give back the exit code, -1 if it didnt exit normally
 int fd_wait(int fd, int ms); // >0 readable (or eof), 0 timed out, <0 broken
 int proc_cmd(const char *cmd, const char *dir, int quiet, proc_t *p, int *to_fd, int *from_fd); // runs inside dir, neither pipe blocks
 int fd_read_some(int fd, char *buf, int n); // >0 bytes, 0 nothing yet, -1 closed

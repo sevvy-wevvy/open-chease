@@ -221,6 +221,15 @@ void proc_reap(proc_t p)
     CloseHandle((HANDLE)p);
 }
 
+int proc_reap_code(proc_t p)
+{
+    DWORD code = (DWORD)-1;
+    if (!p) return -1;
+    if (WaitForSingleObject((HANDLE)p, 3000) != WAIT_OBJECT_0 || !GetExitCodeProcess((HANDLE)p, &code)) code = (DWORD)-1;
+    CloseHandle((HANDLE)p);
+    return (int)code;
+}
+
 int fd_wait(int fd, int ms) // windows cant poll() a pipe, so peek at it
 {
     HANDLE h = (HANDLE)_get_osfhandle(fd);
@@ -586,11 +595,9 @@ intptr_t cmd_start(const char *cmd, const char *dir, const char *log)
 
 int on_path(const char *name, char *out, size_t n)
 {
-    char got[MAX_PATH], low[MAX_PATH];
+    char got[MAX_PATH];
     DWORD l = SearchPathA(NULL, name, ".exe", sizeof(got), got, NULL);
     if (!l || l >= sizeof(got)) return 0;
-    for (DWORD i = 0; i <= l; i++) low[i] = got[i] >= 'A' && got[i] <= 'Z' ? got[i] + 32 : got[i];
-    if (strstr(low, "\\windowsapps\\")) return 0; // the store stub, it just opens the store
     snprintf(out, n, "%s", got);
     return 1;
 }
