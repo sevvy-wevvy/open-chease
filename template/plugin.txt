@@ -1,0 +1,20 @@
+# plugin.txt, the only file open-chease looks for in your folder
+# lines starting with # get skipped, everything else is key = value
+# only run is needed, the rest is just what shows in the Plugins tab
+
+# the title in the Plugins tab (39 chars max), the folder name is used if you leave it out
+name = Plugin template
+
+# the command to start it. if the first word is a file in this folder it runs that,
+# otherwise it looks on PATH, so "run = python3 template.py --fast" works too.
+# it always starts inside this folder.
+# linux/mac: a .py without the x bit runs with python3, anything else without it with sh
+# windows: .py runs with py (or python), .bat/.cmd with cmd, .ps1 with powershell
+# so keep it as just the file name and it works everywhere
+run = template.py
+
+# shows under the title till your plugin sends a log line (159 chars max)
+description = uses every bit of the plugin system, copy it and rip out what you dont need
+
+# shows as "v1.0" next to the title (23 chars max)
+version = 1.0
