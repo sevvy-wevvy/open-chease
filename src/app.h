@@ -47,6 +47,9 @@ typedef struct {
     uint8_t light[3], dark[3];
     int score; // vision_verify wants 46+
     int soft;
+    int persp; // tilted, x y s is just a box round it then
+    double hm[9]; // board units (0-8 across, row 0 at the top) to frame px
+    float gain[4]; // lighting across the board, the warp divides it out
 } Board;
 
 enum { OBS_EMPTY = 0, OBS_WHITE = 1, OBS_BLACK = 2, OBS_UNKNOWN = 3 }; // unknown = covered, dont guess
@@ -62,6 +65,7 @@ typedef struct {
     uint8_t foreign[64]; // hidden by something thats not ours, screen order (row * 8 + col)
     int has_popup;
     Rect popup; // frame px, whole squares
+    int busy; // squares whose pixels changed since the last read, -1 = cant tell
 
     float mask[64][FEAT_N * FEAT_N]; // 1 piece, 0 board, 0.5 cant tell
 } BoardRead;
@@ -74,6 +78,8 @@ typedef struct Backend {
     Output out[MAX_OUTPUTS];
     void *priv;
     int out_gen;
+    int cur_ok; // the mouse might be baked into the frame, cur_x/y is where (logical) and cur_sz how big
+    double cur_x, cur_y, cur_sz;
 } Backend;
 
 typedef struct Overlay {
@@ -148,6 +154,8 @@ int backend_wl_init_shared(void);
 Backend *backend_wl(void);
 Overlay *overlay_wl(void);
 Backend *backend_gnome(void); // mutter has no screencopy or layer shell, pairs with overlay_x11
+Backend *backend_portal(const char *data_dir);
+int wl_has_screencopy(void);
 Overlay *overlay_x11(void);
 Backend *backend_x11(void);
 // test hooks, plays back dumped .ppm frames instead of the screen
@@ -162,6 +170,7 @@ int replay_frame(void);
 void canvas_clear(Canvas *c);
 int canvas_damage(const Canvas *c, int *x0, int *y0, int *x1, int *y1);
 void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double dy, double clip_h); // clip_h < 0 = no clip
+void canvas_warp(Canvas *dst, const Canvas *src, const double *m);
 // logical coords from here, the canvas scales them
 void draw_rect(Canvas *c, Rect r, uint32_t argb);
 void canvas_erase(Canvas *c, Rect r);
@@ -174,16 +183,27 @@ double draw_text(Canvas *c, double x, double y, const char *s, int big, uint32_t
 double text_width(const char *s, int big);
 double text_lw(const Canvas *c, const char *s, int big);
 void set_text_zoom(int z);
+void set_font(int k);
 int canvas_alpha_at(Canvas *c, double lx, double ly);
 
 // masked(mctx, x, y) says if a frame pixel is under our own overlay
 int vision_find_board(const Frame *f, Board *b, const Rect *ignore, int nignore,
                       int (*masked)(void *, int, int), void *mctx);
 int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), void *mctx);
+int vision_relocate(const Frame *f, Board *b, int full, int (*masked)(void *, int, int), void *mctx); // 1 = found it somewhere else, b updated
 extern int vision_strict, vision_lite; // 0-4 how picky the board finder is, lite skips the slow blurred pass
+extern int vision_nomemo;
+extern int gpu_mode, gpu_verbose;
+void gpu_frame(void);
+int gpu_blur_rows(const Frame *f, int y0, int step, int nrows, uint8_t *sm, uint16_t *ed);
+int gpu_edges(const Frame *f, const int *jobs, int n, int o, const uint8_t *light, const uint8_t *dark, int *out);
+void gpu_broken(const char *what);
 void vision_fill_holes(float *m); // fills enclosed piece outlines in a FEAT_N grid
 void vision_read(const Frame *f, const Board *b, int white_bottom, float color_thr, BoardRead *r,
                  int (*masked)(void *, int, int), void *mctx);
+void hm_map(const double *h, double x, double y, double *ox, double *oy);
+void hm_mul(const double *a, const double *b, double *out);
+int hm_inv(const double *m, double *out);
 
 typedef struct {
     int have;
@@ -199,6 +219,12 @@ void templates_learn(Templates *t, const BoardRead *r, const Pos *p);
 int classify_piece(const Templates *t, const BoardRead *r, int sq);
 float tracker_confidence(const Templates *t, const BoardRead *r, int sq, int pc);
 void templates_learn_one(Templates *t, const BoardRead *r, int sq, int pc);
+
+typedef struct {
+    char root[100]; // fen at the last capture or pawn move, or where we started following
+    Move mv[160];
+    int n;
+} GameLine;
 
 typedef struct {
     Pos pos;
@@ -221,6 +247,10 @@ typedef struct {
     u64 locked; // squares the user fixed by hand, one bit each
     signed char lockpc[64];
     int lock_side;
+    GameLine line, prev_line[3];
+    int anim, anim_run; // board keeps changing with nothing moving (glow, sparkles), > 0 = believe only squares that hold still
+    float vote[64][6], vsum[64][6]; // pieces we only guessed: shape scores of their cleanest read, and all reads added up
+    int nvote[64];
 } Tracker;
 
 void tracker_start(Tracker *t, int user_color);
@@ -228,6 +258,8 @@ void tracker_update(Tracker *t, const BoardRead *r, Templates *tpl);
 void tracker_resync(Tracker *t, const BoardRead *r, Templates *tpl);
 void tracker_lock(Tracker *t, int sq, int pc);
 int orientation_score(const BoardRead *r); // below 0 = we have it upside down
+void tracker_rebase(Tracker *t); // forget the moves, after the position got changed by hand
+void tracker_line(const Tracker *t, char *out, size_t n); // "fen ... moves ..." for a uci position command
 
 typedef struct {
     Move best;
@@ -248,7 +280,7 @@ int analyzer_switch_async(const char *engine_path);
 int analyzer_switch_done(unsigned ticket); // 1 ok, 0 failed, -1 still starting
 void analyzer_set_options(int threads, int hash_mb, int lines);
 void analyzer_set_elo(int elo);
-void analyzer_set_position(const Pos *p);
+void analyzer_set_position(const Pos *p, const char *line);
 void analyzer_stop(void);
 void analyzer_set_think_ms(int ms);
 int analyzer_get(Analysis *a);
@@ -262,8 +294,29 @@ typedef struct {
     char name[48];
 } Opinion;
 
+typedef struct {
+    u64 key;
+    int done, n;
+    Move mv[4], reply[4]; // the bait move and how they punish it
+    int loss[4], mate[4]; // cp worse than best, or mate in n
+    int lost[4]; // piece type you end up down, -1 = just a worse spot
+} Traps;
+
+int qs_caps(Pos *p, int alpha, int beta, int d);
+int quick_search(Pos *p, int depth, int alpha, int beta);
+int see_gain(Pos *p, Move m);
+Move style_choose(const Pos *p, const Analysis *an, int style);
+void move_to_san(Pos *p, Move m, char *out);
+int draw_kind(const Pos *p); // 1 = threefold, 2 = 50 move rule
+int rep_after(Pos *p, Move m); // 2 = m makes it threefold, 1 = they can right after
+Move rep_force(Pos *p, int *kind); // a move that draws by repetition, kind 1 = right now, 2 = a check they cant get out of
+Move rep_guard(const Pos *p, const Analysis *an, Move pick, Move likely, int swap, char *out, size_t n);
+int trap_scan(Pos *p, Traps *out, int ms, atomic_int *stop); // blocking, 0 = got stopped
+void trap_ask(const Pos *p);
+int trap_get(u64 key, Traps *t);
+
 void second_set(int k, const char *path, int elo, int ms); // k 0 = second opinion, 1 = the elo capped one helper mode uses
-void second_ask(int k, const Pos *p);
+void second_ask(int k, const Pos *p, const char *line);
 int second_get(int k, Opinion *o);
 void second_quit(void);
 

@@ -1,0 +1,3 @@
+name = Sneaky
+run = net.py
+description = test fixture, connects to OC_TEST_HOST without saying so

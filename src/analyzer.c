@@ -15,6 +15,7 @@ static int think_ms = 8000;
 static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
 static Analysis cur;
 static Pos want_pos;
+static char want_line[1400]; // the moves since the last capture or pawn move, so the engine sees repeats
 static int have_want, quit_flag, external, builtin_started, watch_started;
 static pthread_cond_t wcv = PTHREAD_COND_INITIALIZER, rcv = PTHREAD_COND_INITIALIZER;
 static char want_path[1024]; // empty = no outside engine
@@ -162,9 +163,9 @@ void uci_fen(const Pos *p, char *fen)
     }
 }
 
-static void uci_go(const Pos *p)
+static void uci_go(const Pos *p, const char *line)
 {
-    char fen[128], cmd[256];
+    char fen[128], cmd[1500];
     if (opts_dirty) send_opts();
     if (elo != sent_elo) {
         char opt[160];
@@ -176,7 +177,8 @@ static void uci_go(const Pos *p)
         sent_elo = elo;
     }
     uci_fen(p, fen);
-    snprintf(cmd, sizeof(cmd), "position fen %s\ngo movetime %d\n", fen, elo && think_ms > 1500 ? 1500 : think_ms); // a weak pick doesnt need 8s
+    if (line && *line) snprintf(cmd, sizeof(cmd), "position %s\ngo movetime %d\n", line, elo && think_ms > 1500 ? 1500 : think_ms);
+    else snprintf(cmd, sizeof(cmd), "position fen %s\ngo movetime %d\n", fen, elo && think_ms > 1500 ? 1500 : think_ms); // a weak pick doesnt need 8s
     search_pos = *p;
     uci_searching = 1;
     uci_stop_sent = 0;
@@ -246,7 +248,7 @@ static void *uci_thread(void *arg)
             if (have_want) { // board changed mid search, engine is free now so go again
                 have_want = 0;
                 Pos p = want_pos;
-                uci_go(&p);
+                uci_go(&p, want_line);
             }
             pthread_mutex_unlock(&mu);
         } else if (!strncmp(line, "info", 4)) {
@@ -508,7 +510,7 @@ void analyzer_set_options(int threads, int hash_mb, int lines)
     pthread_mutex_unlock(&mu);
 }
 
-void analyzer_set_position(const Pos *p)
+void analyzer_set_position(const Pos *p, const char *line)
 {
     pthread_mutex_lock(&mu);
     if (cur.key == p->key && cur.key) {
@@ -529,6 +531,7 @@ void analyzer_set_position(const Pos *p)
     if (external) {
         if (uci_searching) {
             want_pos = *p;
+            snprintf(want_line, sizeof(want_line), "%s", line ? line : "");
             have_want = 1;
             if (!uci_stop_sent) {
                 uci_stop_sent = 1;
@@ -536,7 +539,7 @@ void analyzer_set_position(const Pos *p)
             }
         } else {
             have_want = 0;
-            uci_go(p);
+            uci_go(p, line);
         }
     } else {
         want_pos = *p;

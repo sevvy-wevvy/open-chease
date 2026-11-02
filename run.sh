@@ -30,7 +30,10 @@ if [ "$os" != Linux ] && [ "$os" != Darwin ]; then
   exit 1
 fi
 
-if [ "$os" = Linux ] && [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; then
+build_only=0
+if [ "${1:-}" = --build-only ]; then build_only=1; shift; fi # get.sh builds the new version while the updating screen is up
+
+if [ "$build_only" = 0 ] && [ "$os" = Linux ] && [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; then
   echo "run this from a terminal on your actual desktop (hyprland, gnome or xfce), not over ssh" >&2
   exit 1
 fi
@@ -73,6 +76,8 @@ if [ "$os" = Darwin ] || [ "$(uname -m)" != "x86_64" ] || ! "$bin" --version >/d
     fi
   fi
 fi
+
+[ "$build_only" = 1 ] && exit 0
 
 pick_engine=1
 for a in "$@"; do

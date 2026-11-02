@@ -1,0 +1,4 @@
+name = Average color
+run = avgcolor.py
+description = reads a bit of the screen and shows its average color, proves screen reading works
+version = 1.0

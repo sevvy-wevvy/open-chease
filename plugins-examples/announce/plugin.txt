@@ -1,0 +1,4 @@
+name = Move announcer
+run = announce.py
+description = writes the last move on the board and in a little box
+version = 1.0

@@ -82,6 +82,16 @@ void engine_tt_resize(int mb)
     tt_mask = n - 1;
 }
 
+int engine_table_init(EngineTable *t, int mb)
+{
+    u64 n = 1;
+    while (n * 2 * sizeof(TTEntry) <= (u64)mb * 1024 * 1024) n *= 2;
+    free(t->e);
+    t->e = calloc(n, sizeof(TTEntry));
+    t->mask = t->e ? n - 1 : 0;
+    return t->e != NULL;
+}
+
 void engine_tt_clear(void)
 {
     if (tt) memset(tt, 0, (tt_mask + 1) * sizeof(TTEntry));
@@ -779,6 +789,8 @@ typedef struct {
     int history[12][64];
     Move pv[MAX_PLY][MAX_PLY];
     int pvlen[MAX_PLY];
+    TTEntry *tt;
+    u64 tt_mask;
 } Searcher;
 
 static int elapsed_ms(const struct timespec *a)
@@ -803,11 +815,20 @@ static int is_repetition(const Pos *p)
     return 0;
 }
 
-static TTEntry *tt_probe(u64 key) { return &tt[key & tt_mask]; }
-
-static void tt_store(u64 key, int depth, int score, int flag, Move m, int ply)
+int pos_repeats(const Pos *p)
 {
-    TTEntry *e = &tt[key & tt_mask];
+    int lim = p->nhist - p->half, n = 0;
+    if (lim < 0) lim = 0;
+    for (int i = p->nhist - 2; i >= lim; i -= 2)
+        if (i < 1024 && p->hist[i] == p->key) n++;
+    return n;
+}
+
+static TTEntry *tt_probe(Searcher *s, u64 key) { return &s->tt[key & s->tt_mask]; }
+
+static void tt_store(Searcher *s, u64 key, int depth, int score, int flag, Move m, int ply)
+{
+    TTEntry *e = &s->tt[key & s->tt_mask];
     if (e->key == key && depth < e->depth - 2 && flag != TT_EXACT) return; // already have it way deeper, keep that
     if (score > MATE_BOUND) score += ply; // mates go in as distance from this node, not from the root
     if (score < -MATE_BOUND) score -= ply;
@@ -931,7 +952,7 @@ static int search(Searcher *s, int alpha, int beta, int depth, int ply, int do_n
         if (alpha >= beta) return alpha;
     }
 
-    TTEntry *e = tt_probe(p->key);
+    TTEntry *e = tt_probe(s, p->key);
     Move ttm = 0;
     if (e->key == p->key) {
         ttm = tt_move_full(p, e->move16);
@@ -1027,14 +1048,17 @@ static int search(Searcher *s, int alpha, int beta, int depth, int ply, int do_n
         }
     }
     if (!legal) return in_check ? -MATE + ply : 0;
-    tt_store(p->key, depth, best, flag, best_move, ply);
+    tt_store(s, p->key, depth, best, flag, best_move, ply);
     return best;
 }
 
-Move engine_search(Pos *p, const SearchLimits *lim, SearchInfo *final)
+Move engine_search_in(Pos *p, const SearchLimits *lim, SearchInfo *final, EngineTable *t)
 {
     engine_init();
     Searcher *s = calloc(1, sizeof(Searcher));
+    if (!s) return 0;
+    s->tt = t && t->e ? t->e : tt;
+    s->tt_mask = t && t->e ? t->mask : tt_mask;
     s->p = p;
     s->lim = lim;
     clock_gettime(CLOCK_MONOTONIC, &s->start);
@@ -1092,3 +1116,5 @@ Move engine_search(Pos *p, const SearchLimits *lim, SearchInfo *final)
     free(s);
     return best;
 }
+
+Move engine_search(Pos *p, const SearchLimits *lim, SearchInfo *final) { return engine_search_in(p, lim, final, NULL); }

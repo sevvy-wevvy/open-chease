@@ -1,0 +1,3 @@
+name = Quiet
+run = quiet.py
+description = test fixture, never goes online

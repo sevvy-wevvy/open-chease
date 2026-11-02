@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 #include <direct.h>
 #include <fcntl.h>
 #include <io.h>
@@ -122,6 +123,93 @@ int proc_start(const char *path, int quiet, proc_t *p, int *to_fd, int *from_fd)
     return 1;
 }
 
+static int ends_with(const char *s, const char *tail);
+
+int proc_cmd(const char *cmd, const char *dir, int quiet, proc_t *p, int *to_fd, int *from_fd)
+{
+    char first[1024], full[4096], line[6000] = "", sysd[MAX_PATH];
+    const char *s = cmd;
+    size_t n = 0;
+    while (*s == ' ') s++;
+    if (*s == '"') {
+        for (s++; *s && *s != '"' && n < sizeof(first) - 1; s++) first[n++] = *s;
+        if (*s) s++;
+    } else
+        for (; *s && *s != ' ' && n < sizeof(first) - 1; s++) first[n++] = *s;
+    first[n] = 0;
+    while (*s == ' ') s++;
+    if (!n) return 0;
+    snprintf(full, sizeof(full), "%s\\%s", dir, first);
+    DWORD fa = GetFileAttributesA(full);
+    if (fa == INVALID_FILE_ATTRIBUTES || (fa & FILE_ATTRIBUTE_DIRECTORY)) snprintf(full, sizeof(full), "%s", first); // not in the folder, PATH then
+    UINT sl = GetSystemDirectoryA(sysd, sizeof(sysd));
+    if (!sl || sl >= sizeof(sysd)) sysd[0] = 0;
+    char pre[MAX_PATH + 80];
+    if (ends_with(full, ".bat") || ends_with(full, ".cmd")) {
+        snprintf(pre, sizeof(pre), "%s\\cmd.exe", sysd);
+        quote_arg(line, sizeof(line), pre);
+        snprintf(line + strlen(line), sizeof(line) - strlen(line), " /d /c");
+    } else if (ends_with(full, ".ps1")) {
+        snprintf(pre, sizeof(pre), "%s\\WindowsPowerShell\\v1.0\\powershell.exe", sysd);
+        quote_arg(line, sizeof(line), pre);
+        snprintf(line + strlen(line), sizeof(line) - strlen(line), " -NoProfile -ExecutionPolicy Bypass -File");
+    } else if (ends_with(full, ".py")) {
+        char py[MAX_PATH];
+        snprintf(line, sizeof(line), "%s", SearchPathA(NULL, "py.exe", NULL, sizeof(py), py, NULL) ? "py" : "python");
+    }
+    quote_arg(line, sizeof(line), full);
+    if (*s) snprintf(line + strlen(line), sizeof(line) - strlen(line), " %s", s);
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+    HANDLE in_r, in_w, out_r, out_w;
+    if (!CreatePipe(&in_r, &in_w, &sa, 0)) return 0;
+    if (!CreatePipe(&out_r, &out_w, &sa, 0)) {
+        CloseHandle(in_r), CloseHandle(in_w);
+        return 0;
+    }
+    SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
+    DWORD nowait = PIPE_NOWAIT; // a plugin that stops reading cant block our writes
+    SetNamedPipeHandleState(in_w, &nowait, NULL, NULL);
+    HANDLE err = quiet ? nul_handle() : INVALID_HANDLE_VALUE;
+    if (!quiet) DuplicateHandle(GetCurrentProcess(), GetStdHandle(STD_ERROR_HANDLE), GetCurrentProcess(), &err, 0, TRUE, DUPLICATE_SAME_ACCESS);
+    PROCESS_INFORMATION pi;
+    int ok = spawn(NULL, line, dir, in_r, out_w, err, &pi);
+    CloseHandle(in_r), CloseHandle(out_w);
+    if (err && err != INVALID_HANDLE_VALUE) CloseHandle(err);
+    if (!ok) {
+        CloseHandle(in_w), CloseHandle(out_r);
+        return 0;
+    }
+    CloseHandle(pi.hThread);
+    *p = (proc_t)pi.hProcess;
+    *to_fd = _open_osfhandle((intptr_t)in_w, _O_WRONLY | _O_BINARY);
+    *from_fd = _open_osfhandle((intptr_t)out_r, _O_RDONLY | _O_BINARY);
+    return 1;
+}
+
+int fd_read_some(int fd, char *buf, int n)
+{
+    HANDLE h = (HANDLE)_get_osfhandle(fd);
+    DWORD avail = 0, got = 0;
+    if (!PeekNamedPipe(h, NULL, 0, NULL, &avail, NULL)) return -1;
+    if (!avail) return 0;
+    if (!ReadFile(h, buf, avail < (DWORD)n ? avail : (DWORD)n, &got, NULL)) return -1;
+    return (int)got;
+}
+
+int fd_write_some(int fd, const char *buf, int n)
+{
+    HANDLE h = (HANDLE)_get_osfhandle(fd);
+    DWORD put = 0;
+    if (!WriteFile(h, buf, (DWORD)n, &put, NULL)) return GetLastError() == ERROR_NO_DATA || GetLastError() == ERROR_BROKEN_PIPE ? -1 : 0;
+    return (int)put;
+}
+
+void fd_close(int fd)
+{
+    if (fd >= 0) _close(fd);
+}
+
 void proc_kill(proc_t p)
 {
     if (p) TerminateProcess((HANDLE)p, 1);
@@ -132,6 +220,15 @@ void proc_reap(proc_t p)
     if (!p) return;
     WaitForSingleObject((HANDLE)p, 3000);
     CloseHandle((HANDLE)p);
+}
+
+int proc_reap_code(proc_t p)
+{
+    DWORD code = (DWORD)-1;
+    if (!p) return -1;
+    if (WaitForSingleObject((HANDLE)p, 3000) != WAIT_OBJECT_0 || !GetExitCodeProcess((HANDLE)p, &code)) code = (DWORD)-1;
+    CloseHandle((HANDLE)p);
+    return (int)code;
 }
 
 int fd_wait(int fd, int ms) // windows cant poll() a pipe, so peek at it
@@ -244,7 +341,13 @@ void relaunch_self(char **argv, const char *home)
     _exit(0);
 }
 
-int spawn_detached(char *const argv[])
+void drop_console(void)
+{
+    DWORD pl[2];
+    if (GetConsoleProcessList(pl, 2) == 1 && GetFileType(GetStdHandle(STD_ERROR_HANDLE)) == FILE_TYPE_CHAR) FreeConsole();
+}
+
+int spawn_detached(char *const argv[], int hidden)
 {
     char cmd[8192] = "", app[MAX_PATH + 64];
     for (int i = 0; argv[i]; i++) quote_arg(cmd, sizeof(cmd), argv[i]);
@@ -253,8 +356,9 @@ int spawn_detached(char *const argv[])
     memset(&si, 0, sizeof(si));
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi;
-    if (!CreateProcessA(exe, cmd, NULL, NULL, FALSE, CREATE_NEW_CONSOLE | CREATE_BREAKAWAY_FROM_JOB, NULL, NULL, &si, &pi) &&
-        !CreateProcessA(exe, cmd, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi))
+    DWORD how = hidden ? CREATE_NO_WINDOW : CREATE_NEW_CONSOLE;
+    if (!CreateProcessA(exe, cmd, NULL, NULL, FALSE, how | CREATE_BREAKAWAY_FROM_JOB, NULL, NULL, &si, &pi) &&
+        !CreateProcessA(exe, cmd, NULL, NULL, FALSE, how, NULL, NULL, &si, &pi))
         return -1;
     CloseHandle(pi.hProcess), CloseHandle(pi.hThread);
     return 0;
@@ -274,7 +378,7 @@ void quit_signals(void (*fn)(int))
     SetConsoleCtrlHandler(on_ctrl, TRUE);
 }
 
-static void rm_tree(const char *path)
+void rm_tree(const char *path)
 {
     char pat[4200];
     snprintf(pat, sizeof(pat), "%s\\*", path);
@@ -423,6 +527,82 @@ static DWORD WINAPI fetch_thread(void *arg)
     return ok ? 0 : 1;
 }
 
+static DWORD WINAPI stage_thread(void *arg)
+{
+    Job *jb = arg;
+    char ps1[1300];
+    snprintf(ps1, sizeof(ps1), "%s\\get.ps1", jb->j.data);
+    char *argv[] = {"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-Stage", NULL};
+    int ok = run_wait(argv) == 0;
+    free(jb);
+    return ok ? 0 : 1;
+}
+
+static DWORD WINAPI tgz_thread(void *arg)
+{
+    Job *jb = arg;
+    char got[1300];
+    rm_tree(jb->j.out);
+    CreateDirectoryA(jb->j.out, NULL);
+    snprintf(got, sizeof(got), "%s\\got.tgz", jb->j.out);
+    char *curl[] = {"curl.exe", "-fsL", "--max-time", "60", jb->j.url, "-o", got, NULL};
+    char *tar[] = {"tar.exe", "-xzf", got, "-C", jb->j.out, NULL};
+    int ok = run_wait(curl) == 0 && run_wait(tar) == 0;
+    DeleteFileA(got);
+    free(jb);
+    return ok ? 0 : 1;
+}
+
+typedef struct {
+    char cmd[1200], dir[1100], log[1100];
+} CmdJob;
+
+static DWORD WINAPI cmd_thread(void *arg)
+{
+    CmdJob *cj = arg;
+    char sysd[MAX_PATH], line[1600] = "", pre[MAX_PATH + 20];
+    UINT sl = GetSystemDirectoryA(sysd, sizeof(sysd));
+    DWORD code = 1;
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+    HANDLE out = CreateFileA(cj->log, GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL), in = nul_handle();
+    if (sl && sl < sizeof(sysd) && out != INVALID_HANDLE_VALUE) {
+        snprintf(pre, sizeof(pre), "%s\\cmd.exe", sysd);
+        quote_arg(line, sizeof(line), pre);
+        snprintf(line + strlen(line), sizeof(line) - strlen(line), " /d /s /c \"%s\"", cj->cmd);
+        PROCESS_INFORMATION pi;
+        if (spawn(pre, line, cj->dir, in, out, out, &pi)) {
+            WaitForSingleObject(pi.hProcess, INFINITE);
+            GetExitCodeProcess(pi.hProcess, &code);
+            CloseHandle(pi.hProcess), CloseHandle(pi.hThread);
+        }
+    }
+    if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
+    if (in != INVALID_HANDLE_VALUE) CloseHandle(in);
+    free(cj);
+    return code;
+}
+
+intptr_t cmd_start(const char *cmd, const char *dir, const char *log)
+{
+    CmdJob *cj = calloc(1, sizeof(CmdJob));
+    if (!cj) return 0;
+    snprintf(cj->cmd, sizeof(cj->cmd), "%s", cmd);
+    snprintf(cj->dir, sizeof(cj->dir), "%s", dir);
+    snprintf(cj->log, sizeof(cj->log), "%s", log);
+    HANDLE h = CreateThread(NULL, 0, cmd_thread, cj, 0, NULL);
+    if (!h) free(cj);
+    return (intptr_t)h;
+}
+
+int on_path(const char *name, char *out, size_t n)
+{
+    char got[MAX_PATH];
+    DWORD l = SearchPathA(NULL, name, ".exe", sizeof(got), got, NULL);
+    if (!l || l >= sizeof(got)) return 0;
+    snprintf(out, n, "%s", got);
+    return 1;
+}
+
 static intptr_t start_job(Job *jb, LPTHREAD_START_ROUTINE fn)
 {
     HANDLE h = CreateThread(NULL, 0, fn, jb, 0, NULL);
@@ -455,6 +635,51 @@ intptr_t fetch_start(const char *url, const char *out)
     snprintf(jb->j.url, sizeof(jb->j.url), "%s", url);
     snprintf(jb->j.out, sizeof(jb->j.out), "%s", out);
     return start_job(jb, fetch_thread);
+}
+
+intptr_t tgz_start(const char *url, const char *dir)
+{
+    Job *jb = calloc(1, sizeof(Job));
+    if (!jb) return 0;
+    snprintf(jb->j.url, sizeof(jb->j.url), "%s", url);
+    snprintf(jb->j.out, sizeof(jb->j.out), "%s", dir);
+    return start_job(jb, tgz_thread);
+}
+
+int clip_get(char *out, int n)
+{
+    *out = 0;
+    if (!OpenClipboard(NULL)) return 0;
+    HANDLE h = GetClipboardData(CF_TEXT);
+    const char *t = h ? GlobalLock(h) : NULL;
+    if (t) snprintf(out, n, "%s", t), GlobalUnlock(h);
+    CloseClipboard();
+    return *out != 0;
+}
+
+int one_instance(const char *data)
+{
+    unsigned long long h = 1469598103934665603ULL;
+    for (const char *s = data; *s; s++) h = (h ^ (unsigned char)(*s | 32)) * 1099511628211ULL;
+    char name[64];
+    snprintf(name, sizeof(name), "Local\\open-chease-%016llx", h);
+    for (int i = 0; i < 30; i++) {
+        HANDLE m = CreateMutexA(NULL, TRUE, name);
+        if (m && GetLastError() != ERROR_ALREADY_EXISTS) return 1; // kept open till we exit
+        if (m) CloseHandle(m);
+        Sleep(100);
+    }
+    MessageBoxA(NULL, "open-chease is already running", "open-chease", MB_OK | MB_ICONINFORMATION);
+    return 0;
+}
+
+intptr_t stage_start(const char *home, const char *branch)
+{
+    Job *jb = calloc(1, sizeof(Job));
+    if (!jb) return 0;
+    snprintf(jb->j.data, sizeof(jb->j.data), "%s", home);
+    SetEnvironmentVariableA("OPEN_CHEASE_BRANCH", branch);
+    return start_job(jb, stage_thread);
 }
 
 int job_done(intptr_t h, int *ok)
@@ -560,3 +785,105 @@ void engine_list(const char *dir, void (*add)(const char *label, const char *pat
 int ctl_open(const char *data) { return -1; } // RegisterHotKey works here, no need
 int ctl_read(int fd, char *buf, int n) { return 0; }
 int ctl_send(const char *data, const char *msg) { return -1; }
+
+typedef DWORD(WINAPI *ExtTable)(PVOID, PDWORD, BOOL, ULONG, int, ULONG);
+
+static void *net_table(ExtTable fn, ULONG af, int cls) // GetExtendedTcpTable / Udp, grows till it fits
+{
+    DWORD sz = 0;
+    void *t = NULL;
+    for (int k = 0; k < 4; k++) {
+        DWORD r = fn(t, &sz, FALSE, af, cls, 0);
+        if (r == 0 && t) return t;
+        if (r != 122) break; // ERROR_INSUFFICIENT_BUFFER
+        free(t);
+        if (!(t = malloc(sz + 4096))) return NULL;
+        sz += 4096;
+    }
+    free(t);
+    return NULL;
+}
+
+static int far_addr(const unsigned char *a, int v6, DWORD port, int any, char *out, int n)
+{
+    int pt = (int)((port & 0xFF) << 8 | (port >> 8 & 0xFF));
+    if (v6 && !memcmp(a, "\0\0\0\0\0\0\0\0\0\0\377\377", 12)) a += 12, v6 = 0;
+    if (any && !memcmp(a, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", v6 ? 16 : 4)) return snprintf(out, n, "any:%d", pt), 1;
+    if (!v6) {
+        if (a[0] == 127 || !(a[0] | a[1] | a[2] | a[3])) return 0;
+        snprintf(out, n, "%d.%d.%d.%d:%d", a[0], a[1], a[2], a[3], pt);
+        return 1;
+    }
+    static const unsigned char lo[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, zero[16] = {0};
+    if (!memcmp(a, lo, 16) || !memcmp(a, zero, 16)) return 0;
+    int l = snprintf(out, n, "[");
+    for (int k = 0; k < 8 && l < n; k++) l += snprintf(out + l, n - l, "%s%x", k ? ":" : "", a[2 * k] << 8 | a[2 * k + 1]);
+    if (l < n) snprintf(out + l, n - l, "]:%d", pt);
+    return 1;
+}
+
+int proc_net(proc_t root, char *out, int n)
+{
+    static HMODULE ip;
+    static ExtTable tcp, udp;
+    if (!ip && (ip = LoadLibraryA("iphlpapi.dll"))) {
+        tcp = (ExtTable)(void *)GetProcAddress(ip, "GetExtendedTcpTable");
+        udp = (ExtTable)(void *)GetProcAddress(ip, "GetExtendedUdpTable");
+    }
+    if (!tcp || !root) return 0;
+    DWORD mine[256];
+    int nm = 1;
+    mine[0] = GetProcessId((HANDLE)root);
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        static DWORD pid[4096], par[4096];
+        int np = 0;
+        PROCESSENTRY32 pe = {.dwSize = sizeof(pe)};
+        for (BOOL ok = Process32First(snap, &pe); ok && np < 4096; ok = Process32Next(snap, &pe)) pid[np] = pe.th32ProcessID, par[np++] = pe.th32ParentProcessID;
+        CloseHandle(snap);
+        for (int grew = 1; grew;) {
+            grew = 0;
+            for (int i = 0; i < np && nm < 256; i++) {
+                int in = 0, kid = 0;
+                for (int k = 0; k < nm; k++) in |= mine[k] == pid[i], kid |= mine[k] == par[i];
+                if (!in && kid) mine[nm++] = pid[i], grew = 1;
+            }
+        }
+    }
+    int hit = 0;
+    for (int t = 0; t < 4 && !hit; t++) {
+        int v6 = t & 1, isudp = t >= 2;
+        if (isudp && !udp) break;
+        unsigned char *tb = net_table(isudp ? udp : tcp, v6 ? 23 : 2, isudp ? 1 : 5); // UDP_TABLE_OWNER_PID, TCP_TABLE_OWNER_PID_ALL
+        if (!tb) continue;
+        DWORD cnt;
+        memcpy(&cnt, tb, 4);
+        int sz = isudp ? (v6 ? 28 : 12) : (v6 ? 56 : 24); // MIB_*ROW_OWNER_PID sizes
+        for (DWORD r = 0; r < cnt && !hit; r++) {
+            const unsigned char *row = tb + 4 + (size_t)r * sz;
+            DWORD f[14];
+            memcpy(f, row, sz);
+            DWORD owner = f[sz / 4 - 1];
+            int ours = 0;
+            for (int k = 0; k < nm; k++) ours |= mine[k] == owner;
+            if (!ours) continue;
+            if (!isudp && !v6) { // state laddr lport raddr rport pid
+                if (f[4] && far_addr((const unsigned char *)&f[3], 0, f[4], 0, out, n)) hit = 1;
+                else if (f[0] == 2 && far_addr((const unsigned char *)&f[1], 0, f[2], 1, out, n)) hit = 2;
+            } else if (!isudp) { // laddr[16] lscope lport raddr[16] rscope rport state pid
+                if (f[11] && far_addr(row + 24, 1, f[11], 0, out, n)) hit = 1;
+                else if (f[12] == 2 && far_addr(row, 1, f[5], 1, out, n)) hit = 2;
+            } else if (!v6) { // laddr lport pid
+                if (far_addr((const unsigned char *)&f[0], 0, f[1], 1, out, n)) hit = 3;
+            } else if (far_addr(row, 1, f[5], 1, out, n)) // laddr[16] lscope lport pid
+                hit = 3;
+        }
+        free(tb);
+    }
+    if (hit >= 2) {
+        char a[64];
+        snprintf(a, sizeof(a), "%s", out);
+        snprintf(out, n, "%s on %s", hit == 3 ? "udp" : "listening", a);
+    }
+    return hit > 0;
+}
