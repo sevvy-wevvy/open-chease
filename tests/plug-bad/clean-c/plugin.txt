@@ -1,0 +1,3 @@
+name = clean-c
+run = hello
+build = gcc -O2 -o hello hello.c\n

@@ -35,6 +35,7 @@ int fd_write_some(int fd, const char *buf, int n); // bytes it took, 0 = pipe fu
 void fd_close(int fd);
 void no_sigpipe(void);
 int cpu_count(void);
+int proc_net(proc_t p, char *out, int n); // 1 = it or a child has a socket open to something thats not this pc, out says where
 
 int is_exec(const char *path);
 int make_dir(const char *path);

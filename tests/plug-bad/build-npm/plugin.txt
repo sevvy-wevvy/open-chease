@@ -1,0 +1,3 @@
+name = build-npm
+run = main.js
+build = npm install\n

@@ -33,7 +33,7 @@ enum {
     ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE, ACT_HIDE, ACT_KEYROW, ACT_SHEET, ACT_SEARCH, ACT_EXPORT,
     ACT_IMPORT, ACT_EYES, ACT_UPGRADE, ACT_COMPACT, ACT_PLUG_ON, ACT_PLUG_DIR, ACT_PLUG_SET, ACT_PLUG_SLIDE,
     ACT_PLUG_URL, ACT_PLUG_PASTE, ACT_PLUG_ADD, ACT_PLUG_TEMPLATE, ACT_PLUG_HELP, ACT_PLUG_MENU, ACT_PLUG_LINK, ACT_PLUG_UPDATE,
-    ACT_PLUG_GET, ACT_PLUG_RECHECK
+    ACT_PLUG_GET, ACT_PLUG_RECHECK, ACT_PLUG_YES, ACT_PLUG_NO, ACT_NET_OFF, ACT_NET_OK
 };
 
 typedef struct {
@@ -1705,8 +1705,14 @@ static int wrap_text(Canvas *c, const char *t, double maxw, char out[][100], int
 
 static void draw_tip(Canvas *c, Rect outr, Rect bl)
 {
-    char ln[3][100];
-    int n = wrap_text(c, tip_text, 250, ln, 3);
+    char ln[10][100], part[400];
+    int n = 0;
+    for (const char *t = tip_text; *t && n < 10;) { // \n starts a new line, plugin warnings list one reason a line
+        size_t l = strcspn(t, "\n");
+        snprintf(part, sizeof(part), "%.*s", (int)(l < sizeof(part) ? l : sizeof(part) - 1), t);
+        n += wrap_text(c, part, 250, ln + n, 10 - n < 3 ? 10 - n : 3);
+        t += l + (t[l] == '\n');
+    }
     double w = 0;
     for (int k = 0; k < n; k++) w = fmax(w, text_lw(c, ln[k], 0));
     Rect r = {hov_x + 14, hov_y + 22, w + 20, n * 18 + 10};
@@ -1905,7 +1911,8 @@ static double plug_grid(Canvas *c, Rect m, double y, double pad, int pi, int dra
 }
 
 static char plug_url[160];
-static int plug_typing;
+static int plug_typing, plug_ask = -1; // plug_ask = the plugin the turn on popup is about
+static Rect set_box;
 static intptr_t pget_pid;
 
 static double plug_add_row(Canvas *c, Rect m, double y, double pad, int draw, int hit)
@@ -1964,7 +1971,7 @@ static double plug_entry(Canvas *c, Rect m, double y, double pad, int i, int dra
         if (hit) add_hit(row, ACT_BLOCK), add_hit_arg(fb, ACT_PLUG_DIR, i);
         if (hit && osok) add_hit_arg(sw, ACT_PLUG_ON, i);
         if (hit && *p->update) add_hit_arg(ub, ACT_PLUG_UPDATE, i);
-        if (osok) tip_spot(sw, "turns this plugin on or off. plugins are programs, only run ones you trust");
+        if (osok) tip_spot(sw, p->trusted ? "turns this plugin on or off. plugins are programs, only run ones you trust" : "turns it on. the check found stuff in it, so it shows you what first");
         tip_spot(fb, "opens the folder this plugin lives in");
         if (*p->update) tip_spot(ub, "gets the newest version from its github, same as adding it again");
     }
@@ -1990,6 +1997,33 @@ static double plug_entry(Canvas *c, Rect m, double y, double pad, int i, int dra
         }
         y += 20;
     }
+    double cx = m.x + pad + 8;
+    static char tips[PL_MAX][PF_N + 1][420];
+    int fl = plug_flags(p);
+    for (int k = PF_N; k >= 0; k--) { // went online, then the scary ones first
+        if (k < PF_N && !(fl >> k & 1)) continue;
+        if (k == PF_N && !*p->online) continue;
+        const char *nm = k == PF_N ? "went online" : plug_flag_name[k];
+        double cw = text_lw(c, nm, 0) + 14;
+        if (cx + cw > m.x + m.w - pad - 40) break;
+        Rect ch = {cx, y, cw, 18};
+        int bad = k == PF_N || k > PF_BIN;
+        uint32_t bg = bad ? 0xFFD03A3A : k == PF_BIN ? 0xFFE0702A : 0xFFD8A23A, fg = bad ? 0xFFFFFFFF : 0xFF181818;
+        if (draw) {
+            draw_round_rect(c, ch, 9, bg);
+            draw_text(c, ch.x + 7, ch.y + 1, nm, 0, fg);
+            char *tp = tips[i][k];
+            if (k == PF_N)
+                snprintf(tp, 420, "it went online: %s%s%s", p->online, p->net_ok ? "\nyou said thats fine" : "", *p->net_why ? "\nit says why: " : "");
+            else
+                snprintf(tp, 420, "%s%s", plug_flag_says[k], k == PF_NET && *p->net_why ? ", it says why: " : "");
+            if (k == PF_NET || k == PF_N) snprintf(tp + strlen(tp), 420 - strlen(tp), "%.100s", p->net_why);
+            for (int j = 0; k < PF_N && j < p->nflag[k] && j < PL_WHY; j++) snprintf(tp + strlen(tp), 420 - strlen(tp), "\n%s", p->flag[k][j]);
+            if (k < PF_N && p->nflag[k] > PL_WHY) snprintf(tp + strlen(tp), 420 - strlen(tp), "\nand %d more", p->nflag[k] - PL_WHY);
+            tip_spot(ch, tp);
+        }
+        cx += cw + 5;
+    }
     char info[300], why[80];
     int r = plug_ready(p, why, sizeof(why)), miss = -1, bad = 0;
     if (!osok) snprintf(info, sizeof(info), "%s", why);
@@ -1999,8 +2033,9 @@ static double plug_entry(Canvas *c, Rect m, double y, double pad, int i, int dra
     else if (p->bfail || p->bjob) snprintf(info, sizeof(info), "%s", p->status), bad = p->bfail;
     else if (r < 0) snprintf(info, sizeof(info), "%s", why), miss = plug_missing(p), bad = 1;
     else if (p->on) snprintf(info, sizeof(info), "%s", *p->status ? p->status : "starting"), bad = !p->want;
+    else if (!p->trusted) snprintf(info, sizeof(info), "%s", *p->desc ? p->desc : "off, it asks you first when you turn it on");
     else snprintf(info, sizeof(info), "%s", *p->desc ? p->desc : "off");
-    if (draw) draw_text(c, m.x + pad + 10, y, fit_text(c, info, w - 20), 0, bad ? 0xFFFF7A5A : TH->sub);
+    if (draw) draw_text(c, cx + (cx > m.x + pad + 8 ? 3 : 2), y + 1, fit_text(c, info, m.x + m.w - pad - cx - 12), 0, bad ? 0xFFFF7A5A : TH->sub);
     y += 22;
     for (int k = 0; p->bfail && k < 3 && p->blog[k][0]; k++, y += 18)
         if (draw) draw_text(c, m.x + pad + 18, y, fit_text(c, p->blog[k], w - 28), 0, (TH->sub & 0xFFFFFF) | 0xC0000000);
@@ -2114,6 +2149,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     if (m.x + mw > outr.x + outr.w - 4) m.x = outr.x + outr.w - 4 - mw;
     if (m.y + mh > outr.y + outr.h) m.y = p.y - mh - 6;
     if (m.y < outr.y) m.y = outr.y + 4;
+    set_box = m;
     int closing = !settings_open;
     double an = closing ? ease(set_shut, 130) : ease(set_t, 210);
     c = layer(0, dst, m);
@@ -2287,6 +2323,30 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     }
 }
 
+static void draw_ask(Canvas *dst, Rect at, Rect bl, Rect outr, const char *title, char ln[][100], const uint32_t *col, int n, const char *yes, const char *no, int ayes, int ano, int hit)
+{
+    double w = 380;
+    for (int k = 0; k < n; k++) w = fmax(w, text_lw(dst, ln[k], 0) + 28);
+    w = fmin(w, 560);
+    Rect q = {at.x + (at.w - w) / 2, at.y + 40, w, 44 + n * 18 + 50};
+    if (q.x + q.w > outr.x + outr.w - 4) q.x = outr.x + outr.w - 4 - q.w;
+    if (q.x < outr.x + 4) q.x = outr.x + 4;
+    if (q.y + q.h > outr.y + outr.h - 4) q.y = outr.y + outr.h - 4 - q.h;
+    if (q.y < outr.y + 4) q.y = outr.y + 4;
+    covers(q, bl);
+    Canvas *c = dst;
+    panel_bg(c, q, 14, TH->menu);
+    draw_frame(c, q, 1, 0x60FF6A5A);
+    if (hit) add_hit(q, ACT_BLOCK);
+    draw_text(c, q.x + 14, q.y + 12, fit_text(c, title, q.w - 28), 0, TH->title);
+    for (int k = 0; k < n; k++) draw_text(c, q.x + 14, q.y + 38 + k * 18, fit_text(c, ln[k], q.w - 28), 0, col[k]);
+    double yw = fmax(130, text_lw(c, yes, 0) + 24), nw = fmax(104, text_lw(c, no, 0) + 24);
+    Rect a = {q.x + 14, q.y + q.h - 42, yw, 28}, b = {a.x + yw + 10, a.y, nw, 28};
+    draw_button(c, a, yes, 0xFFD03A3A, 0xFFFFFFFF);
+    draw_button(c, b, no, 0xFF3A3A3A, 0xFFFFFFFF);
+    if (hit) add_hit(a, ayes), add_hit(b, ano);
+}
+
 static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
 {
     double s = bl.w / 8;
@@ -2372,6 +2432,37 @@ static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
             canvas_blit(dst, c, an, 0, -10 * (1 - an), -1);
             c = dst;
         }
+    }
+    if (plug_ask >= 0 && plug_ask < nplugs && settings_open) {
+        Plugin *pl = &plugs[plug_ask];
+        char ln[14][100], t[100];
+        uint32_t col[14];
+        int n = 0, fl = plug_flags(pl);
+        for (int k = PF_N - 1; k >= 0 && n < 12; k--) {
+            if (!(fl >> k & 1)) continue;
+            snprintf(ln[n], 100, "%s%s%.50s", plug_flag_says[k], k == PF_NET && *pl->net_why ? ", it says: " : "", k == PF_NET ? pl->net_why : "");
+            col[n++] = k > PF_BIN ? 0xFFFF6A5A : k == PF_BIN ? 0xFFFF9A50 : 0xFFE8B850;
+            for (int j = 0; j < pl->nflag[k] && j < 2 && n < 12; j++) snprintf(ln[n], 100, "    %s", pl->flag[k][j]), col[n++] = TH->sub;
+            if (pl->nflag[k] > 2 && n < 12) snprintf(ln[n], 100, "    and %d more", pl->nflag[k] - 2), col[n++] = TH->sub;
+        }
+        snprintf(ln[n], 100, "only say yes if you trust whoever made it"), col[n++] = TH->item_fg;
+        snprintf(t, sizeof(t), "Turn on %s?", pl->title);
+        draw_ask(c, set_box, bl, outr, t, ln, col, n, "Turn on anyway", "Cancel", ACT_PLUG_YES, ACT_PLUG_NO, hit);
+    }
+    int na = -1;
+    for (int i = 0; i < nplugs && na < 0; i++)
+        if (plugs[i].net_new) na = i;
+    if (na >= 0 && !(plug_ask >= 0 && settings_open)) {
+        Plugin *pl = &plugs[na];
+        char ln[4][100], t[100];
+        uint32_t col[4] = {TH->item_fg, TH->sub, TH->sub, TH->sub};
+        int n = 0;
+        snprintf(ln[n++], 100, "it connected to %s", pl->online);
+        if (*pl->net_why) snprintf(ln[n++], 100, "it says why: %.80s", pl->net_why);
+        else snprintf(ln[n++], 100, "it never said it would, so its off for now");
+        snprintf(t, sizeof(t), "%.60s went online", pl->title);
+        Rect at = settings_open ? set_box : (Rect){p.x + p.w - 380, p.y + p.h - 34, 380, 0};
+        draw_ask(c, at, bl, outr, t, ln, col, n, pl->alive ? "Turn it off" : "Keep it off", pl->alive ? "Its fine" : "Its fine, turn on", ACT_NET_OFF, ACT_NET_OK, hit);
     }
     if (lib_open) draw_library(c, outr, bl, hit); // last so its on top of everything
 }
@@ -5049,8 +5140,15 @@ static void plug_import_poll(void)
     char note[260];
     if (!n) snprintf(note, sizeof(note), "theres no plugin.txt in there, is it a plugin?");
     else if (!got) snprintf(note, sizeof(note), "couldnt add it, %s", nplugs >= PL_MAX ? "you have the most plugins it can hold" : "the plugins folder wont take it");
-    else if (upd == got) snprintf(note, sizeof(note), "updated %s", msg);
-    else snprintf(note, sizeof(note), "added %s, turn it on below. only turn on plugins you trust", msg);
+    else {
+        char says[200] = "";
+        for (int k = 0; k < n && !*says; k++) // first one with something to say, thats usually the only one
+            for (int i = 0; i < nplugs; i++)
+                if (!strcmp(plugs[i].name, name[k]) && plug_flags(&plugs[i])) plug_says(&plugs[i], says, sizeof(says));
+        if (*says) snprintf(note, sizeof(note), "%s %.60s, heads up: it %.120s. it shows you what it found before it runs", upd == got ? "updated" : "added", msg, says);
+        else if (upd == got) snprintf(note, sizeof(note), "updated %s", msg);
+        else snprintf(note, sizeof(note), "added %s, turn it on below. only turn on plugins you trust", msg);
+    }
     set_note(note);
 }
 
@@ -6128,6 +6226,18 @@ static int drag_slide(void)
     return 1;
 }
 
+static void plug_turn(Plugin *p, int on)
+{
+    char k[80];
+    p->on = on;
+    snprintf(k, sizeof(k), "plugin.%s", p->name);
+    plug_cfg_line(k, on ? "1" : "0");
+    if (on) plug_start(p);
+    else plug_stop(p, "off");
+    plug_poll(now_ms());
+    save_cfg();
+}
+
 static void handle_click(double x, double y)
 {
     hov_t = now_ms();
@@ -6136,6 +6246,7 @@ static void handle_click(double x, double y)
         if (x < r.x || y < r.y || x >= r.x + r.w || y >= r.y + r.h) continue;
         search_click(hits[i].action);
         if (hits[i].action != ACT_PLUG_URL && hits[i].action != ACT_PLUG_PASTE) plug_typing = 0;
+        if (hits[i].action != ACT_PLUG_YES && hits[i].action != ACT_BLOCK) plug_ask = -1;
         switch (hits[i].action) {
         case ACT_WHITE:
         case ACT_BLACK:
@@ -6436,16 +6547,42 @@ static void handle_click(double x, double y)
             break;
         case ACT_PLUG_ON: {
             Plugin *p = &plugs[hits[i].arg];
-            char k[80];
-            p->on = !p->on;
-            snprintf(k, sizeof(k), "plugin.%s", p->name);
-            plug_cfg_line(k, p->on ? "1" : "0");
-            if (p->on) plug_start(p);
-            else plug_stop(p, "off");
-            plug_poll(now_ms());
-            save_cfg();
+            plug_ask = -1;
+            int up = !p->on || (!p->alive && !p->trusted); // on but waiting for an ok counts as turning it on
+            if (up) {
+                plug_recheck(p);
+                if (!p->trusted) { // flagged, it doesnt get to run till they read what was found
+                    plug_ask = hits[i].arg;
+                    break;
+                }
+            }
+            plug_turn(p, up);
             break;
         }
+        case ACT_PLUG_YES:
+            if (plug_ask >= 0 && plug_ask < nplugs) plug_trust(&plugs[plug_ask]), plug_turn(&plugs[plug_ask], 1);
+            plug_ask = -1;
+            break;
+        case ACT_PLUG_NO:
+            if (plug_ask >= 0 && plug_ask < nplugs && plugs[plug_ask].on && !plugs[plug_ask].alive) plug_turn(&plugs[plug_ask], 0);
+            plug_ask = -1;
+            break;
+        case ACT_NET_OFF:
+        case ACT_NET_OK:
+            for (int k = 0; k < nplugs; k++) {
+                Plugin *p = &plugs[k];
+                if (!p->net_new) continue;
+                p->net_new = 0;
+                if (hits[i].action == ACT_NET_OFF) plug_turn(p, 0), set_note("turned it off");
+                else {
+                    plug_trust(p);
+                    plug_net_fine(p, 1);
+                    if (!p->alive) plug_turn(p, 1);
+                    else save_cfg();
+                }
+                break;
+            }
+            break;
         case ACT_PLUG_URL:
             plug_typing = 1, set_typing = 0, dd_open = -1;
             break;
@@ -6487,7 +6624,7 @@ static void handle_click(double x, double y)
             break;
         case ACT_PLUG_RECHECK:
             set_note(plugs[hits[i].arg].bfail ? "building it again" : "looking again");
-            plug_recheck();
+            plug_tools_recheck();
             break;
         case ACT_PLUG_DIR: {
             char dir[1100];
@@ -6653,6 +6790,7 @@ static void usage(void)
            "  --builtin            use my engine even if stockfish is around\n"
            "  --engine PATH        use any other uci engine (like stockfish)\n"
            "  --backend X          force how it grabs the screen: wayland, portal, gnome or x11\n"
+           "  --check-plugin DIR   says what the plugin safety check finds in a plugin folder\n"
            "  --send ACTION        tells the running one to do a hotkey (hide, rescan, mode...), for wayland binds\n"
            "  -v / -vv             print what its seeing\n");
 }
@@ -6677,7 +6815,9 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--version")) {
             printf("open-chease 1.0\n");
             return 0;
-        } else if (!strcmp(argv[i], "--builtin"))
+        } else if (!strcmp(argv[i], "--check-plugin") && i + 1 < argc)
+            return plug_check_dir(argv[i + 1], stdout);
+        else if (!strcmp(argv[i], "--builtin"))
             engine = NULL, engine_cli = 1;
         else if (!strcmp(argv[i], "--backend") && i + 1 < argc)
             force = argv[++i];

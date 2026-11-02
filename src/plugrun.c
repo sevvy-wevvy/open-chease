@@ -5,9 +5,6 @@
 
 #include "plugin.h"
 
-// stand in for the safety check (plugsafe), the real one replaces this
-int plug_cleared(Plugin *p) { return 1; }
-
 #ifdef _WIN32
 static const char *tool_cmds[PT_N][4] = {{"py", "python"}, {"node"}, {"gcc", "clang", "cc"}, {"g++", "clang++", "c++"}, {"rustc"}, {"dotnet"}};
 #define CC_GET "https://www.msys2.org/"
@@ -401,19 +398,32 @@ static void log_tail(Plugin *p)
     }
 }
 
-void plug_start(Plugin *p)
+static int building(void)
+{
+    for (int i = 0; i < nplugs; i++)
+        if (plugs[i].bjob) return 1;
+    return 0;
+}
+
+void plug_start(Plugin *p) // os, then languages, then the safety ok, then the build, then run it
 {
     if (p->alive || p->bjob) return;
     p->want = p->bfail = 0;
     int r = plug_ready(p, p->status, sizeof(p->status));
     if (r == 0) p->want = 1; // plug_run_poll tries again once its looked
     if (r <= 0) return;
-    if (!plug_cleared(p)) return;
-    if (*p->build && !built_already(p)) {
-        build_start(p);
+    int build = *p->build && !built_already(p);
+    if (build && building()) { // one at a time, plug_built tells the files apart by what showed up since plug_cleared
+        p->want = 1;
+        snprintf(p->status, sizeof(p->status), "waiting for another build...");
         return;
     }
-    plug_launch(p);
+    if (build ? !plug_cleared(p) : (plug_recheck(p), !p->trusted)) {
+        snprintf(p->status, sizeof(p->status), "waiting for your ok");
+        return;
+    }
+    if (build) build_start(p);
+    else plug_launch(p);
 }
 
 void plug_run_stop(Plugin *p)
@@ -421,6 +431,7 @@ void plug_run_stop(Plugin *p)
     if (!p->bjob) return;
     job_kill(p->bjob);
     p->bjob = 0;
+    plug_built(p); // even half a build made files, they dont need a new ok
 }
 
 int plug_run_poll(long now)
@@ -440,6 +451,7 @@ int plug_run_poll(long now)
         if (job_done(p->bjob, &ok)) {
             p->bjob = 0;
             dirty = 1;
+            plug_built(p);
             if (!ok) {
                 p->bfail = 1;
                 log_tail(p);
@@ -471,7 +483,7 @@ int plug_busy(void)
     return 0;
 }
 
-void plug_recheck(void)
+void plug_tools_recheck(void)
 {
     for (int t = 0; t <= PT_N; t++) {
         if (tools[t].state == TS_CHECKING) proc_kill(tools[t].pid), proc_reap(tools[t].pid), fd_close(tools[t].from);

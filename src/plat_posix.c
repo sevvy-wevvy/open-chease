@@ -527,3 +527,181 @@ int ctl_send(const char *data, const char *msg)
     close(fd);
     return ok ? 0 : -1;
 }
+
+static int net_far(const unsigned char *a, int v6, int port, char *out, int n) // 1 = this address is off this pc
+{
+    if (v6 && !memcmp(a, "\0\0\0\0\0\0\0\0\0\0\377\377", 12)) a += 12, v6 = 0; // ::ffff:1.2.3.4
+    if (!v6) {
+        if (a[0] == 127 || !(a[0] | a[1] | a[2] | a[3])) return 0;
+        snprintf(out, n, "%d.%d.%d.%d:%d", a[0], a[1], a[2], a[3], port);
+        return 1;
+    }
+    static const unsigned char lo[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, zero[16] = {0};
+    if (!memcmp(a, lo, 16) || !memcmp(a, zero, 16)) return 0;
+    int l = snprintf(out, n, "[");
+    for (int k = 0; k < 8 && l < n; k++) l += snprintf(out + l, n - l, "%s%x", k ? ":" : "", a[2 * k] << 8 | a[2 * k + 1]);
+    if (l < n) snprintf(out + l, n - l, "]:%d", port);
+    return 1;
+}
+
+#ifdef __APPLE__
+#include <arpa/inet.h>
+#include <libproc.h>
+#include <sys/proc_info.h>
+
+int proc_net(proc_t root, char *out, int n)
+{
+    pid_t pids[64];
+    int np = 1;
+    pids[0] = (pid_t)root;
+    for (int i = 0; i < np && root > 0; i++) { // its kids, then theirs
+        pid_t kid[64];
+        memset(kid, 0, sizeof(kid));
+        int got = proc_listchildpids(pids[i], kid, sizeof(kid));
+        for (int k = 0; got > 0 && k < 64 && kid[k] > 0 && np < 64; k++) pids[np++] = kid[k];
+    }
+    for (int i = 0; i < np; i++) {
+        struct proc_fdinfo fds[256];
+        int sz = proc_pidinfo(pids[i], PROC_PIDLISTFDS, 0, fds, sizeof(fds));
+        for (int k = 0; sz > 0 && k < sz / (int)PROC_PIDLISTFD_SIZE; k++) {
+            if (fds[k].proc_fdtype != PROX_FDTYPE_SOCKET) continue;
+            struct socket_fdinfo si;
+            if (proc_pidfdinfo(pids[i], fds[k].proc_fd, PROC_PIDFDSOCKETINFO, &si, sizeof(si)) != sizeof(si)) continue;
+            struct in_sockinfo *in = si.psi.soi_kind == SOCKINFO_TCP ? &si.psi.soi_proto.pri_tcp.tcpsi_ini
+                                     : si.psi.soi_kind == SOCKINFO_IN ? &si.psi.soi_proto.pri_in
+                                                                      : NULL;
+            if (!in || !in->insi_fport) continue;
+            int port = ntohs((unsigned short)in->insi_fport);
+            if (in->insi_vflag & INI_IPV4) {
+                if (net_far((const unsigned char *)&in->insi_faddr.ina_46.i46a_addr4, 0, port, out, n)) return 1;
+            } else if (net_far((const unsigned char *)&in->insi_faddr.ina_6, 1, port, out, n))
+                return 1;
+        }
+    }
+    return 0;
+}
+#else
+static int hexn(const char *s, int n, unsigned *v)
+{
+    *v = 0;
+    for (int i = 0; i < n; i++) {
+        char c = s[i] | 32;
+        int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+        if (d < 0) return 0;
+        *v = *v << 4 | d;
+    }
+    return 1;
+}
+
+static int addr(const char *s, int v6, unsigned char *a, int *port) // kernel prints each 32 bit word in host order
+{
+    int words = v6 ? 4 : 1;
+    for (int k = 0; k < words; k++) {
+        unsigned w;
+        if (!hexn(s + 8 * k, 8, &w)) return 0;
+        uint32_t u = w;
+        memcpy(a + 4 * k, &u, 4);
+    }
+    unsigned pt;
+    if (s[8 * words] != ':' || !hexn(s + 8 * words + 1, 4, &pt)) return 0;
+    *port = (int)pt;
+    return 1;
+}
+
+int proc_net(proc_t root, char *out, int n)
+{
+    static int pid[4096], ppid[4096], grp[4096];
+    int np = 0;
+    DIR *d = opendir("/proc");
+    struct dirent *e;
+    while (d && (e = readdir(d)) && np < 4096) { // everyone and their parent, kids get picked out below
+        int v = 0;
+        const char *q = e->d_name;
+        for (; *q >= '0' && *q <= '9' && v < 10000000; q++) v = v * 10 + *q - '0';
+        if (*q || !v) continue;
+        char path[64], buf[512];
+        snprintf(path, sizeof(path), "/proc/%d/stat", v);
+        int fd = open(path, O_RDONLY);
+        if (fd < 0) continue;
+        ssize_t got = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (got <= 0) continue;
+        buf[got] = 0;
+        char *s = strrchr(buf, ')'); // the name can have spaces and brackets in it
+        if (!s || s[1] != ' ' || !s[2] || s[3] != ' ') continue;
+        s += 4;
+        int a = 0, b = 0;
+        for (; *s >= '0' && *s <= '9'; s++) a = a * 10 + *s - '0';
+        if (*s++ != ' ') continue;
+        for (; *s >= '0' && *s <= '9'; s++) b = b * 10 + *s - '0';
+        pid[np] = v, ppid[np] = a, grp[np++] = b;
+    }
+    if (d) closedir(d);
+    int mine[256], nm = 1;
+    mine[0] = (int)root;
+    for (int grew = 1; grew;) {
+        grew = 0;
+        for (int i = 0; i < np && nm < 256; i++) {
+            int in = 0, par = 0;
+            for (int k = 0; k < nm; k++) in |= mine[k] == pid[i], par |= mine[k] == ppid[i];
+            if (!in && (par || grp[i] == (int)root)) mine[nm++] = pid[i], grew = 1; // plugins get their own group
+        }
+    }
+    unsigned long ino[512];
+    int ni = 0;
+    for (int k = 0; k < nm && ni < 512; k++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/proc/%d/fd", mine[k]);
+        DIR *fdd = opendir(path);
+        while (fdd && (e = readdir(fdd)) && ni < 512) {
+            char lp[96], tgt[64];
+            snprintf(lp, sizeof(lp), "%s/%.20s", path, e->d_name);
+            ssize_t l = readlink(lp, tgt, sizeof(tgt) - 1);
+            if (l < 9) continue;
+            tgt[l] = 0;
+            if (strncmp(tgt, "socket:[", 8)) continue;
+            unsigned long v = 0;
+            for (const char *q = tgt + 8; *q >= '0' && *q <= '9'; q++) v = v * 10 + *q - '0';
+            ino[ni++] = v;
+        }
+        if (fdd) closedir(fdd);
+    }
+    if (!ni) return 0;
+    static const char *tabs[] = {"/proc/net/tcp", "/proc/net/tcp6", "/proc/net/udp", "/proc/net/udp6"};
+    for (int t = 0; t < 4; t++) {
+        FILE *f = fopen(tabs[t], "r");
+        if (!f) continue;
+        char ln[512];
+        int v6 = t & 1, udp = t >= 2, hit = 0;
+        while (!hit && fgets(ln, sizeof(ln), f)) {
+            char *w[12];
+            int nw = 0;
+            for (char *q = ln; *q && nw < 12;) { // sl local rem st queues tr retr uid timeout inode
+                while (*q == ' ') q++;
+                if (!*q || *q == '\n') break;
+                w[nw++] = q;
+                while (*q && *q != ' ' && *q != '\n') q++;
+                if (*q) *q++ = 0;
+            }
+            if (nw < 10) continue;
+            unsigned long v = 0;
+            for (const char *q = w[9]; *q >= '0' && *q <= '9'; q++) v = v * 10 + *q - '0';
+            int ours = 0;
+            for (int k = 0; k < ni; k++) ours |= ino[k] == v;
+            unsigned char la[16], ra[16];
+            int lport, rport;
+            if (!ours || !addr(w[1], v6, la, &lport) || !addr(w[2], v6, ra, &rport)) continue;
+            if (rport && net_far(ra, v6, rport, out, n)) hit = 1;
+            else if (!rport && lport && (udp || !strcmp(w[3], "0A")) && (!memcmp(la, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", v6 ? 16 : 4) ? snprintf(out, n, "any:%d", lport) > 0 : net_far(la, v6, lport, out, n))) { // open to the network, not just this pc
+                char a[64];
+                snprintf(a, sizeof(a), "%s", out);
+                snprintf(out, n, "%s on %s", udp ? "udp" : "listening", a);
+                hit = 1;
+            }
+        }
+        fclose(f);
+        if (hit) return 1;
+    }
+    return 0;
+}
+#endif
