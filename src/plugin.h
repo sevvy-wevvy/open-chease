@@ -63,6 +63,7 @@ extern void (*plug_note)(const Plugin *p, const char *msg);
 extern int (*plug_grab)(double x, double y, double w, double h, const char *path, int *pw, int *ph); // board px, writes a ppm
 
 void plug_scan(const char *data, int verbose);
+int plug_found(const char *tmp, const char *sub, const char *repo, char src[][1100], char name[][32], int max); // plugin folders in an unpacked github download
 void plug_start(Plugin *p);
 void plug_stop(Plugin *p, const char *why);
 void plug_send(Plugin *p, const char *fmt, ...) __attribute__((format(printf, 2, 3)));

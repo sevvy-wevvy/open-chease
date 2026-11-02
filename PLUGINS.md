@@ -13,7 +13,9 @@ Every plugin gets its own folder inside the <code>plugins</code> folder in the o
 <b>Linux</b> <code>~/.local/share/open-chease/plugins</code><br>
 <b>Windows</b> <code>%LOCALAPPDATA%\open-chease\plugins</code><br>
 <b>Mac</b> <code>~/Library/Application Support/open-chease/plugins</code><br> <br>
-Easiest way there is Gear > Plugins > <b>Open plugins folder</b>. Drop the plugin folder in, restart open-chease, then turn it on in the Plugins tab.<br>
+If the plugin is on github, paste its link in Gear > Plugins and hit <b>Add plugin</b>. A link to the repo works, and so does a link to a folder in it (<code>github.com/someone/repo/tree/main/myplugin</code>). Adding the same one again updates it.<br>
+Or do it by hand: Gear > Plugins > <b>Open plugins folder</b>, drop the plugin folder in, restart open-chease.<br>
+Either way it starts off, turn it on in the Plugins tab.<br>
 Plugins are just programs on your computer, so only run ones you trust or ones you read yourself.<br> <br>
 Theres 2 examples in <code>plugins-examples/</code> you can copy over: <b>announce</b> (writes the last move on the board and in a box, has a few settings) and <b>avgcolor</b> (reads a bit of the screen and shows its average color).
 </p>

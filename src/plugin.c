@@ -120,6 +120,9 @@ void plug_scan(const char *data, int verbose)
     struct dirent *e;
     while ((e = readdir(d)) && nplugs < PL_MAX) {
         if (!ok_name(e->d_name)) continue;
+        int have = 0;
+        for (int i = 0; i < nplugs; i++) have |= !strcmp(plugs[i].name, e->d_name);
+        if (have) continue; // rescan after an import, keep the running ones as they are
         Plugin *p = &plugs[nplugs];
         memset(p, 0, sizeof(*p));
         snprintf(p->name, sizeof(p->name), "%.31s", e->d_name);
@@ -144,6 +147,54 @@ void plug_scan(const char *data, int verbose)
                 Plugin t = plugs[i];
                 plugs[i] = plugs[j], plugs[j] = t;
             }
+}
+
+static int is_dir(const char *path)
+{
+    struct stat st;
+    return !stat(path, &st) && S_ISDIR(st.st_mode);
+}
+
+static int has_manifest(const char *dir)
+{
+    char f[1200];
+    struct stat st;
+    snprintf(f, sizeof(f), "%s/plugin.txt", dir);
+    return !stat(f, &st) && S_ISREG(st.st_mode);
+}
+
+int plug_found(const char *tmp, const char *sub, const char *repo, char src[][1100], char name[][32], int max)
+{
+    char top[1100] = "", base[1100];
+    DIR *d = opendir(tmp);
+    struct dirent *e;
+    while (d && (e = readdir(d))) { // github puts it all in one repo-branch folder
+        if (*e->d_name == '.') continue;
+        snprintf(top, sizeof(top), "%.800s/%.200s", tmp, e->d_name);
+        if (is_dir(top)) break;
+        *top = 0;
+    }
+    if (d) closedir(d);
+    if (!*top) return 0;
+    snprintf(base, sizeof(base), "%.880s%s%.200s", top, *sub ? "/" : "", sub);
+    int n = 0;
+    if (has_manifest(base)) {
+        const char *nm = strrchr(sub, '/');
+        nm = *sub ? (nm ? nm + 1 : sub) : repo;
+        if (!ok_name(nm)) return 0;
+        snprintf(src[0], 1100, "%s", base);
+        snprintf(name[0], 32, "%s", nm);
+        return 1;
+    }
+    d = opendir(base); // no plugin.txt up top, take every folder that has one
+    while (d && (e = readdir(d)) && n < max) {
+        if (!ok_name(e->d_name)) continue;
+        snprintf(src[n], 1100, "%.880s/%.200s", base, e->d_name);
+        if (!is_dir(src[n]) || !has_manifest(src[n])) continue;
+        snprintf(name[n++], 32, "%.31s", e->d_name);
+    }
+    if (d) closedir(d);
+    return n;
 }
 
 void plug_start(Plugin *p)

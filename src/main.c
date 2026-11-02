@@ -31,7 +31,8 @@ enum {
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
     ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE, ACT_HIDE, ACT_KEYROW, ACT_SHEET, ACT_SEARCH, ACT_EXPORT,
-    ACT_IMPORT, ACT_EYES, ACT_UPGRADE, ACT_COMPACT, ACT_PLUG_ON, ACT_PLUG_DIR, ACT_PLUG_SET, ACT_PLUG_SLIDE
+    ACT_IMPORT, ACT_EYES, ACT_UPGRADE, ACT_COMPACT, ACT_PLUG_ON, ACT_PLUG_DIR, ACT_PLUG_SET, ACT_PLUG_SLIDE,
+    ACT_PLUG_URL, ACT_PLUG_PASTE, ACT_PLUG_ADD, ACT_PLUG_TEMPLATE, ACT_PLUG_HELP
 };
 
 typedef struct {
@@ -1886,6 +1887,34 @@ static double plug_grid(Canvas *c, Rect m, double y, double pad, int pi, int dra
     return y + per * rh;
 }
 
+static char plug_url[160];
+static int plug_typing;
+static intptr_t pget_pid;
+
+static double plug_add_row(Canvas *c, Rect m, double y, double pad, int draw, int hit)
+{
+    double w = m.w - 2 * pad, bw = fmax(64, text_lw(c, "Paste", 0) + 20), aw = fmax(110, text_lw(c, "Add plugin", 0) + 20);
+    Rect f = {m.x + pad, y, w - bw - aw - 12, 26}, pb = {f.x + f.w + 6, y, bw, 26}, ab = {pb.x + bw + 6, y, aw, 26};
+    if (draw) {
+        draw_round_rect(c, f, 7, TH->item);
+        if (plug_typing) draw_frame(c, f, 1, TH->title);
+        char t[170];
+        snprintf(t, sizeof(t), "%s%s", plug_url, plug_typing ? "_" : "");
+        const char *shown = *t ? t : "github link, like someone/their-plugin";
+        double tw = text_lw(c, shown, 0);
+        if (*t && tw > f.w - 16) // long links show their end, thats where you type
+            for (const char *q = t; *q && text_lw(c, q, 0) > f.w - 16; q++) shown = q + 1;
+        draw_text(c, f.x + 9, f.y + 4, *t ? shown : fit_text(c, shown, f.w - 16), 0, *t ? TH->item_fg : (TH->item_fg & 0xFFFFFF) | 0x80000000);
+        draw_button(c, pb, "Paste", TH->btn, TH->btn_fg);
+        draw_button(c, ab, pget_pid ? "Getting it..." : "Add plugin", TH->title, 0xFF181818);
+        if (hit) add_hit(f, ACT_PLUG_URL), add_hit(pb, ACT_PLUG_PASTE), add_hit(ab, ACT_PLUG_ADD);
+        tip_spot(f, "a github repo with a plugin.txt in it, or a folder in one (the link to that folder). its added turned off");
+        tip_spot(pb, "pastes the link you copied");
+        tip_spot(ab, "downloads it into your plugins folder. the same one again updates it");
+    }
+    return y + 34;
+}
+
 static double plug_tab(Canvas *c, Rect m, double y, double pad, int t, int draw, int hit)
 {
     double w = m.w - 2 * pad;
@@ -1897,15 +1926,25 @@ static double plug_tab(Canvas *c, Rect m, double y, double pad, int t, int draw,
         }
         return y + 30;
     }
+    y = plug_add_row(c, m, y, pad, draw, hit);
     if (!nplugs) {
-        char ln[4][100];
-        int n = wrap_text(c, "no plugins yet. each one goes in its own folder inside the plugins folder, PLUGINS.md on github says how to make one", w - 16, ln, 4);
-        Rect hb = {m.x + pad, y, w, n * 18 + 10};
+        char ln[3][100];
+        int n = wrap_text(c, "plugins draw on the board, add settings and react to moves. paste a github link up there or grab the template", w - 60, ln, 3);
+        Rect card = {m.x + pad, y, w, 50 + n * 18 + 40};
         if (draw) {
-            draw_round_rect(c, hb, 7, TH->item);
-            for (int k = 0; k < n; k++) draw_text(c, hb.x + 8, hb.y + 5 + k * 18, ln[k], 0, TH->item_fg);
+            const char *hd = "No plugins yet";
+            draw_round_rect(c, card, 10, TH->item);
+            draw_text(c, card.x + (card.w - text_lw(c, hd, 1)) / 2, card.y + 14, hd, 1, TH->title);
+            for (int k = 0; k < n; k++) draw_text(c, card.x + (card.w - text_lw(c, ln[k], 0)) / 2, card.y + 46 + k * 18, ln[k], 0, TH->sub);
+            double b1 = fmax(150, text_lw(c, "Get the template", 0) + 24), b2 = fmax(150, text_lw(c, "How to make one", 0) + 24);
+            Rect tb = {card.x + (card.w - b1 - b2 - 8) / 2, card.y + card.h - 36, b1, 26}, hb = {tb.x + b1 + 8, tb.y, b2, 26};
+            draw_button(c, tb, "Get the template", TH->btn, TH->btn_fg);
+            draw_button(c, hb, "How to make one", TH->btn, TH->btn_fg);
+            if (hit) add_hit(tb, ACT_PLUG_TEMPLATE), add_hit(hb, ACT_PLUG_HELP);
+            tip_spot(tb, "adds the template plugin, it shows off everything a plugin can do. copy it and change it into your own");
+            tip_spot(hb, "opens PLUGINS.md on github");
         }
-        return hb.y + hb.h + 10 + 30;
+        return card.y + card.h + 10 + 30;
     }
     for (int i = 0; i < nplugs; i++) {
         Plugin *p = &plugs[i];
@@ -4822,11 +4861,136 @@ static void check_switch(void)
     if (state == TRACKING) analyzer_set_position(&tracker.pos, game_line());
 }
 
+static char pget_sub[200], pget_repo[64];
+
+static int gh_part(const char *s, size_t n) // letters numbers - _ . only, no . or ..
+{
+    if (!n || n > 60 || (n <= 2 && s[0] == '.' && s[n - 1] == '.')) return 0;
+    for (size_t i = 0; i < n; i++)
+        if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '-' || s[i] == '_' || s[i] == '.')) return 0;
+    return 1;
+}
+
+// github.com/me/repo, me/repo or .../tree/branch/some/folder
+static int gh_parse(const char *in, char *url, size_t un)
+{
+    while (*in == ' ' || *in == '\t' || *in == '\n' || *in == '\r') in++;
+    static const char *skip[] = {"https://", "http://", "www.", "github.com/"};
+    for (int k = 0; k < 4; k++)
+        if (!strncmp(in, skip[k], strlen(skip[k]))) in += strlen(skip[k]);
+    const char *part[16];
+    size_t len[16];
+    int np = 0;
+    for (const char *q = in; *q && *q != ' ' && *q != '\n' && *q != '\r' && *q != '?' && *q != '#' && np < 16;) {
+        size_t l = strcspn(q, "/ \n\r?#");
+        if (l) part[np] = q, len[np++] = l;
+        q += l;
+        if (*q == '/') q++;
+    }
+    if (np < 2) return 0;
+    if (len[1] > 4 && !strncmp(part[1] + len[1] - 4, ".git", 4)) len[1] -= 4;
+    char br[64] = "HEAD";
+    *pget_sub = 0;
+    if (np >= 4 && len[2] == 4 && !strncmp(part[2], "tree", 4)) {
+        if (!gh_part(part[3], len[3])) return 0;
+        snprintf(br, sizeof(br), "%.*s", (int)len[3], part[3]);
+        for (int k = 4; k < np; k++) {
+            if (!gh_part(part[k], len[k])) return 0;
+            size_t l = strlen(pget_sub);
+            snprintf(pget_sub + l, sizeof(pget_sub) - l, "%s%.*s", l ? "/" : "", (int)len[k], part[k]);
+        }
+    } else if (np > 2)
+        return 0;
+    if (!gh_part(part[0], len[0]) || !gh_part(part[1], len[1])) return 0;
+    snprintf(pget_repo, sizeof(pget_repo), "%.*s", (int)len[1], part[1]);
+    snprintf(url, un, "https://codeload.github.com/%.*s/%.*s/tar.gz/%s", (int)len[0], part[0], (int)len[1], part[1], br);
+    return 1;
+}
+
+static void plug_import(const char *link)
+{
+    char url[400], dir[1200];
+    plug_typing = 0;
+    if (pget_pid) {
+        set_note("already getting one, hang on");
+        return;
+    }
+    if (!gh_parse(link, url, sizeof(url))) {
+        set_note("that doesnt look like a github link");
+        return;
+    }
+    snprintf(dir, sizeof(dir), "%s/plugin-dl", data_dir);
+    pget_pid = tgz_start(url, dir);
+    set_note(pget_pid ? "getting the plugin..." : "couldnt start the download");
+}
+
+static void plug_import_poll(void)
+{
+    int ok;
+    if (!pget_pid || !job_done(pget_pid, &ok)) return;
+    pget_pid = 0;
+    char dir[1200], pdir[1200], msg[200] = "";
+    snprintf(dir, sizeof(dir), "%s/plugin-dl", data_dir);
+    snprintf(pdir, sizeof(pdir), "%s/plugins", data_dir);
+    if (!ok) {
+        rm_tree(dir);
+        set_note("download failed, check the link and your internet");
+        return;
+    }
+    static char src[PL_MAX][1100];
+    char name[PL_MAX][32], back[PL_MAX] = {0};
+    int n = plug_found(dir, pget_sub, pget_repo, src, name, PL_MAX), got = 0, upd = 0;
+    make_dir(pdir);
+    for (int k = 0; k < n; k++) {
+        int was = -1;
+        for (int i = 0; i < nplugs; i++)
+            if (!strcmp(plugs[i].name, name[k])) was = i;
+        if (was < 0 && nplugs >= PL_MAX) break;
+        back[k] = was >= 0 && plugs[was].on;
+        char dst[1300];
+        snprintf(dst, sizeof(dst), "%.1200s/%.31s", pdir, name[k]);
+        if (was >= 0) { // updating one, stop it and drop it so the scan reads its plugin.txt again
+            plug_stop(&plugs[was], "off");
+            memmove(&plugs[was], &plugs[was + 1], sizeof(plugs[0]) * (size_t)(nplugs - was - 1));
+            nplugs--;
+            upd++;
+        }
+        rm_tree(dst);
+        if (rename(src[k], dst)) continue;
+        snprintf(msg + strlen(msg), sizeof(msg) - strlen(msg), "%s%.31s", got ? ", " : "", name[k]);
+        got++;
+    }
+    rm_tree(dir);
+    plug_scan(data_dir, verbose);
+    for (int k = 0; k < n; k++)
+        for (int i = 0; i < nplugs; i++)
+            if (back[k] && !strcmp(plugs[i].name, name[k]) && !plugs[i].alive) plugs[i].on = 1, plug_start(&plugs[i]);
+    char note[260];
+    if (!n) snprintf(note, sizeof(note), "theres no plugin.txt in there, is it a plugin?");
+    else if (!got) snprintf(note, sizeof(note), "couldnt add it, %s", nplugs >= PL_MAX ? "you have the most plugins it can hold" : "the plugins folder wont take it");
+    else if (upd == got) snprintf(note, sizeof(note), "updated %s", msg);
+    else snprintf(note, sizeof(note), "added %s, turn it on below. only turn on plugins you trust", msg);
+    set_note(note);
+}
+
+static void plug_key(int ch)
+{
+    size_t l = strlen(plug_url);
+    char clip[160];
+    if (ch == 27) plug_typing = 0;
+    else if (ch == 13 || ch == 10) plug_import(plug_url);
+    else if (ch == 8 && l) plug_url[l - 1] = 0;
+    else if (ch == 127) plug_url[0] = 0;
+    else if (ch == 22 && clip_get(clip, sizeof(clip))) snprintf(plug_url, sizeof(plug_url), "%s", clip); // ctrl+v
+    else if (ch > 32 && ch < 127 && l + 1 < sizeof(plug_url)) plug_url[l] = (char)ch, plug_url[l + 1] = 0;
+}
+
 static void update_poll(void);
 static void check_download(void)
 {
     int ok;
     update_poll();
+    plug_import_poll();
     if (lib_pid && job_done(lib_pid, &ok)) lib_pid = 0, lib_reload = 1;
     if (lib_reload && !dl_pid) lib_reload = 0, load_library(); // not mid download, the indexes would shift
     if (!dl_pid || !job_done(dl_pid, &ok)) return;
@@ -5774,6 +5938,8 @@ static void handle_key(int ch)
         else if (ch == 8 && l) lib_query[l - 1] = 0;
         else if (ch >= 32 && ch < 127 && l + 1 < sizeof(lib_query)) lib_query[l] = (char)(ch >= 'A' && ch <= 'Z' ? ch + 32 : ch), lib_query[l + 1] = 0;
         lib_scroll = 0;
+    } else if (plug_typing && settings_open) {
+        plug_key(ch);
     } else if (set_typing && settings_open) {
         search_key(ch);
     } else if (ch == 27) {
@@ -5786,8 +5952,8 @@ static void sync_keyboard(void) // the game needs the keys when the library's cl
 {
     static int on, hook = 1;
     if (hook && state == TRACKING && getenv("OPEN_CHEASE_OPEN_LIBRARY")) lib_open = 1, hook = 0; // test hook for library shots
-    if (!settings_open) set_typing = 0, set_query[0] = 0;
-    int want = lib_open || key_wait >= 0 || set_typing;
+    if (!settings_open) set_typing = 0, set_query[0] = 0, plug_typing = 0;
+    int want = lib_open || key_wait >= 0 || set_typing || plug_typing;
     if (want != on && ov->keyboard) ov->keyboard(ov, want);
     on = want;
 }
@@ -5880,6 +6046,7 @@ static void handle_click(double x, double y)
         Rect r = hits[i].r;
         if (x < r.x || y < r.y || x >= r.x + r.w || y >= r.y + r.h) continue;
         search_click(hits[i].action);
+        if (hits[i].action != ACT_PLUG_URL && hits[i].action != ACT_PLUG_PASTE) plug_typing = 0;
         switch (hits[i].action) {
         case ACT_WHITE:
         case ACT_BLACK:
@@ -6188,6 +6355,30 @@ static void handle_click(double x, double y)
             save_cfg();
             break;
         }
+        case ACT_PLUG_URL:
+            plug_typing = 1, set_typing = 0, dd_open = -1;
+            break;
+        case ACT_PLUG_PASTE: {
+            char clip[160];
+            if (clip_get(clip, sizeof(clip))) {
+                char *e = clip + strcspn(clip, "\r\n");
+                *e = 0;
+                snprintf(plug_url, sizeof(plug_url), "%s", clip);
+            } else
+                set_note("nothing to paste, copy the link first");
+            plug_typing = 1;
+            break;
+        }
+        case ACT_PLUG_ADD:
+            if (*plug_url) plug_import(plug_url);
+            else plug_typing = 1, set_note("paste a github link in first");
+            break;
+        case ACT_PLUG_TEMPLATE:
+            plug_import("sevvy-wevvy/open-chease/tree/plugin-template");
+            break;
+        case ACT_PLUG_HELP:
+            if (open_folder("https://github.com/sevvy-wevvy/open-chease/blob/dev/PLUGINS.md")) set_note("couldnt open the browser");
+            break;
         case ACT_PLUG_DIR: {
             char dir[1100];
             if (hits[i].arg >= 0) snprintf(dir, sizeof(dir), "%s", plugs[hits[i].arg].dir);

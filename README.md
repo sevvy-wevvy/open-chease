@@ -258,7 +258,7 @@ If your piece set keeps getting misread (rooks as knights, that kind of thing) y
 <b>Themes</b><br>
 Every theme as a little preview card, click one to use it. Under that you can make up to 3 of your own: pick a slot and a part (box, text, buttons, grid, menus...), then click a color. It changes live. <b>Copy current theme</b> starts you off from whatever theme youre on. Your themes save with the rest of the settings<br> <br>
 <b>Plugins</b><br>
-Every plugin you installed, with an on/off switch, a button to open its folder and its own settings under it. Plugins are little programs anyone can make that draw on the overlay, add settings and react to moves, <a href="PLUGINS.md">PLUGINS.md</a> says how. Want to make one? The <a href="https://github.com/sevvy-wevvy/open-chease/tree/plugin-template">plugin-template</a> branch has one that uses everything, with notes all through it, just copy it and start changing stuff
+Every plugin you installed, with an on/off switch, a button to open its folder and its own settings under it. Paste a github link at the top to add one. Plugins are little programs anyone can make that draw on the overlay, add settings and react to moves, <a href="PLUGINS.md">PLUGINS.md</a> says how. Want to make one? The <a href="https://github.com/sevvy-wevvy/open-chease/tree/plugin-template">plugin-template</a> branch has one that uses everything, with notes all through it, just copy it and start changing stuff
 </p>
 </details>
 

@@ -368,7 +368,7 @@ void quit_signals(void (*fn)(int))
     SetConsoleCtrlHandler(on_ctrl, TRUE);
 }
 
-static void rm_tree(const char *path)
+void rm_tree(const char *path)
 {
     char pat[4200];
     snprintf(pat, sizeof(pat), "%s\\*", path);
@@ -528,6 +528,21 @@ static DWORD WINAPI stage_thread(void *arg)
     return ok ? 0 : 1;
 }
 
+static DWORD WINAPI tgz_thread(void *arg)
+{
+    Job *jb = arg;
+    char got[1300];
+    rm_tree(jb->j.out);
+    CreateDirectoryA(jb->j.out, NULL);
+    snprintf(got, sizeof(got), "%s\\got.tgz", jb->j.out);
+    char *curl[] = {"curl.exe", "-fsL", "--max-time", "60", jb->j.url, "-o", got, NULL};
+    char *tar[] = {"tar.exe", "-xzf", got, "-C", jb->j.out, NULL};
+    int ok = run_wait(curl) == 0 && run_wait(tar) == 0;
+    DeleteFileA(got);
+    free(jb);
+    return ok ? 0 : 1;
+}
+
 static intptr_t start_job(Job *jb, LPTHREAD_START_ROUTINE fn)
 {
     HANDLE h = CreateThread(NULL, 0, fn, jb, 0, NULL);
@@ -560,6 +575,26 @@ intptr_t fetch_start(const char *url, const char *out)
     snprintf(jb->j.url, sizeof(jb->j.url), "%s", url);
     snprintf(jb->j.out, sizeof(jb->j.out), "%s", out);
     return start_job(jb, fetch_thread);
+}
+
+intptr_t tgz_start(const char *url, const char *dir)
+{
+    Job *jb = calloc(1, sizeof(Job));
+    if (!jb) return 0;
+    snprintf(jb->j.url, sizeof(jb->j.url), "%s", url);
+    snprintf(jb->j.out, sizeof(jb->j.out), "%s", dir);
+    return start_job(jb, tgz_thread);
+}
+
+int clip_get(char *out, int n)
+{
+    *out = 0;
+    if (!OpenClipboard(NULL)) return 0;
+    HANDLE h = GetClipboardData(CF_TEXT);
+    const char *t = h ? GlobalLock(h) : NULL;
+    if (t) snprintf(out, n, "%s", t), GlobalUnlock(h);
+    CloseClipboard();
+    return *out != 0;
 }
 
 intptr_t stage_start(const char *home, const char *branch)

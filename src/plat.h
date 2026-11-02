@@ -59,8 +59,11 @@ intptr_t dl_start(const DlJob *j);
 intptr_t lists_start(const char *data, const char *a, const char *b);
 intptr_t fetch_start(const char *url, const char *out); // small file, short timeout, out only shows up if it worked
 intptr_t stage_start(const char *home, const char *branch); // get.sh --stage, next version into app.new
+intptr_t tgz_start(const char *url, const char *dir); // download a .tar.gz and unpack it into dir
 int job_done(intptr_t h, int *ok);
 void job_kill(intptr_t h);
+void rm_tree(const char *path);
+int clip_get(char *out, int n); // clipboard text, 0 if theres none
 
 void engine_path_for(const char *data, const char *slug, char *out, size_t n);
 void engine_remove(const char *data, const char *path);

@@ -354,6 +354,47 @@ intptr_t fetch_start(const char *url, const char *out)
                   "else wget -q -T 10 -O \"$O.new\" \"$U\"; fi && mv \"$O.new\" \"$O\" || { rm -f \"$O.new\"; exit 1; }", env);
 }
 
+intptr_t tgz_start(const char *url, const char *dir)
+{
+    const char *env[] = {"U", url, "O", dir, NULL};
+    return sh_job("set -e; rm -rf \"$O\"; mkdir -p \"$O\"; cd \"$O\"; if command -v curl >/dev/null; then curl -fsL --max-time 60 \"$U\" -o got.tgz; "
+                  "else wget -q -T 60 -O got.tgz \"$U\"; fi; tar xzf got.tgz; rm -f got.tgz", env);
+}
+
+void rm_tree(const char *path)
+{
+    struct stat st;
+    if (lstat(path, &st)) return;
+    if (S_ISDIR(st.st_mode)) {
+        DIR *d = opendir(path);
+        struct dirent *e;
+        while (d && (e = readdir(d))) {
+            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+            char sub[4200];
+            snprintf(sub, sizeof(sub), "%s/%s", path, e->d_name);
+            rm_tree(sub);
+        }
+        if (d) closedir(d);
+        rmdir(path);
+    } else
+        unlink(path);
+}
+
+int clip_get(char *out, int n)
+{
+    *out = 0;
+#ifdef __APPLE__
+    FILE *f = popen("pbpaste 2>/dev/null", "r");
+#else
+    FILE *f = popen("timeout 2 wl-paste -n 2>/dev/null || timeout 2 xclip -o -selection clipboard 2>/dev/null || timeout 2 xsel -ob 2>/dev/null", "r");
+#endif
+    if (!f) return 0;
+    size_t got = fread(out, 1, (size_t)n - 1, f);
+    pclose(f);
+    out[got] = 0;
+    return got > 0;
+}
+
 intptr_t stage_start(const char *home, const char *branch)
 {
     const char *env[] = {"H", home, "OPEN_CHEASE_BRANCH", branch, NULL};
