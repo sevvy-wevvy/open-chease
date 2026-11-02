@@ -1497,6 +1497,56 @@ static int lit(const uint8_t *px, const uint8_t *bg)
     return res < 12;
 }
 
+// tint of px against the board, 1 = a strong color like a glow, not a lighter or darker board like fills and outlines
+static int tinted(const short *d, double *u)
+{
+    double m = (d[0] + d[1] + d[2]) / 3.0, ln = 0, ch = 0;
+    for (int k = 0; k < 3; k++) ln += (double)d[k] * d[k], ch += (d[k] - m) * (d[k] - m);
+    if (ln < 400 || ch < ln * 0.5) return 0;
+    ln = sqrt(ln);
+    for (int k = 0; k < 3; k++) u[k] = d[k] / ln;
+    return 1;
+}
+
+// a soft glow round the piece: the same tint all round the outside, peel it off down to the outline
+static int peel_halo(float *m, const short (*d)[3])
+{
+    double dir[3] = {0, 0, 0}, u[3];
+    int edge[FEAT_N * FEAT_N], ne = 0, fg = 0;
+    for (int i = 0; i < FEAT_N * FEAT_N; i++) {
+        if (m[i] != 1) continue;
+        fg++;
+        int x = i % FEAT_N, y = i / FEAT_N;
+        if (x == 0 || y == 0 || x == FEAT_N - 1 || y == FEAT_N - 1 || m[i - 1] == 0 || m[i + 1] == 0 || m[i - FEAT_N] == 0 || m[i + FEAT_N] == 0) {
+            edge[ne++] = i;
+            if (tinted(d[i], u))
+                for (int k = 0; k < 3; k++) dir[k] += u[k];
+        }
+    }
+    double dl = sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+    if (ne < 12 || dl <= 0) return 0;
+    uint8_t halo[FEAT_N * FEAT_N] = {0}, seen[FEAT_N * FEAT_N] = {0};
+    for (int i = 0; i < FEAT_N * FEAT_N; i++)
+        if (m[i] == 1 && tinted(d[i], u) && (u[0] * dir[0] + u[1] * dir[1] + u[2] * dir[2]) / dl >= 0.9) halo[i] = 1;
+    int st[FEAT_N * FEAT_N], n = 0, nh = 0;
+    for (int k = 0; k < ne; k++) nh += halo[edge[k]];
+    if (nh * 3 < ne * 2) return 0; // most of the outside has to glow
+    for (int k = 0; k < ne; k++)
+        if (halo[edge[k]]) st[n++] = edge[k], seen[edge[k]] = 1;
+    int peeled = 0;
+    while (n) {
+        int i = st[--n], x = i % FEAT_N, y = i / FEAT_N;
+        peeled++;
+        int nb[4] = {x > 0 ? i - 1 : -1, x < FEAT_N - 1 ? i + 1 : -1, y > 0 ? i - FEAT_N : -1, y < FEAT_N - 1 ? i + FEAT_N : -1};
+        for (int k = 0; k < 4; k++)
+            if (nb[k] >= 0 && halo[nb[k]] && !seen[nb[k]]) seen[nb[k]] = 1, st[n++] = nb[k];
+    }
+    if (peeled * 10 > fg * 6) return 0; // thats the piece itself in some color
+    for (int i = 0; i < FEAT_N * FEAT_N; i++)
+        if (seen[i]) m[i] = 0;
+    return peeled;
+}
+
 #define BG_ROWS 32
 
 // boards that shade each square top to bottom (roblox), take the color row by row off both side edges
@@ -1906,6 +1956,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             out->highlighted[sq] = cdiff(bg, base) > (b->soft ? 70 : 45); // tracker guesses whose turn it is from these
             int fg = 0, valid = 0, covered = 0, ntint = 0, nwash = 0;
             uint8_t cell_lum[FEAT_N * FEAT_N];
+            short tint[FEAT_N * FEAT_N][3];
             for (int gy = 0; gy < FEAT_N; gy++)
                 for (int gx = 0; gx < FEAT_N; gx++) {
                     double x = x0 + (0.12 + 0.76 * (gx + 0.5) / FEAT_N) * s;
@@ -1921,6 +1972,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                         if (cdiff(px, row_bg(rows, bg, y0, s, y)) > fthr && cdiff(px, b->light) > sthr && cdiff(px, b->dark) > sthr) {
                             fg++;
                             v = 1;
+                            for (int k = 0; k < 3; k++) tint[gy * FEAT_N + gx][k] = (short)(px[k] - row_bg(rows, bg, y0, s, y)[k]);
                             int t = lit(px, row_bg(rows, bg, y0, s, y));
                             if (!t) t = lit(px, base); // a tinted last move square under it
                             ntint += t == 1, nwash += t == 2;
@@ -1934,6 +1986,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                     if ((c == 0 && lft && top) || (c == 7 && rgt && top) || (r == 7 && bot && (lft || rgt))) v = 0.5f; // coordinate letters live here
                     out->mask[sq][gy * FEAT_N + gx] = v;
                 }
+            if (fg && !soft_colors) fg -= peel_halo(out->mask[sq], (const short(*)[3])tint);
             if (fg && (fg - ntint - nwash) * 8 <= fg && ntint * 2 >= fg) { // just the board lit up or shaded, nothing with an outline on it
                 fg = 0;
                 for (int i = 0; i < FEAT_N * FEAT_N; i++)

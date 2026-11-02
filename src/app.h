@@ -249,6 +249,8 @@ typedef struct {
     int lock_side;
     GameLine line, prev_line[3];
     int anim, anim_run; // board keeps changing with nothing moving (glow, sparkles), > 0 = believe only squares that hold still
+    float vote[64][6], vsum[64][6]; // pieces we only guessed: shape scores of their cleanest read, and all reads added up
+    int nvote[64];
 } Tracker;
 
 void tracker_start(Tracker *t, int user_color);
