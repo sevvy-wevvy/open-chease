@@ -161,10 +161,11 @@ static struct {
     int traps;
     int autoupd;
     int font, compact;
+    int gpu;
 // positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
          0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5,
-         4, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1, 0, 2, 0, 1, 0, 0},
+         4, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1, 0, 2, 0, 1, 0, 0, 1},
   cfg_default; // copied before load_cfg, the reset button goes back to this
 
 static const char *theme_names[NTHEMES];
@@ -199,6 +200,7 @@ static const char *anim_names[] = {"Off", "Fast", "Slow"};
 static const char *style_names[] = {"Normal", "Aggressive", "Solid", "Tricky", "Sacrificial", "Positional"};
 static const char *strict_names[] = {"Loosest", "Loose", "Normal", "Picky", "Pickiest"};
 static const char *power_names[] = {"Off", "Saver", "Max"};
+static const char *gpu_names[] = {"Off", "Auto"};
 static const char *hstyle_names[] = {"Outline", "Corners", "Brackets", "Dashed", "Underline"};
 static const int hstyle_mark[] = {1, 3, 9, 10, 13}; // only ones that stay off the piece, a filled square hides it from the vision
 
@@ -422,6 +424,7 @@ static Setting sets[] = {
     {"Board finder", "findstrict", &cfg.findstrict, 5, strict_names, NULL, "how picky it is about what counts as a board. loose finds weird themes, picky ignores pictures that look like boards"},
     {"Lock board", "lockboard", &cfg.lockboard, 2, onoff, NULL, "sticks to this board so other boards and popups cant steal it"},
     {"Power saver", "lowpower", &cfg.lowpower, 3, power_names, NULL, "looks at the screen less often to save cpu, max is for slow pcs"},
+    {"Use GPU", "gpu", &cfg.gpu, 2, gpu_names, NULL, "lets the graphics card do the heavy part of finding the board. auto uses it when there is one, off keeps it all on the cpu"},
     {"Wait while dragging", "dragwait", &cfg.dragwait, 2, onoff, NULL, "doesnt update while you drag a piece, so it doesnt flash wrong moves"},
     {"Hide under popups", "popups", &cfg.popups, 2, onoff, NULL, "stops drawing over popups that cover the board, like the game over box"},
     {"Background updates", "autoupd", &cfg.autoupd, 2, onoff, NULL, "grabs new versions while it runs, then you just hit restart to update. only for the one line install"},
@@ -3894,6 +3897,8 @@ static void tick(void)
 {
     vision_strict = cfg.findstrict;
     vision_lite = cfg.lowpower > 0;
+    gpu_mode = cfg.gpu;
+    gpu_verbose = verbose;
     check_download();
     check_switch();
     if (!cap->capture(cap)) {
@@ -3976,7 +3981,21 @@ static void tick(void)
         return;
     }
     MaskCtx mc = {o};
-    if (!vision_verify(&o->frame, &board, masked_cb, &mc)) {
+    int ok = vision_verify(&o->frame, &board, masked_cb, &mc);
+    static int off_grid;
+    if (board.score >= 46 || cfg.lockboard)
+        off_grid = 0;
+    else if (off_grid++ < 6 || off_grid % 4 == 0) { // strict check failed, maybe it moved or got zoomed. a popup can sit there for ages so back off
+        Board nb = board;
+        if (vision_relocate(&o->frame, &nb, off_grid <= 3, masked_cb, &mc) && !is_ignored(board.out, &nb)) {
+            if (verbose) fprintf(stderr, "board moved to %.0f,%.0f square %.1fpx score %d\n", nb.x, nb.y, nb.s, nb.score);
+            if (fabs(nb.s - board.s) > 1) learned_here = 0;
+            board = nb;
+            ok = 1;
+            off_grid = 0;
+        }
+    }
+    if (!ok) {
         if (++miss_ticks >= 3) lose_board(); // one bad frame from an animation or popup isnt a lost board
         return;
     }
