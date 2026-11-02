@@ -129,13 +129,13 @@ static void middle(const float *m, float th, int *cx, int *cy)
 
 static int clamp3(int v) { return v > 3 ? 3 : v < -3 ? -3 : v; }
 
-static int wobbly; // board is animated, sprites bob and wobble
+static int wobbly;
 
 // bobbing or wobbling sprites: slide the shape so its middle sits on the templates middle, keep whichever fits better
 static float shape_match(const float *a, const float *b)
 {
     float plain = similarity(a, b), mn = 0, mx = 0;
-    if (!wobbly) return plain; // a still piece sits where it sits, sliding would only help the wrong shapes
+    if (!wobbly) return plain;
     int ax, ay, bx, by;
     middle(a, 1, &ax, &ay);
     middle(b, 0.5f, &bx, &by);
@@ -433,7 +433,7 @@ static void push_prev(Tracker *t)
     if (t->nprev < 3) t->nprev++;
 }
 
-static void move_votes(Tracker *t, int f, int to, int promo) // votes travel with the piece, a promoted one is left to verify_promo for good (-1)
+static void move_votes(Tracker *t, int f, int to, int promo) // promoted ones go to verify_promo (-1)
 {
     memcpy(t->vote[to], t->vote[f], sizeof(t->vote[to]));
     memcpy(t->vsum[to], t->vsum[f], sizeof(t->vsum[to]));
@@ -735,7 +735,7 @@ static const int type_cap[6] = {8, 2, 2, 2, 1, 1};
 
 static int guess_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *outp);
 
-static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *outp) // one read for the whole board, sliding shapes picks wrong kings here
+static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *outp) // no sliding here, it picks wrong kings
 {
     int w = wobbly;
     wobbly = 0;
@@ -868,11 +868,11 @@ static int back_to_start(Pos *p, int d) // knights going home in a reversible li
 
 // pieces we only guessed from one read: keep adding up how they look, a type that keeps losing gets swapped
 #define VOTE_N 4 // calm reads before a guessed type can change
-#define VOTE_M 0.04f // and how much it has to lose by
+#define VOTE_M 0.04f
 
 static int guessed(const Tracker *t, int sq) { return t->nvote[sq] >= VOTE_N && !((t->sure | t->locked) >> sq & 1); }
 
-static int vote_best(const Tracker *t, int sq, int skip) // best type other than skip, no pawns on the end ranks, no kings
+static int vote_best(const Tracker *t, int sq, int skip)
 {
     int best = -1, rank = sq >> 3;
     for (int ty = 0; ty < KING; ty++)
@@ -889,7 +889,7 @@ static float vote_gap(const Tracker *t, int sq, int a, int b)
 
 static void vote_types(Tracker *t, const BoardRead *r, const Templates *tpl)
 {
-    if (!t->anim || !tpl->have || (t->sure | t->locked) == ~0ULL) return; // a still board reads the same every time, nothing to add up
+    if (!t->anim || !tpl->have || (t->sure | t->locked) == ~0ULL) return;
     Pos *p = &t->pos;
     for (int sq = 0; sq < 64; sq++) {
         int pc = p->sq[sq];
@@ -900,7 +900,7 @@ static void vote_types(Tracker *t, const BoardRead *r, const Templates *tpl)
             if (sc[ty] > top) top = sc[ty];
             if (t->vote[sq][ty] > had) had = t->vote[sq][ty];
         }
-        if (!t->nvote[sq] || top > had) memcpy(t->vote[sq], sc, sizeof(sc)); // keep the read that fits some shape best, thats the clean frame
+        if (!t->nvote[sq] || top > had) memcpy(t->vote[sq], sc, sizeof(sc)); // cleanest frame
         if (!t->nvote[sq]) memset(t->vsum[sq], 0, sizeof(t->vsum[sq]));
         for (int ty = 0; ty < 6; ty++) t->vsum[sq][ty] += sc[ty];
         if (++t->nvote[sq] >= 40) { // old reads fade out
@@ -917,7 +917,6 @@ static void vote_types(Tracker *t, const BoardRead *r, const Templates *tpl)
             if (pc == c * 6 + KING) ksq = sq;
             else if (pc != EMPTY && pc / 6 == c && guessed(t, sq) && vote_gap(t, sq, KING, pc % 6) >= km) km = vote_gap(t, sq, KING, pc % 6), kq = sq;
         }
-        // the king goes to whichever square looks most like one
         if (ksq >= 0 && kq >= 0 && guessed(t, ksq)) {
             int nt = vote_best(t, ksq, -1);
             if (vote_gap(t, ksq, nt, KING) >= VOTE_M && !(p->sq[kq] % 6 == PAWN && ((ksq >> 3) == 0 || (ksq >> 3) == 7))) {
