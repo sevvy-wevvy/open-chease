@@ -24,7 +24,7 @@ static int nmons;
 static double scale = 1;
 static Backend *live_cap;
 static Overlay *live_ov;
-static Rect hits[256];
+static Rect hits[512];
 static int nhits, clicked, keyq[32], nkeys, wheel, kb_on, hotq[16], nhot, nreg; // keyq has the HK_ mods ored in
 static double click_x, click_y, wheel_x, wheel_y;
 static HWND hot, before_kb;
@@ -315,7 +315,7 @@ static Canvas *win_canvas(Overlay *ov, int i) { return i < nmons && mons[i].px ?
 
 static void win_commit(Overlay *ov, const Rect *h, int nh)
 {
-    nhits = nh < 256 ? nh : 256;
+    nhits = nh < 512 ? nh : 512;
     memcpy(hits, h, sizeof(Rect) * nhits);
     for (int i = 0; i < nmons; i++) {
         Mon *m = &mons[i];

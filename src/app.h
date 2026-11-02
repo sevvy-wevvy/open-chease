@@ -150,6 +150,8 @@ int backend_wl_init_shared(void);
 Backend *backend_wl(void);
 Overlay *overlay_wl(void);
 Backend *backend_gnome(void); // mutter has no screencopy or layer shell, pairs with overlay_x11
+Backend *backend_portal(const char *data_dir); // xdg-desktop-portal screencast, for kde and anything else without screencopy
+int wl_has_screencopy(void);
 Overlay *overlay_x11(void);
 Backend *backend_x11(void);
 // test hooks, plays back dumped .ppm frames instead of the screen

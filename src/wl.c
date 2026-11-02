@@ -453,6 +453,8 @@ int backend_wl_init_shared(void)
     return 1;
 }
 
+int wl_has_screencopy(void) { return backend_wl_init_shared() && screencopy; }
+
 static int is_10bit(uint32_t f)
 {
     return f == WL_SHM_FORMAT_XRGB2101010 || f == WL_SHM_FORMAT_ARGB2101010 || f == WL_SHM_FORMAT_XBGR2101010 ||
@@ -775,7 +777,7 @@ static void add_layer(WlOut *o)
 
 static int wl_ov_init(Overlay *ov, Backend *cap)
 {
-    if (!backend_wl_init_shared() || !layer_shell) return 0;
+    if (!backend_wl_init_shared() || !layer_shell || getenv("OPEN_CHEASE_NO_LAYER_SHELL")) return 0; // test hook, acts like muffin
     for (int i = 0; i < nouts; i++)
         if (outs[i].alive) add_layer(&outs[i]);
     live_ov = ov;

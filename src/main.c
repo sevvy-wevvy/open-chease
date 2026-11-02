@@ -3384,7 +3384,23 @@ static void redraw(void)
                 cut_to(line2, room, t2big);
                 double w = fmax(w1 + ew, text_width(line2, t2big)) + 28 + nbt * (bs + 4);
                 if (w < 300) w = 300;
+                static double held_w;
+                static Rect held_p;
+                double mx = 0, my = 0;
+                int over = i == lead && ov->pointer && ov->pointer(ov, &mx, &my) && mx >= held_p.x && mx < held_p.x + held_p.w &&
+                           my >= held_p.y && my < held_p.y + held_p.h;
+                // the buttons cant run off from under the mouse while a menu is up or the mouse is on the panel
+                if ((menu_open || settings_open || over) && held_w >= 300 && held_w <= outr.w) {
+                    double r2 = held_w - 28 - nbt * (bs + 4);
+                    set_text_zoom(t1zoom);
+                    cut_to(line1, r2 - ew, t1big);
+                    set_text_zoom(1);
+                    cut_to(line2, r2, t2big);
+                    w = held_w;
+                } else
+                    held_w = w;
                 p = panel_rect(&bl, w, ph, &outr);
+                if (i == lead) held_p = p;
                 panel_bg(c, p, 12, faded(TH->panel));
                 set_text_zoom(t1zoom);
                 draw_text(c, p.x + 14 + ew, p.y + 6, line1, t1big, my_turn ? TH->title : TH->title_off);
@@ -4521,7 +4537,7 @@ static int keys_help(Canvas *c, double maxw, char out[][100], int max, const cha
         if (desk && has_ci(desk, "sway")) {
             hk_sym(c0, sym, sizeof(sym), 1);
             snprintf(bind, sizeof(bind), "sway: bindsym %s exec open-chease --send hide", sym);
-        } else if (desk && (has_ci(desk, "gnome") || has_ci(desk, "kde"))) {
+        } else if (desk && (has_ci(desk, "gnome") || has_ci(desk, "kde") || has_ci(desk, "cinnamon"))) {
             snprintf(bind, sizeof(bind), "add a custom shortcut in your keyboard settings that runs open-chease --send hide");
         } else {
             hk_sym(c0, sym, sizeof(sym), 0);
@@ -5618,7 +5634,7 @@ static void usage(void)
            "  --team white|black   skip the popup and always play that side\n"
            "  --builtin            use my engine even if stockfish is around\n"
            "  --engine PATH        use any other uci engine (like stockfish)\n"
-           "  --backend X          force how it grabs the screen: wayland, gnome or x11\n"
+           "  --backend X          force how it grabs the screen: wayland, portal, gnome or x11\n"
            "  --send ACTION        tells the running one to do a hotkey (hide, rescan, mode...), for wayland binds\n"
            "  -v / -vv             print what its seeing\n");
 }
@@ -5814,11 +5830,30 @@ int main(int argc, char **argv)
             return 1;
         }
     }
-    int want_wl = !cap && (force ? !strcmp(force, "wayland") : !gnome);
-    if (want_wl && getenv("WAYLAND_DISPLAY") && backend_wl_init_shared()) {
+    int kde = desk && has_ci(desk, "kde");
+    int want_wl = !cap && (force ? !strcmp(force, "wayland") : !gnome && !kde);
+    if (want_wl && getenv("WAYLAND_DISPLAY") && wl_has_screencopy()) {
         cap = backend_wl();
         ov = overlay_wl();
         if (!cap->init(cap) || !ov->init(ov, cap)) cap = NULL;
+    }
+    // kwin and others without screencopy, asks once through the portal then remembers
+    int want_portal = !cap && (force ? !strcmp(force, "portal") : !gnome && !x11_session);
+    if (want_portal && getenv("WAYLAND_DISPLAY")) {
+        cap = backend_portal(data_dir);
+        if (!cap->init(cap)) {
+            cap = NULL;
+        } else {
+            cap->capture(cap);
+            ov = overlay_wl();
+            if (!ov->init(ov, cap)) {
+                ov = overlay_x11(); // no layer shell, try an xwayland window
+                if (!ov->init(ov, cap)) {
+                    fprintf(stderr, "got the screen but cant draw over it, this desktop has no layer-shell or xwayland\n");
+                    return 1;
+                }
+            }
+        }
     }
     if (!cap && !x11_session && (!force || !strcmp(force, "gnome"))) {
         cap = backend_gnome();
@@ -5835,7 +5870,7 @@ int main(int argc, char **argv)
         }
     }
     if (!cap) {
-        fprintf(stderr, "couldnt find a way to see your screen. it works on hyprland, sway, gnome and x11 desktops like xfce, "
+        fprintf(stderr, "couldnt find a way to see your screen. it works on hyprland, sway, kde, gnome and x11 desktops like xfce, "
                         "try --backend if yours is one of those\n");
         return 1;
     }
