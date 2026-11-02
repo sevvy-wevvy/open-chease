@@ -47,7 +47,7 @@ typedef struct {
     uint8_t light[3], dark[3];
     int score; // vision_verify wants 46+
     int soft;
-    int persp; // tilted board, x y s is then just a square round it and hm says where the squares really are
+    int persp; // tilted, x y s is just a box round it then
     double hm[9]; // board units (0-8 across, row 0 at the top) to frame px
     float gain[4]; // lighting across the board, the warp divides it out
 } Board;
@@ -153,7 +153,7 @@ int backend_wl_init_shared(void);
 Backend *backend_wl(void);
 Overlay *overlay_wl(void);
 Backend *backend_gnome(void); // mutter has no screencopy or layer shell, pairs with overlay_x11
-Backend *backend_portal(const char *data_dir); // xdg-desktop-portal screencast, for kde and anything else without screencopy
+Backend *backend_portal(const char *data_dir);
 int wl_has_screencopy(void);
 Overlay *overlay_x11(void);
 Backend *backend_x11(void);
@@ -169,7 +169,7 @@ int replay_frame(void);
 void canvas_clear(Canvas *c);
 int canvas_damage(const Canvas *c, int *x0, int *y0, int *x1, int *y1);
 void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double dy, double clip_h); // clip_h < 0 = no clip
-void canvas_warp(Canvas *dst, const Canvas *src, const double *m); // m takes src logical to dst logical
+void canvas_warp(Canvas *dst, const Canvas *src, const double *m);
 // logical coords from here, the canvas scales them
 void draw_rect(Canvas *c, Rect r, uint32_t argb);
 void canvas_erase(Canvas *c, Rect r);
@@ -182,7 +182,7 @@ double draw_text(Canvas *c, double x, double y, const char *s, int big, uint32_t
 double text_width(const char *s, int big);
 double text_lw(const Canvas *c, const char *s, int big);
 void set_text_zoom(int z);
-void set_font(int k); // index into fonts[] in font_data.h
+void set_font(int k);
 int canvas_alpha_at(Canvas *c, double lx, double ly);
 
 // masked(mctx, x, y) says if a frame pixel is under our own overlay
@@ -191,8 +191,8 @@ int vision_find_board(const Frame *f, Board *b, const Rect *ignore, int nignore,
 int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), void *mctx);
 int vision_relocate(const Frame *f, Board *b, int full, int (*masked)(void *, int, int), void *mctx); // 1 = found it somewhere else, b updated
 extern int vision_strict, vision_lite; // 0-4 how picky the board finder is, lite skips the slow blurred pass
-extern int vision_nomemo; // 1 = read every square from scratch, no reuse
-extern int gpu_mode, gpu_verbose; // gpu.c, optional opencl for the heavy scan passes, quietly cpu if theres none
+extern int vision_nomemo;
+extern int gpu_mode, gpu_verbose;
 void gpu_frame(void);
 int gpu_blur_rows(const Frame *f, int y0, int step, int nrows, uint8_t *sm, uint16_t *ed);
 int gpu_edges(const Frame *f, const int *jobs, int n, int o, const uint8_t *light, const uint8_t *dark, int *out);
@@ -246,7 +246,7 @@ typedef struct {
     u64 locked; // squares the user fixed by hand, one bit each
     signed char lockpc[64];
     int lock_side;
-    GameLine line, prev_line[3]; // so engines see repeats
+    GameLine line, prev_line[3];
 } Tracker;
 
 void tracker_start(Tracker *t, int user_color);
@@ -276,7 +276,7 @@ int analyzer_switch_async(const char *engine_path);
 int analyzer_switch_done(unsigned ticket); // 1 ok, 0 failed, -1 still starting
 void analyzer_set_options(int threads, int hash_mb, int lines);
 void analyzer_set_elo(int elo);
-void analyzer_set_position(const Pos *p, const char *line); // line from tracker_line or NULL
+void analyzer_set_position(const Pos *p, const char *line);
 void analyzer_stop(void);
 void analyzer_set_think_ms(int ms);
 int analyzer_get(Analysis *a);
@@ -294,21 +294,21 @@ typedef struct {
     u64 key;
     int done, n;
     Move mv[4], reply[4]; // the bait move and how they punish it
-    int loss[4], mate[4]; // loss in centipawns against the best move, mate in moves if it gets you mated
+    int loss[4], mate[4]; // cp worse than best, or mate in n
     int lost[4]; // piece type you end up down, -1 = just a worse spot
 } Traps;
 
-int qs_caps(Pos *p, int alpha, int beta, int d); // captures only
-int quick_search(Pos *p, int depth, int alpha, int beta); // full width, then qs_caps 4 deep, 30000 = mate
-int see_gain(Pos *p, Move m); // what a move wins on its square after all the trades, centipawns
-Move style_choose(const Pos *p, const Analysis *an, int style); // play style pick among the engine lines
+int qs_caps(Pos *p, int alpha, int beta, int d);
+int quick_search(Pos *p, int depth, int alpha, int beta);
+int see_gain(Pos *p, Move m);
+Move style_choose(const Pos *p, const Analysis *an, int style);
 void move_to_san(Pos *p, Move m, char *out);
 int draw_kind(const Pos *p); // 1 = threefold, 2 = 50 move rule
 int rep_after(Pos *p, Move m); // 2 = m makes it threefold, 1 = they can right after
 Move rep_force(Pos *p, int *kind); // a move that draws by repetition, kind 1 = right now, 2 = a check they cant get out of
-Move rep_guard(const Pos *p, const Analysis *an, Move pick, Move likely, int swap, char *out, size_t n); // swap = allowed to change the pick
+Move rep_guard(const Pos *p, const Analysis *an, Move pick, Move likely, int swap, char *out, size_t n);
 int trap_scan(Pos *p, Traps *out, int ms, atomic_int *stop); // blocking, 0 = got stopped
-void trap_ask(const Pos *p); // NULL = stop looking
+void trap_ask(const Pos *p);
 int trap_get(u64 key, Traps *t);
 
 void second_set(int k, const char *path, int elo, int ms); // k 0 = second opinion, 1 = the elo capped one helper mode uses

@@ -18,7 +18,7 @@
             { $_ -in '-Update', '--update' } { $update = $true } # readme uses the linux spelling
             '-FetchOnly' { $fetchOnly = $true }
             { $_ -in '-NoStockfish', '--no-stockfish' } { $wantSf = $false }
-            '-Stage' { $stageOnly = $true } # the app runs this to grab the next version in the background
+            '-Stage' { $stageOnly = $true } # app runs this, grabs the next version in the background
             '-Launch' { $launch = $true } # what the start menu shortcut runs
             { $_ -in '-DesktopShortcut', '--desktop-shortcut' } { $desk = $true }
             default { $pass += $a }
@@ -46,7 +46,7 @@
         return ''
     }
 
-    function Stage { # newest copy goes into app.new, only gets marked ready once it looks right
+    function Stage {
         Say 'downloading the new version...'
         $tmp = Join-Path $data ('dl.' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force $tmp | Out-Null

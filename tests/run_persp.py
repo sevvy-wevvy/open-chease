@@ -7,7 +7,7 @@ root = os.path.dirname(here)
 sys.path.insert(0, os.path.join(root, "tools"))
 import make_persp
 vtest = os.path.join(tmpdir, "vtest")
-subprocess.run(["cc", "-O2", "-I" + os.path.join(root, "src"), "-o", vtest, os.path.join(here, "vtest.c")] + [os.path.join(root, "src", f) for f in ("vision.c", "tracker.c", "engine.c")] + ["-lm", "-lpthread"], check=True)
+subprocess.run(["cc", "-O2", "-I" + os.path.join(root, "src"), "-o", vtest, os.path.join(here, "vtest.c")] + [os.path.join(root, "src", f) for f in ("vision.c", "tracker.c", "engine.c", "gpu.c")] + ["-lm", "-lpthread", "-ldl"], check=True)
 # usage: run_persp.py [seed] [boards] [empty frames]
 random.seed(int(sys.argv[1]) if len(sys.argv) > 1 else 1)
 nboards = int(sys.argv[2]) if len(sys.argv) > 2 else 40
@@ -109,7 +109,7 @@ for i in range(nempty):
         for w in range(4):
             x, y = rng.integers(0, W - 600), rng.integers(0, H - 400)
             d.rectangle([x, y, x + 600, y + 400], fill=(245, 245, 245)); d.rectangle([x, y, x + 600, y + 28], fill=(60, 60, 70))
-            for k in range(20): d.text((x + 10, y + 36 + 18 * k), "lorem ipsum dolor sit amet %d" % k, fill=(20, 20, 20))
+            for k in range(20): d.text((x + 10, y + 36 + 18 * k), "some window text, line %d" % k, fill=(20, 20, 20))
         x, y = 100, 100
         for r in range(30):
             for c in range(12): d.rectangle([x + c * 70, y + r * 22, x + c * 70 + 70, y + r * 22 + 22], outline=(200, 200, 200))

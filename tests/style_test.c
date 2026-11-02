@@ -1,5 +1,4 @@
-// plays every play style over a set of fens and checks they pick differently without throwing eval away
-// fens on stdin, build and run with tests/styles.sh
+// fens on stdin, run with tests/styles.sh. styles should pick their own moves without throwing eval away
 #include <stdio.h>
 #include <string.h>
 

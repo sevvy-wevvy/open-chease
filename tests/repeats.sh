@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 out="${TMPDIR:-/tmp}/repeat_test"
-cc -O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Isrc -o "$out" tests/repeat_test.c src/repeat.c src/tracker.c src/vision.c src/engine.c -lpthread -lm
+cc -O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Isrc -o "$out" tests/repeat_test.c src/repeat.c src/tracker.c src/vision.c src/gpu.c src/engine.c -lpthread -lm -ldl
 "$out" lines | tee "$out.log"
 line=$(sed -n 's/^LINE //p' "$out.log")
 E=${E:-bin/open-chease-engine}

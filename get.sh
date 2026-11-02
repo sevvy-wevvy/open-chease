@@ -87,7 +87,7 @@ latest_sha() {
   curl -fsL --max-time 10 "$api" 2>/dev/null || wget -q -T 10 -O - "$api" 2>/dev/null || true
 }
 
-stage() { # newest copy goes into app.new, only gets marked ready once it looks right
+stage() { # app.new, marked ready only if it looks ok
   local sha ref
   say "downloading the new version..."
   tmp="$(mktemp -d "$data/dl.XXXXXX")"
@@ -114,7 +114,7 @@ stage() { # newest copy goes into app.new, only gets marked ready once it looks 
   rm -rf "$tmp"
 }
 
-swap() { # a ready app.new takes over app
+swap() {
   [ -f "$app.new/.ready" ] || return 1
   rm -f "$app.new/.ready"
   rm -rf "$app.old"
@@ -142,7 +142,7 @@ esc() { # for a quoted Exec= arg
   printf '%s' "$1" | sed -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g' -e 's/%/%%/g'
 }
 
-launcher() { # menu entry so it starts without a terminal
+launcher() {
   [ -f "$app/get.sh" ] && ! cmp -s "$app/get.sh" "$data/get.sh" && cp "$app/get.sh" "$data/get.sh.new" && mv "$data/get.sh.new" "$data/get.sh"
   [ -f "$data/get.sh" ] || return 0
   if [ "$os" = Darwin ]; then

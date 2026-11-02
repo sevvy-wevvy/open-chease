@@ -1,4 +1,4 @@
-// checks the trap finder on real traps, build and run with tests/traps.sh
+// known opening traps plus a few spots that should stay quiet, run with tests/traps.sh
 #include <stdio.h>
 #include <string.h>
 
@@ -34,7 +34,7 @@ static int play(Pos *p, const char *moves)
 int main(int argc, char **argv)
 {
     engine_init();
-    int ms = 250, fail = 0;
+    int ms = 1000, fail = 0; // the app checks again at 1000, two traps need it
     if (argc > 1) {
         ms = 0;
         for (const char *s = argv[1]; *s >= '0' && *s <= '9'; s++) ms = ms * 10 + *s - '0';
@@ -75,7 +75,7 @@ int main(int argc, char **argv)
             snprintf(got + l, sizeof(got) - l, "%s%s(-%d%s%s %s)", l ? " " : "", u, t.loss[k], t.mate[k] ? " mate" : "",
                      t.lost[k] >= 0 ? " lost" : "", r);
         }
-        int ok = *cases[i].want == '-' ? t.n == 0 : strstr(got, cases[i].want) == got || strstr(got, cases[i].want) != NULL;
+        int ok = *cases[i].want == '-' ? t.n == 0 : strstr(got, cases[i].want) != NULL;
         printf("%s %-20s want %-5s got %s\n", ok ? "ok  " : "FAIL", cases[i].name, cases[i].want, t.n ? got : "nothing");
         fail |= !ok;
     }

@@ -81,7 +81,7 @@ void pos_finish_setup(Pos *p); // after pos_put, fixes castling, the key and cle
 void move_to_uci(Move m, char *out);
 Move move_from_uci(Pos *p, const char *s); // 0 if its not legal here
 
-int pos_repeats(const Pos *p); // how often this exact spot came up before, 2 = threefold
+int pos_repeats(const Pos *p); // 2 = threefold
 u64 perft(Pos *p, int depth);
 int evaluate(const Pos *p);
 Move engine_search(Pos *p, const SearchLimits *lim, SearchInfo *final);

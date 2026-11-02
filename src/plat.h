@@ -28,7 +28,7 @@ int proc_start(const char *path, int quiet, proc_t *p, int *to_fd, int *from_fd)
 void proc_kill(proc_t p);
 void proc_reap(proc_t p);
 int fd_wait(int fd, int ms); // >0 readable (or eof), 0 timed out, <0 broken
-int proc_cmd(const char *cmd, const char *dir, int quiet, proc_t *p, int *to_fd, int *from_fd); // a whole command line, run inside dir, both pipes never block
+int proc_cmd(const char *cmd, const char *dir, int quiet, proc_t *p, int *to_fd, int *from_fd); // runs inside dir, neither pipe blocks
 int fd_read_some(int fd, char *buf, int n); // >0 bytes, 0 nothing yet, -1 closed
 int fd_write_some(int fd, const char *buf, int n); // bytes it took, 0 = pipe full, -1 broken
 void fd_close(int fd);
@@ -45,7 +45,7 @@ int open_folder(const char *dir);
 int run_wait(char *const argv[]);
 void relaunch_self(char **argv, const char *home);
 int spawn_detached(char *const argv[], int hidden); // windows wont replace a running exe, so updates need us gone
-void drop_console(void); // windows, closes the console window a shortcut opened for us
+void drop_console(void); // windows only, gets rid of the console a shortcut opens
 void quit_signals(void (*fn)(int));
 int ctl_open(const char *data); // fifo for open-chease --send, wayland has no global hotkeys. -1 = none (windows)
 int ctl_read(int fd, char *buf, int n); // never blocks, bytes read

@@ -1,7 +1,7 @@
 import os, sys
 from PIL import Image
 
-# cuts the roblox pieces out of sev's screenshot into tests/pieces/roblox/
+# cuts the roblox pieces out of my screenshot into tests/pieces/roblox/
 # usage: rbx_sprites.py <screenshot.png>, board at 4,78 square 163, white at the bottom
 here = os.path.dirname(os.path.abspath(__file__))
 X0, Y0, S = 4, 78, 163

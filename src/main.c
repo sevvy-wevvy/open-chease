@@ -358,7 +358,7 @@ static Setting sets[] = {
     {"Compact", "compact", &cfg.compact, 2, onoff, NULL, "shrinks the info box to a tiny pill with just the move, the buttons stay on it"},
     {"Mode", "mode", &cfg.mode, 3, mode_names, "Fun", "cheats shows moves, helper only gives tips without moves, both does both"},
     {"Move picker", "picker", &cfg.chaos, 12, chaos_names, NULL, "which move it shows you. best is best, the rest are for messing around"},
-    {"Play style", "style", &cfg.style, 6, style_names, NULL, "when a few moves are about as good, aggressive attacks, solid plays safe, tricky sets traps, sacrificial gives stuff up for play and positional makes quiet improving moves"},
+    {"Play style", "style", &cfg.style, 6, style_names, NULL, "which move it shows when a few are about as good. tricky sets traps, sacrificial gives stuff up for play"},
     {"Strength", "strength", &cfg.strength, 5, strength_names, NULL, "caps how strong the engine plays, lower ones look more human"},
     {"Trash talk", "trash", &cfg.trash, 2, onoff, NULL, "adds a little roast to the move line, just for fun"},
     {"Rate my moves", "rateme", &cfg.rateme, 2, onoff, NULL, "grades every move after you play it, from ! to ??"},
@@ -425,7 +425,7 @@ static Setting sets[] = {
     {"Board finder", "findstrict", &cfg.findstrict, 5, strict_names, NULL, "how picky it is about what counts as a board. loose finds weird themes, picky ignores pictures that look like boards"},
     {"Lock board", "lockboard", &cfg.lockboard, 2, onoff, NULL, "sticks to this board so other boards and popups cant steal it"},
     {"Power saver", "lowpower", &cfg.lowpower, 3, power_names, NULL, "looks at the screen less often to save cpu, max is for slow pcs"},
-    {"Use GPU", "gpu", &cfg.gpu, 2, gpu_names, NULL, "lets the graphics card do the heavy part of finding the board. auto uses it when there is one, off keeps it all on the cpu"},
+    {"Use GPU", "gpu", &cfg.gpu, 2, gpu_names, NULL, "lets the graphics card help find the board. off = cpu only"},
     {"Wait while dragging", "dragwait", &cfg.dragwait, 2, onoff, NULL, "doesnt update while you drag a piece, so it doesnt flash wrong moves"},
     {"Hide under popups", "popups", &cfg.popups, 2, onoff, NULL, "stops drawing over popups that cover the board, like the game over box"},
     {"Background updates", "autoupd", &cfg.autoupd, 2, onoff, NULL, "grabs new versions while it runs, then you just hit restart to update. only for the one line install"},
@@ -698,7 +698,7 @@ static Rect board_logical(const Board *b)
     return (Rect){o->logical.x + b->x * k, o->logical.y + b->y * k, b->s * 8 * k, b->s * 8 * k};
 }
 
-static Canvas tilt_c; // board marks for a tilted board get drawn flat in here, then warped onto the real canvas
+static Canvas tilt_c; // tilted board marks get drawn flat in here then warped onto the real canvas
 
 static Canvas *board_canvas(Canvas *c, Rect bl)
 {
@@ -718,7 +718,7 @@ static Canvas *board_canvas(Canvas *c, Rect bl)
     return &tilt_c;
 }
 
-static void board_matrix(double *m) // logical coords in the square round the board to where that spot really is on the tilted board
+static void board_matrix(double *m) // flat square -> tilted board
 {
     Output *o = &cap->out[board.out];
     double k = kx(board.out), s = board.s;
@@ -1810,7 +1810,7 @@ static const char *all_tabs[MAX_TABS];
 static int ntabs = NTABS + 1, pslide = -1, pslide_v0;
 static Rect pslide_r;
 
-static int own_tab(const Plugin *p) // the tab it asked for, or -1 if it lives in Plugins
+static int own_tab(const Plugin *p)
 {
     if (!p->alive || !*p->tab) return -1;
     for (int k = TAB_PLUG + 1; k < ntabs; k++)
@@ -2109,7 +2109,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         draw_text(c, m.x + pad + 2, m.y + top + per * rh + 2, more, 0, TH->sub);
     }
     if (vt == 0) backup_row(c, (Rect){m.x + pad, m.y + top + per * rh + 4, m.w - 2 * pad, rh - 3}, hit);
-    Rect rs = {m.x + pad, m.y + top + body - 30, fmax(150, text_lw(c, "Reset this tab", 0) + 20), 26}; // wider fonts get a wider button
+    Rect rs = {m.x + pad, m.y + top + body - 30, fmax(150, text_lw(c, "Reset this tab", 0) + 20), 26};
     if (vt >= 0 && vt != TAB_THEMES && vt != TAB_STATS) {
         draw_button(c, rs, "Reset this tab", TH->btn, TH->btn_fg);
         if (hit) add_hit(rs, ACT_RESET);
@@ -2970,16 +2970,15 @@ static void draw_helper_board(Canvas *c, Rect bl, int bottom)
     }
 }
 
-static Rect draw_wgraph(Canvas *c, Rect p, Rect bl, Rect outr) // where it went, 0 wide if nowhere
+static Rect draw_wgraph(Canvas *c, Rect p, Rect bl, Rect outr)
 {
-    Rect none = {0, 0, 0, 0};
-    if (!cfg.wgraph || nwhist < 2) return none;
+    if (!cfg.wgraph || nwhist < 2) return (Rect){0};
     double h = 42;
     Rect g = {p.x, p.y + p.h + 6, p.w, h};
     int over = g.x < bl.x + bl.w && bl.x < g.x + g.w && g.y < bl.y + bl.h && bl.y < g.y + h;
     if (over || g.y + h > outr.y + outr.h - 4) g.y = p.y - h - 6;
     over = g.x < bl.x + bl.w && bl.x < g.x + g.w && g.y < bl.y + bl.h && bl.y < g.y + h;
-    if (over || g.y < outr.y + 4) return none;
+    if (over || g.y < outr.y + 4) return (Rect){0};
     panel_bg(c, g, 10, faded(TH->panel));
     double x0 = g.x + 8, w = g.w - 16, y0 = g.y + 5, gh = h - 10;
     draw_line(c, x0, y0 + gh / 2, x0 + w, y0 + gh / 2, 1, faded(0x60FFFFFF));
@@ -3820,7 +3819,7 @@ static void redraw(void)
                 cut_to(cl, outr.w * 0.6, t1big);
                 double tw = text_width(cl, t1big), pw = 10 + qe + 8 + tw + 10 + nbt * (qs + 3) + 3;
                 Rect q = panel_rect(&bl, pw, ph, &outr), mr = q;
-                if (boxc != c) { // shrink the big box into the pill, its insides fade out first and the pill ones fade in after
+                if (boxc != c) { // big box squishes into the pill
                     mr = (Rect){p.x + (q.x - p.x) * ck, p.y + (q.y - p.y) * ck, p.w + (q.w - p.w) * ck, p.h + (q.h - p.h) * ck};
                     panel_bg(c, mr, 12 + (ph / 2 - 12) * ck, faded(TH->panel));
                     double dx = mr.x + mr.w / 2 - p.x - p.w / 2, dy = mr.y + mr.h / 2 - p.y - p.h / 2; // insides stay centered on it
@@ -6321,7 +6320,7 @@ static int updating_screen(const char *force) // get.sh runs the old copy like t
             Canvas *c = ov->canvas(ov, i);
             if (!c) continue;
             canvas_clear(c);
-            if (i) continue; // first screen only
+            if (i) continue;
             Rect o = {c->ox, c->oy, c->w / c->scale, c->h / c->scale};
             Rect p = {o.x + (o.w - 380) / 2, o.y + (o.h - 116) / 2, 380, 116};
             panel_bg(c, p, 14, TH->panel | 0xFF000000);

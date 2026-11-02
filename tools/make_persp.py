@@ -79,7 +79,7 @@ def main():
     rimc = tuple(int(c) for c in rng.integers(40, 120, 3))
     full = Image.new("RGB", (n, n), rimc)
     full.paste(board, (rim, rim))
-    # light falls on the board plane: a ramp plus a soft spot
+    # light on the board plane, a ramp plus a soft spot
     yy, xx = np.mgrid[0:n, 0:n].astype(np.float32) / n - 0.5
     ang = rng.uniform(0, 2 * math.pi); sx, sy = rng.uniform(-0.4, 0.4, 2)
     g = 1 + a.light * (xx * math.cos(ang) + yy * math.sin(ang)) * 2 + a.light * 0.8 * (np.exp(-((xx - sx) ** 2 + (yy - sy) ** 2) / 0.08) - 0.4)

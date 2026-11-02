@@ -354,7 +354,7 @@ double text_lw(const Canvas *c, const char *s, int big) { return text_width(s, b
 
 static void glyph(Canvas *c, const FontFace *f, const Glyph *g, int x, int y, int sc, uint32_t argb)
 {
-    int b = f->px * sc; // whole pixel blocks, the blocky font stays crisp
+    int b = f->px * sc; // whole pixel blocks so the blocky font stays crisp
     for (int gy = 0; gy < g->h; gy++)
         for (int gx = 0; gx < g->w; gx++) {
             int i = g->off + gy * g->w + gx, a = (f->bits[i >> 1] >> (i & 1 ? 4 : 0)) & 15;

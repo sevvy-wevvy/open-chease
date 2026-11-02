@@ -88,7 +88,7 @@ Some engines in the library need the <a href="https://aka.ms/vs/17/release/vc_re
 </p>
 
 <p align="center">
-Everything goes in <code>%LOCALAPPDATA%\open-chease</code>, and it adds open-chease to the start menu (no console window, checks for updates first). Want one on the desktop too? Use the Options way below with <code>--desktop-shortcut</code>.
+Everything goes in <code>%LOCALAPPDATA%\open-chease</code>, and it adds open-chease to the start menu (no console window, checks for updates first). For a desktop one too use <code>--desktop-shortcut</code> (see Options below).
 </p>
 
 <br>

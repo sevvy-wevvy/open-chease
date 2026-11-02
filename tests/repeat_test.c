@@ -156,14 +156,12 @@ int main(int argc, char **argv)
     rep_guard(&p, &a, a.best, 0, 1, txt, sizeof(txt));
     check(!*txt, "perpetual with no history yet", txt);
 
-    pos_from_fen(&p, "4k3/8/8/8/8/8/8/R3K3 w - - 99 80");
     play(&p, "4k3/8/8/8/8/8/8/R3K3 w - - 99 80", "a1a2");
     check(draw_kind(&p) == 2, "50 move rule", NULL);
     play(&p, "4k3/8/8/8/8/8/8/R3K3 w - - 98 80", "a1a2");
     check(draw_kind(&p) == 0, "49 and a half moves", NULL);
 
     if (argc > 1) { // print lines for the uci check in repeats.sh
-        play(&p, kq, "d1d2 h8g8 d2d1 g8h8 d1d2 h8g8 d2d1");
         tracker_start(t, BLACK);
         pos_from_fen(&t->pos, kq);
         tracker_rebase(t);

@@ -443,7 +443,7 @@ static void on_response(GDBusConnection *c, const char *sender, const char *path
     resp_got = 1;
 }
 
-// every portal call answers later with a Response signal on a request object, this waits for it
+// portal calls answer later with a Response signal, wait for that
 static GVariant *portal_ask(const char *method, GVariant *args, const char *token, int wait_ms)
 {
     char path[256], sender[64];

@@ -146,11 +146,6 @@ void plug_scan(const char *data, int verbose)
             }
 }
 
-static void say(Plugin *p, const char *msg)
-{
-    snprintf(p->said, sizeof(p->said), "%s", msg);
-}
-
 void plug_start(Plugin *p)
 {
     if (p->alive) return;
@@ -259,7 +254,7 @@ static char *word(char **s) // next space separated word, NULL at the end
     return w;
 }
 
-static int peek(const char *s, char *out, int n) // copies the next word without eating it, its length
+static int peek(const char *s, char *out, int n) // next word without eating it, returns its length
 {
     while (*s == ' ') s++;
     int l = 0;
@@ -461,7 +456,6 @@ static int handle(Plugin *p, char *ln, long now) // 1 = something on screen chan
         uint32_t col = 0;
         char c[12];
         if (peek(s, c, sizeof(c)) && color(c, &col)) word(&s);
-        else col = 0;
         cut(pn->line[pn->nline], sizeof(pn->line[0]), s);
         pn->col[pn->nline++] = col;
         return 0;
@@ -476,7 +470,7 @@ static int handle(Plugin *p, char *ln, long now) // 1 = something on screen chan
         return 1;
     }
     if (!strcmp(cmd, "log")) {
-        say(p, s);
+        snprintf(p->said, sizeof(p->said), "%s", s);
         if (loud) fprintf(stderr, "plugin %s: %s\n", p->name, s);
         return 0;
     }

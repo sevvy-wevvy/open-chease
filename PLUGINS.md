@@ -1,8 +1,8 @@
 <h1 align="center">🧩 open-chease plugins 🧩</h1>
 
 <p align="center">
-Plugins are little programs that run next to open-chease. They get told whats going on (board found, every move, the best move, game over) and can draw on the overlay, add settings and read bits of the screen.<br>
-They can be written in anything that can read and print lines. Python, a compiled C program, a shell script, a .bat or .ps1 on windows, whatever you like.
+Plugins are little programs that run next to open-chease. They get told whats going on (board found, every move, the best move, game over) and can draw stuff on the overlay and add their own settings. They can even read bits of the screen.<br>
+Write them in anything that can read and print lines: python, C, a shell script, a .bat or .ps1 on windows, whatever you want.
 </p>
 
 <details>

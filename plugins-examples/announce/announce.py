@@ -4,7 +4,6 @@ import sys
 names = {"p": "pawn", "n": "knight", "b": "bishop", "r": "rook", "q": "queen", "k": "king"}
 opts = {"onboard": 1, "box": 1, "style": 0}
 last = None
-board = {}
 
 
 def send(*lines):
@@ -35,8 +34,7 @@ def words(mv):
         return "castled long"
     if san.startswith("O-O"):
         return "castled short"
-    took = "x" in san
-    return f"{name} {'takes on' if took else 'to'} {uci[2:4]}" + ("!" if "#" in san else "")
+    return f"{name} {'takes on' if 'x' in san else 'to'} {uci[2:4]}" + ("!" if "#" in san else "")
 
 
 def redraw():
