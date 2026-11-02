@@ -631,7 +631,7 @@ Plugins get killed when open-chease closes.
 
 <p align="center">
 The plugin system itself is the one part of open-chease I dont take outside pull requests for. Plugins run other peoples programs on your computer, so only I change that code.<br>
-PRs that touch <code>src/plug*</code>, <code>PLUGINS.md</code>, <code>plugins-examples/</code> or the plugin tests get closed automatically.<br>
+PRs that touch <code>src/plug*</code>, <code>docs/PLUGINS.md</code>, <code>plugins-examples/</code> or the plugin tests get closed automatically.<br>
 Found a bug in it or want something new a plugin could use? <a href="https://github.com/sevvy-wevvy/open-chease/issues">Open an issue</a> and Ill look at it.<br> <br>
 Your own plugins are yours though, put them on your own github and share the link!
 </p>

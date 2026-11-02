@@ -17,6 +17,7 @@
   open-chease watches your screen for a chess board, outlines every square in green and draws an arrow on the best move for your team.<br>
   It updates twice a second and works on Linux (Hyprland, GNOME, KDE Plasma, Cinnamon, XFCE, sway and most other X11 desktops), Windows 10/11 and macOS 14+.<br>
   I mainly made this to mess with my friends, so please dont use it in rated games. chess.com and lichess will ban you for it.<br> <br>
+  Want it to do something it doesnt? Make a plugin for it, <a href="docs/PLUGINS.md">PLUGINS.md</a> walks you through it even if youve never coded.<br> <br>
   Do you like this project? If so, please let me know!
   <a href="https://sevvy-wevvy.com/discord">Discord</a>
 </p>
@@ -258,7 +259,7 @@ If your piece set keeps getting misread (rooks as knights, that kind of thing) y
 <b>Themes</b><br>
 Every theme as a little preview card, click one to use it. Under that you can make up to 3 of your own: pick a slot and a part (box, text, buttons, grid, menus...), then click a color. It changes live. <b>Copy current theme</b> starts you off from whatever theme youre on. Your themes save with the rest of the settings<br> <br>
 <b>Plugins</b><br>
-Every plugin you installed, with an on/off switch, a button to open its folder and its own settings under it. Paste a github link at the top to add one. Plugins are little programs anyone can make that draw on the overlay, add settings and react to moves, <a href="PLUGINS.md">PLUGINS.md</a> says how. Want to make one? The <a href="https://github.com/sevvy-wevvy/open-chease/tree/plugin-template">plugin-template</a> branch has one that uses everything, with notes all through it, just copy it and start changing stuff
+Every plugin you installed, with an on/off switch, a button to open its folder and its own settings under it. Paste a github link at the top to add one. Plugins are little programs anyone can make that draw on the overlay, add settings and react to moves, <a href="docs/PLUGINS.md">PLUGINS.md</a> says how. Want to make one? The <a href="https://github.com/sevvy-wevvy/open-chease/tree/plugin-template">plugin-template</a> branch has one that uses everything, with notes all through it, just copy it and start changing stuff
 </p>
 </details>
 

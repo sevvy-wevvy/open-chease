@@ -27,7 +27,7 @@ jobs:
           if echo "$files" | grep -q '^bin/'; then
             why="$why It changes files in bin/, those get rebuilt before shipping so PRs cant touch them."
           fi
-          if echo "$files" | grep -qE '^src/plug|^PLUGINS\.md$|^plugins-examples/|^tests/plug'; then
+          if echo "$files" | grep -qE '^src/plug|^docs/PLUGINS\.md$|^PLUGINS\.md$|^plugins-examples/|^tests/plug'; then
             why="$why It changes plugin code or docs, plugins run other peoples programs so only I change that part. Open an issue instead."
           fi
           if [ -n "$why" ]; then
