@@ -174,7 +174,9 @@ void relaunch_self(char **argv, const char *home)
     _exit(1);
 }
 
-int spawn_detached(char *const argv[])
+void drop_console(void) {}
+
+int spawn_detached(char *const argv[], int hidden)
 {
     pid_t pid = fork();
     if (pid == 0) {
@@ -245,6 +247,12 @@ intptr_t fetch_start(const char *url, const char *out)
     const char *env[] = {"U", url, "O", out, NULL};
     return sh_job("rm -f \"$O.new\"; if command -v curl >/dev/null; then curl -fsL --max-time 10 \"$U\" -o \"$O.new\"; "
                   "else wget -q -T 10 -O \"$O.new\" \"$U\"; fi && mv \"$O.new\" \"$O\" || { rm -f \"$O.new\"; exit 1; }", env);
+}
+
+intptr_t stage_start(const char *home, const char *branch)
+{
+    const char *env[] = {"H", home, "OPEN_CHEASE_BRANCH", branch, NULL};
+    return sh_job("exec bash \"$H/get.sh\" --stage >/dev/null 2>&1", env);
 }
 
 int job_done(intptr_t h, int *ok)

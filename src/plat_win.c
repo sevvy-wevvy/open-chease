@@ -244,7 +244,13 @@ void relaunch_self(char **argv, const char *home)
     _exit(0);
 }
 
-int spawn_detached(char *const argv[])
+void drop_console(void)
+{
+    DWORD pl[2];
+    if (GetConsoleProcessList(pl, 2) == 1 && GetFileType(GetStdHandle(STD_ERROR_HANDLE)) == FILE_TYPE_CHAR) FreeConsole();
+}
+
+int spawn_detached(char *const argv[], int hidden)
 {
     char cmd[8192] = "", app[MAX_PATH + 64];
     for (int i = 0; argv[i]; i++) quote_arg(cmd, sizeof(cmd), argv[i]);
@@ -253,8 +259,9 @@ int spawn_detached(char *const argv[])
     memset(&si, 0, sizeof(si));
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi;
-    if (!CreateProcessA(exe, cmd, NULL, NULL, FALSE, CREATE_NEW_CONSOLE | CREATE_BREAKAWAY_FROM_JOB, NULL, NULL, &si, &pi) &&
-        !CreateProcessA(exe, cmd, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi))
+    DWORD how = hidden ? CREATE_NO_WINDOW : CREATE_NEW_CONSOLE;
+    if (!CreateProcessA(exe, cmd, NULL, NULL, FALSE, how | CREATE_BREAKAWAY_FROM_JOB, NULL, NULL, &si, &pi) &&
+        !CreateProcessA(exe, cmd, NULL, NULL, FALSE, how, NULL, NULL, &si, &pi))
         return -1;
     CloseHandle(pi.hProcess), CloseHandle(pi.hThread);
     return 0;
@@ -423,6 +430,17 @@ static DWORD WINAPI fetch_thread(void *arg)
     return ok ? 0 : 1;
 }
 
+static DWORD WINAPI stage_thread(void *arg)
+{
+    Job *jb = arg;
+    char ps1[1300];
+    snprintf(ps1, sizeof(ps1), "%s\\get.ps1", jb->j.data);
+    char *argv[] = {"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-Stage", NULL};
+    int ok = run_wait(argv) == 0;
+    free(jb);
+    return ok ? 0 : 1;
+}
+
 static intptr_t start_job(Job *jb, LPTHREAD_START_ROUTINE fn)
 {
     HANDLE h = CreateThread(NULL, 0, fn, jb, 0, NULL);
@@ -455,6 +473,15 @@ intptr_t fetch_start(const char *url, const char *out)
     snprintf(jb->j.url, sizeof(jb->j.url), "%s", url);
     snprintf(jb->j.out, sizeof(jb->j.out), "%s", out);
     return start_job(jb, fetch_thread);
+}
+
+intptr_t stage_start(const char *home, const char *branch)
+{
+    Job *jb = calloc(1, sizeof(Job));
+    if (!jb) return 0;
+    snprintf(jb->j.data, sizeof(jb->j.data), "%s", home);
+    SetEnvironmentVariableA("OPEN_CHEASE_BRANCH", branch);
+    return start_job(jb, stage_thread);
 }
 
 int job_done(intptr_t h, int *ok)
