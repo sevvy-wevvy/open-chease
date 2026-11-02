@@ -1,6 +1,9 @@
 import argparse, ctypes, math, os, random, shutil, subprocess, sys, tempfile
 import chess
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None # only SIM_ANIM needs it
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -82,6 +85,8 @@ def grad_square(cols, s):
 # t is the frame number, so the board keeps changing while nobody moves
 ANIM = set(os.environ.get("SIM_ANIM", "").replace("all", "shimmer,pulse,hue,scroll,hlpulse,sparkle,bob,scale,spin,frames,glow").split(",")) - {""}
 AS = float(os.environ.get("SIM_ANIM_STR", "1"))
+if ANIM and np is None:
+    sys.exit("SIM_ANIM needs numpy, pip install numpy")
 _noise = {}
 
 
