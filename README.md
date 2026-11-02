@@ -17,6 +17,7 @@
   open-chease watches your screen for a chess board, outlines every square in green and draws an arrow on the best move for your team.<br>
   It updates twice a second and works on Linux (Hyprland, GNOME, KDE Plasma, Cinnamon, XFCE, sway and most other X11 desktops), Windows 10/11 and macOS 14+.<br>
   I mainly made this to mess with my friends, so please dont use it in rated games. chess.com and lichess will ban you for it.<br> <br>
+  Want it to do something it doesnt? Make a plugin for it, <a href="docs/PLUGINS.md">PLUGINS.md</a> walks you through it even if youve never coded.<br> <br>
   Do you like this project? If so, please let me know!
   <a href="https://sevvy-wevvy.com/discord">Discord</a>
 </p>
