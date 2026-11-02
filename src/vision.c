@@ -201,6 +201,27 @@ static int edge_count(const Frame *f, const Board *bd, int o, int dir, int pos, 
     return n;
 }
 
+// a sharp jump across the line, whatever the colors are right now. light or noise drifting over the board, or squares shaded top to bottom, dont matter
+static int edge_steps(const Frame *f, const Board *bd, int o, int dir, int pos, int a0, int a1)
+{
+    int n = 0, jump = (int)fmax(40, cdiff(bd->light, bd->dark) * 0.5), lim = dir ? f->h : f->w, len = dir ? f->w : f->h;
+    if (pos - 1 - o < 0 || pos + o >= lim) return 0;
+    if (a0 < 0) a0 = 0;
+    if (a1 > len) a1 = len;
+    for (int t = a0; t < a1; t++) {
+        uint8_t a[3], b[3], a2[3];
+        if (dir) rgb(f, t, pos - 1 - o, a), rgb(f, t, pos + o, b);
+        else rgb(f, pos - 1 - o, t, a), rgb(f, pos + o, t, b);
+        if (cdiff(a, b) >= jump) n += 2;
+        else if (pos - 2 - o >= 0) {
+            if (dir) rgb(f, t, pos - 2 - o, a2);
+            else rgb(f, pos - 2 - o, t, a2);
+            if (cdiff(a2, b) >= jump) n++;
+        }
+    }
+    return n;
+}
+
 static int gpu_checked[2]; // first gpu answer of each kind gets checked against ours
 
 static void edge_counts(const Frame *f, const Board *bd, const int *jobs, int n, int *out)
@@ -249,7 +270,7 @@ static double plateau_mid(const double *es, int win, double *best)
     return (lo + hi) / 2.0 - win;
 }
 
-static void refine(const Frame *f, Board *b)
+static void refine(const Frame *f, Board *b, int steps)
 {
     double s = b->s;
     int win = (int)(s * 0.45) + 2; // the first guess can be 20+ px off on big boards
@@ -264,7 +285,10 @@ static void refine(const Frame *f, Board *b)
             jh[0] = 1, jh[1] = (int)(ey + d), jh[2] = (int)b->x, jh[3] = (int)(b->x + 8 * s);
         }
     }
-    edge_counts(f, b, jobs, nj, cnt);
+    if (steps)
+        for (int i = 0; i < nj; i++) cnt[i] = edge_steps(f, b, (int)(s * 0.015), jobs[i * 4], jobs[i * 4 + 1], jobs[i * 4 + 2], jobs[i * 4 + 3]);
+    else
+        edge_counts(f, b, jobs, nj, cnt);
     double es[1001];
     double ks[7], xs[7], ys[7], sx_[7], sy_[7];
     for (int k = 1; k <= 7; k++) {
@@ -279,7 +303,10 @@ static void refine(const Frame *f, Board *b)
     free(jobs);
     free(cnt);
     double slope_x, icpt_x, slope_y, icpt_y;
-    int okx = line_fit(ks, xs, sx_, s, &slope_x, &icpt_x), oky = line_fit(ks, ys, sy_, s, &slope_y, &icpt_y);
+    double tx = 0, ty = 0;
+    for (int i = 0; i < 7; i++) tx += sx_[i], ty += sy_[i];
+    // shaded rows (roblox) dont step by light minus dark going down, trust only the way that matched well
+    int okx = !(steps && tx < ty * 0.6) && line_fit(ks, xs, sx_, s, &slope_x, &icpt_x), oky = !(steps && ty < tx * 0.6) && line_fit(ks, ys, sy_, s, &slope_y, &icpt_y);
     if (!okx && !oky) return;
     double ns = okx && oky ? (slope_x + slope_y) / 2 : okx ? slope_x : slope_y;
     if (fabs(ns - s) >= s * 0.08) return; // 8% off is a bad fit not a better one
@@ -482,6 +509,8 @@ static int same_colors(const Chain *a, const Chain *b, int tol)
 
 int vision_strict = 2, vision_lite;
 
+static void live_colors(const Frame *f, const Board *b, int (*masked)(void *, int, int), void *mctx, uint8_t out[2][3]);
+
 static int find_board(const Frame *f, Board *out, const Rect *ignore, int nignore, int (*masked)(void *, int, int),
                       void *mctx, int soft)
 {
@@ -556,11 +585,19 @@ static int find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
         memcpy(cand.dark, dark, 3);
         cand.soft = soft;
         if (shaded(f, &cand)) flip_tol = (int)fmax(40, cdiff(light, dark) * 0.45);
-        refine(f, &cand);
-        refine(f, &cand);
+        refine(f, &cand, 0);
+        refine(f, &cand, 0);
+        if (soft) refine(f, &cand, 1);
         flip_tol = 40;
         int pen = 0;
         double sc = score_board(f, cand.x, cand.y, cand.s, light, dark, masked, mctx, &pen, soft) - pen;
+        uint8_t mc[2][3]; // the chain saw one row, the middle color over all the squares is steadier on a moving texture
+        live_colors(f, &cand, masked, mctx, mc);
+        if (cdiff(mc[0], mc[1]) >= 45 && (cdiff(mc[0], light) || cdiff(mc[1], dark))) {
+            int pen2 = 0;
+            double sc2 = score_board(f, cand.x, cand.y, cand.s, mc[0], mc[1], masked, mctx, &pen2, soft) - pen2;
+            if (sc2 >= sc) sc = sc2, memcpy(cand.light, mc[0], 3), memcpy(cand.dark, mc[1], 3);
+        }
         if (sc > best_score) {
             best_score = sc;
             best = cand;
@@ -1272,7 +1309,7 @@ static void live_colors(const Frame *f, const Board *b, int (*masked)(void *, in
 {
     static const double pts[4][2] = {{0.1, 0.1}, {0.9, 0.1}, {0.1, 0.9}, {0.9, 0.9}};
     uint8_t smp[2][32][3];
-    int n[2] = {0, 0};
+    int n[2] = {0, 0}, pr = (int)fmax(1, b->s * 0.03), tol = b->soft ? (int)fmax(30, cdiff(b->light, b->dark) * 0.3) : 30; // textured squares never match to the pixel
     for (int r = 0; r < 8; r++)
         for (int c = 0; c < 8; c++) {
             uint8_t cols[4][3];
@@ -1280,11 +1317,12 @@ static void live_colors(const Frame *f, const Board *b, int (*masked)(void *, in
             for (int k = 0; k < 4; k++) {
                 double x = b->x + (c + pts[k][0]) * b->s, y = b->y + (r + pts[k][1]) * b->s;
                 if (!sample_ok(f, x, y) || (masked && masked(mctx, (int)x, (int)y))) continue;
-                rgb(f, (int)x, (int)y, cols[nv++]);
+                if (b->soft) patch(f, x, y, pr, cols[nv++]);
+                else rgb(f, (int)x, (int)y, cols[nv++]);
             }
             for (int a = 0; a < nv; a++) {
                 int m = 0;
-                for (int k = 0; k < nv; k++) m += cdiff(cols[a], cols[k]) < 30;
+                for (int k = 0; k < nv; k++) m += cdiff(cols[a], cols[k]) < tol;
                 if (m > bn) bn = m, bi = a;
             }
             if (bn < 3) continue; // a piece or its glow reaches a corner, skip the square
@@ -1370,7 +1408,9 @@ static int find_near(const Frame *f, const Board *old, Board *out, int x0, int y
     if (!hit && old->soft && !vision_lite) hit = find_board(&c, &b, NULL, 0, masked ? shifted : NULL, &sh, 1);
     if (!hit) return 0;
     b.x += x0, b.y += y0;
-    if (cdiff(b.light, old->light) >= 40 || cdiff(b.dark, old->dark) >= 40) return 0; // some other board
+    int same = cdiff(b.light, old->light) < 40 && cdiff(b.dark, old->dark) < 40;
+    if (!same && drift.use && drift_key(old)) same = cdiff(b.light, drift.now[0]) < 40 && cdiff(b.dark, drift.now[1]) < 40; // glowing or hue cycling, same board in its colors of right now
+    if (!same) return 0; // some other board
     if (b.s < old->s * 0.6 || b.s > old->s * 1.6) return 0;
     if (!b.soft) b.soft = textured(f, &b);
     b.out = old->out;
@@ -1785,7 +1825,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
     memset(out, 0, sizeof(*out));
     double s = b->s;
     float lums[64];
-    int occ[64], board_nz = 0, ncolored = 0;
+    int occ[64], board_nz = 0, ncolored = 0, shade = b->soft && shaded(f, b); // shaded squares (roblox) keep the plain ring color
     // how noisy the texture is over the whole board, the thresholds below scale off it
     if (b->soft) {
         int per[64], np = 0, pr = (int)fmax(1, s * 0.025);
@@ -1931,6 +1971,8 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             for (int i = 0; i < nring; i++) nbase += cdiff(ring[i], base) < 30;
             if (bestn < nring / 4 || nbase * 8 >= nring) memcpy(bg, base, 3); // only trust the ring color if the theme color is basically gone (last move tint)
             int fthr = 60, sthr = 40;
+            const uint8_t *other = ((r + c) & 1) ? b->light : b->dark;
+            int half = cdiff(base, other) / 2;
             if (b->soft && nring)
                 for (int k = 0; k < 3; k++) {
                     int h[256] = {0}, acc = 0, v = 0;
@@ -1939,10 +1981,26 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                     bg[k] = (uint8_t)v;
                 }
             uint8_t rowc[BG_ROWS][3];
-            const uint8_t(*rows)[3] = square_rows(f, x0, y0, s, bg, base, ((r + c) & 1) ? b->light : b->dark, masked, mctx, rowc) ? (const uint8_t(*)[3])rowc : NULL;
+            const uint8_t(*rows)[3] = square_rows(f, x0, y0, s, bg, base, other, masked, mctx, rowc) ? (const uint8_t(*)[3])rowc : NULL;
+            if (b->soft && !rows && !shade && nring && cdiff(bg, base) >= half / 2) { // a wide piece covers so much of the ring the middle color isnt the board, only the samples that still look like this square count
+                int h[3][256] = {{0}}, nk = 0;
+                for (int i = 0; i < nring; i++)
+                    if (cdiff(ring[i], base) < half) {
+                        nk++;
+                        for (int k = 0; k < 3; k++) h[k][ring[i][k]]++;
+                    }
+                for (int k = 0; k < 3 && nk * 4 >= nring; k++) {
+                    int acc = 0, v = 0;
+                    while (v < 255 && (acc += h[k][v]) <= nk / 2) v++;
+                    bg[k] = (uint8_t)v;
+                }
+            }
             if (b->soft && nring) {
                 int dev[64], nd = 0;
-                for (int i = 0; i < nring; i++) dev[nd++] = cdiff(ring[i], row_bg(rows, bg, y0, s, ringy[i]));
+                for (int i = 0; i < nring; i++) // the noise of the board, not of a piece sitting on the ring. shaded squares (rows) keep them all
+                    if (rows || shade || cdiff(ring[i], base) < half) dev[nd++] = cdiff(ring[i], row_bg(rows, bg, y0, s, ringy[i]));
+                if (nd * 4 < nring)
+                    for (int i = nd = 0; i < nring; i++) dev[nd++] = cdiff(ring[i], row_bg(rows, bg, y0, s, ringy[i]));
                 for (int a2 = 1; a2 < nd; a2++)
                     for (int b2 = a2; b2 > 0 && dev[b2 - 1] > dev[b2]; b2--) {
                         int t = dev[b2];
@@ -1954,7 +2012,8 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                 sthr = (int)fmax(40, nz * 1.6);
             }
             out->highlighted[sq] = cdiff(bg, base) > (b->soft ? 70 : 45); // tracker guesses whose turn it is from these
-            int fg = 0, valid = 0, covered = 0, ntint = 0, nwash = 0;
+            int fg = 0, valid = 0, covered = 0, ntint = 0, nwash = 0, nlab = 0, nedge = 0;
+#define LABEL ((c == 0 && gx < 6 && gy < 7) || (c == 7 && gx >= FEAT_N - 6 && gy < 7) || (r == 7 && gy >= FEAT_N - 7 && (gx < 6 || gx >= FEAT_N - 6)))
             uint8_t cell_lum[FEAT_N * FEAT_N];
             short tint[FEAT_N * FEAT_N][3];
             for (int gy = 0; gy < FEAT_N; gy++)
@@ -1975,19 +2034,21 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                             for (int k = 0; k < 3; k++) tint[gy * FEAT_N + gx][k] = (short)(px[k] - row_bg(rows, bg, y0, s, y)[k]);
                             int t = lit(px, row_bg(rows, bg, y0, s, y));
                             if (!t) t = lit(px, base); // a tinted last move square under it
-                            ntint += t == 1, nwash += t == 2;
+                            ntint += t == 1, nwash += t == 2, nlab += !t && LABEL;
+                            nedge += t && (gx == 0 || gy == 0 || gx == FEAT_N - 1 || gy == FEAT_N - 1);
                             cell_lum[gy * FEAT_N + gx] = (uint8_t)lum(px);
                         }
                     } else {
                         v = 0.5f; // unknown, similarity() skips it
                         covered++;
                     }
-                    int lft = gx < 6, rgt = gx >= FEAT_N - 6, top = gy < 7, bot = gy >= FEAT_N - 7;
-                    if ((c == 0 && lft && top) || (c == 7 && rgt && top) || (r == 7 && bot && (lft || rgt))) v = 0.5f; // coordinate letters live here
+                    if (LABEL) v = 0.5f; // coordinate letters live here
                     out->mask[sq][gy * FEAT_N + gx] = v;
                 }
+#undef LABEL
             if (fg && !soft_colors) fg -= peel_halo(out->mask[sq], (const short(*)[3])tint);
-            if (fg && (fg - ntint - nwash) * 8 <= fg && ntint * 2 >= fg) { // just the board lit up or shaded, nothing with an outline on it
+            // just the board lit up or shaded. a light band blown out to white runs off the edge, a white piece doesnt
+            if (fg && (fg - ntint - nwash - nlab) * 8 <= fg && (ntint * 2 >= fg || nedge * 2 >= FEAT_N)) {
                 fg = 0;
                 for (int i = 0; i < FEAT_N * FEAT_N; i++)
                     if (out->mask[sq][i] == 1) out->mask[sq][i] = 0;
