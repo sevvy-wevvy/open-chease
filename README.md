@@ -201,6 +201,7 @@ The box always has whose turn it is, your win % (and how much the last move chan
 <b>Threats</b> - what they'd play if they got another move right now, like "Nc2+ would fork your king and rook". With arrow draws it on the board too<br>
 Both arrows are red and dashed by default, Threat arrow, Threat color and Threat size in Gear > Helper change that<br>
 <b>Trap warnings</b> - when their last move leaves something that looks free but taking it goes bad, like "trap! taking on d1 gets you mated in 2". It marks the square too, and knows a few famous ones by name (Legal's mate, Elephant trap, Fishing Pole...)<br>
+<b>Repetition</b> - it keeps the moves since the last capture or pawn move and sends them to the engine, so it wont walk a won game into a threefold draw. Winning and a move would repeat? It says so and shows another one. Losing? It tells you when you can force a draw by repetition. Draws by repetition and the 50 move rule show up at the end like checkmate does<br>
 <b>Hint button</b> - the ? next to the gear. First click shows which piece, second where it goes, third the whole move<br>
 <b>What a ___ plays</b> - pick 1400 to 2400 and it tells you what someone that rated would probably play. Its your engine turned down, so dont take it as gospel<br>
 With a second opinion engine picked in Gear > Engine it also tells you when the two engines dont agree. Usually means its a tricky spot<br> <br>

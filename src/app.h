@@ -203,6 +203,12 @@ float tracker_confidence(const Templates *t, const BoardRead *r, int sq, int pc)
 void templates_learn_one(Templates *t, const BoardRead *r, int sq, int pc);
 
 typedef struct {
+    char root[100]; // fen at the last capture or pawn move, or where we started following
+    Move mv[160];
+    int n;
+} GameLine;
+
+typedef struct {
     Pos pos;
     int user_color;
     int white_bottom; // can disagree with user_color if the site draws it flipped
@@ -223,6 +229,7 @@ typedef struct {
     u64 locked; // squares the user fixed by hand, one bit each
     signed char lockpc[64];
     int lock_side;
+    GameLine line, prev_line[3]; // so engines see repeats
 } Tracker;
 
 void tracker_start(Tracker *t, int user_color);
@@ -230,6 +237,8 @@ void tracker_update(Tracker *t, const BoardRead *r, Templates *tpl);
 void tracker_resync(Tracker *t, const BoardRead *r, Templates *tpl);
 void tracker_lock(Tracker *t, int sq, int pc);
 int orientation_score(const BoardRead *r); // below 0 = we have it upside down
+void tracker_rebase(Tracker *t); // forget the moves, after the position got changed by hand
+void tracker_line(const Tracker *t, char *out, size_t n); // "fen ... moves ..." for a uci position command
 
 typedef struct {
     Move best;
@@ -250,7 +259,7 @@ int analyzer_switch_async(const char *engine_path);
 int analyzer_switch_done(unsigned ticket); // 1 ok, 0 failed, -1 still starting
 void analyzer_set_options(int threads, int hash_mb, int lines);
 void analyzer_set_elo(int elo);
-void analyzer_set_position(const Pos *p);
+void analyzer_set_position(const Pos *p, const char *line); // line from tracker_line or NULL
 void analyzer_stop(void);
 void analyzer_set_think_ms(int ms);
 int analyzer_get(Analysis *a);
@@ -276,12 +285,17 @@ int qs_caps(Pos *p, int alpha, int beta, int d); // captures only
 int quick_search(Pos *p, int depth, int alpha, int beta); // full width, then qs_caps 4 deep, 30000 = mate
 int see_gain(Pos *p, Move m); // what a move wins on its square after all the trades, centipawns
 Move style_choose(const Pos *p, const Analysis *an, int style); // play style pick among the engine lines
+void move_to_san(Pos *p, Move m, char *out);
+int draw_kind(const Pos *p); // 1 = threefold, 2 = 50 move rule
+int rep_after(Pos *p, Move m); // 2 = m makes it threefold, 1 = they can right after
+Move rep_force(Pos *p, int *kind); // a move that draws by repetition, kind 1 = right now, 2 = a check they cant get out of
+Move rep_guard(const Pos *p, const Analysis *an, Move pick, Move likely, int swap, char *out, size_t n); // swap = allowed to change the pick
 int trap_scan(Pos *p, Traps *out, int ms, atomic_int *stop); // blocking, 0 = got stopped
 void trap_ask(const Pos *p); // NULL = stop looking
 int trap_get(u64 key, Traps *t);
 
 void second_set(int k, const char *path, int elo, int ms); // k 0 = second opinion, 1 = the elo capped one helper mode uses
-void second_ask(int k, const Pos *p);
+void second_ask(int k, const Pos *p, const char *line);
 int second_get(int k, Opinion *o);
 void second_quit(void);
 

@@ -626,6 +626,13 @@ static Move last_logged;
 static char engine_name[48] = "engine";
 
 static Tracker saved_tracker;
+
+static const char *game_line(void)
+{
+    static char buf[1400];
+    tracker_line(&tracker, buf, sizeof(buf));
+    return buf;
+}
 static Board saved_board;
 static long saved_at;
 static int have_saved;
@@ -696,58 +703,6 @@ static void sq_display(int sq, int white_bottom, int *r, int *c)
         *r = rank;
         *c = 7 - file;
     }
-}
-
-static void move_to_san(Pos *p, Move m, char *out)
-{
-    int from = M_FROM(m), to = M_TO(m), pc = p->sq[from], ty = pc % 6;
-    char *o = out;
-    if (M_FLAG(m) == FL_CASTLE) {
-        strcpy(o, (to & 7) == 6 ? "O-O" : "O-O-O");
-        o += strlen(o);
-    } else {
-        int takes = p->sq[to] != EMPTY || M_FLAG(m) == FL_EP; // en passant lands on an empty square
-        if (ty != PAWN) {
-            *o++ = "PNBRQK"[ty];
-            Move moves[256];
-            int n = pos_gen_legal(p, moves), same_file = 0, same_rank = 0, amb = 0;
-            for (int i = 0; i < n; i++) {
-                Move x = moves[i];
-                if (x == m || (int)M_TO(x) != to || p->sq[M_FROM(x)] != pc) continue;
-                amb = 1;
-                if ((int)(M_FROM(x) & 7) == (from & 7)) same_file = 1;
-                if ((int)(M_FROM(x) >> 3) == (from >> 3)) same_rank = 1;
-            }
-            if (amb) { // pgn rules, file first and rank only if the file doesnt settle it
-                if (!same_file)
-                    *o++ = 'a' + (from & 7);
-                else if (!same_rank)
-                    *o++ = '1' + (from >> 3);
-                else {
-                    *o++ = 'a' + (from & 7);
-                    *o++ = '1' + (from >> 3);
-                }
-            }
-        } else if (takes) {
-            *o++ = 'a' + (from & 7);
-        }
-        if (takes) *o++ = 'x';
-        *o++ = 'a' + (to & 7);
-        *o++ = '1' + (to >> 3);
-        if (M_PROMO(m)) {
-            *o++ = '=';
-            *o++ = " NBRQ"[M_PROMO(m)];
-        }
-    }
-    Undo u;
-    if (pos_make(p, m, &u)) {
-        if (pos_in_check(p, p->side)) {
-            Move moves[256];
-            *o++ = pos_gen_legal(p, moves) ? '+' : '#';
-        }
-        pos_unmake(p, &u);
-    }
-    *o = 0;
 }
 
 static void draw_button(Canvas *c, Rect r, const char *label, uint32_t bg, uint32_t fg)
@@ -2740,8 +2695,8 @@ static void sync_seconds(int my_turn)
         snprintf(was1, sizeof(was1), "%s", p1);
     }
     if (state != TRACKING) return;
-    if (*p0 && (my_turn || cfg.theirtoo)) second_ask(0, &tracker.pos);
-    if (*p1 && my_turn) second_ask(1, &tracker.pos);
+    if (*p0 && (my_turn || cfg.theirtoo)) second_ask(0, &tracker.pos, game_line());
+    if (*p1 && my_turn) second_ask(1, &tracker.pos, game_line());
 }
 
 static void game_report(char *out, size_t n)
@@ -3088,18 +3043,29 @@ static void redraw(void)
             Move moves[256];
             Pos tmp = tracker.pos;
             int nlegal = pos_gen_legal(&tmp, moves);
+            int drawn = nlegal ? draw_kind(&tracker.pos) : 0;
+            if (drawn) nlegal = 0; // game over the same as a mate
             if (!nlegal && i == lead && counted_key != tracker.pos.key) { // redraw runs a lot, count the game once
                 counted_key = tracker.pos.key;
-                if (!pos_in_check(&tracker.pos, tracker.pos.side)) draws++, stats_add('d');
+                if (drawn || !pos_in_check(&tracker.pos, tracker.pos.side)) draws++, stats_add('d');
                 else if (my_turn) losses++, stats_add('l');
                 else wins++, stats_add('w');
             }
-            char alert[64] = "", mvs[96] = "", tips[4][100];
+            char alert[64] = "", mvs[96] = "", tips[6][100];
             int ntips = 0;
-            uint32_t tipc[4];
+            uint32_t tipc[6];
             Opinion o0, o1;
             int have0 = second_get(0, &o0) && o0.key == tracker.pos.key && o0.best;
             int have1 = second_get(1, &o1) && o1.key == tracker.pos.key && o1.best;
+            Move pick = 0;
+            char reptip[100] = "";
+            if (my_turn && nlegal && have_an && an.best) {
+                Move fp = cfg.mode != 1 ? fun_pick(&an) : 0;
+                pick = rep_guard(&tracker.pos, &an, fp, cfg.level && have1 ? o1.best : 0, cfg.chaos <= 1, reptip, sizeof(reptip));
+                if (pick != fp && fp == an.best) move_to_san(&tmp, pick, san); // the side panel shows san
+                int hide = cfg.mode != 1 && (cfg.hint || now_ms() - pos_since < delay_secs[cfg.delay] * 1000L); // it names moves, same rules as the arrow
+                if (*reptip && !hide) snprintf(tips[ntips], 100, "%s", reptip), tipc[ntips++] = 0xFFFFC04A;
+            }
             if (i == lead) {
                 trap_ask(cfg.traps && my_turn && nlegal ? &tracker.pos : NULL);
                 have_traps = cfg.traps && my_turn && nlegal && trap_get(tracker.pos.key, &traps_now);
@@ -3171,9 +3137,10 @@ static void redraw(void)
             if (!nlegal) {
                 char rep[160];
                 game_report(rep, sizeof(rep));
-                snprintf(line1, sizeof(line1), "%s%s%s", pos_in_check(&tracker.pos, tracker.pos.side)
+                snprintf(line1, sizeof(line1), "%s%s%s", !drawn && pos_in_check(&tracker.pos, tracker.pos.side)
                                                               ? (my_turn ? "Checkmate. You lost." : "Checkmate! You won.")
-                                                              : "Stalemate.", *rep ? "   " : "", rep);
+                                                              : drawn == 1 ? "Draw by repetition." : drawn == 2 ? "Draw by 50 move rule." : "Stalemate.",
+                 *rep ? "   " : "", rep);
                 line2[0] = 0;
             } else if (cfg.mode == 1) {
                 char wbuf[48] = "";
@@ -3191,7 +3158,6 @@ static void redraw(void)
                 snprintf(line1, sizeof(line1), "%s%s%s%s%s%s", my_turn ? "Your turn" : "Their turn", clock,
                          checked ? (my_turn ? "   You're in check!" : "   They're in check") : "", wbuf, *extra ? "   " : "", extra);
             } else if (my_turn) {
-                Move pick = have_an && an.best ? fun_pick(&an) : 0;
                 int waiting = now_ms() - pos_since < delay_secs[cfg.delay] * 1000L; // instant moves every turn look like a bot
                 if (pick && !waiting) {
                     char psan[16];
@@ -3241,7 +3207,7 @@ static void redraw(void)
                     draw_move(c, bl, an.best, bottom, pick_color(cfg.tcolor, 0xC8FF4D4D), cfg.tarrow, arrow_tk(cfg.tthick),
                               cfg.tfrom, cfg.tto, cfg.tlabel ? san : NULL);
             }
-            if (!nlegal && cfg.confetti && pos_in_check(&tracker.pos, tracker.pos.side) && !my_turn) draw_confetti(c, bl);
+            if (!nlegal && !drawn && cfg.confetti && pos_in_check(&tracker.pos, tracker.pos.side) && !my_turn) draw_confetti(c, bl);
             if (cfg.sqnames) draw_sqnames(c, bl, bottom);
             if (now_ms() < badge_until && rate_move && !hushed()) {
                 int r, col;
@@ -3722,7 +3688,7 @@ static void read_and_track(int first)
     keep_read(r);
     free(r);
     if (cfg.theirtoo || tracker.pos.side == tracker.user_color)
-        analyzer_set_position(&tracker.pos);
+        analyzer_set_position(&tracker.pos, game_line());
     else
         analyzer_stop();
 }
@@ -3948,16 +3914,18 @@ static void fix_piece(int action, int arg)
         for (int sq = 0; sq < 64; sq++) // dont keep re-applying a fix that broke the kings
             if ((tracker.locked >> sq & 1) && p.sq[sq] != tracker.pos.sq[sq]) tracker.locked &= ~(1ULL << sq);
         tracker.pos = p;
+        tracker_rebase(&tracker);
         return;
     }
     if (pos_in_check(&p, p.side ^ 1)) set_note("the side that just moved cant be in check");
     else if (action == ACT_PIECE) set_note("fixed it. once theyre all right, Gear > Vision > Teach these pieces");
     tracker.pos = p;
+    tracker_rebase(&tracker);
     tracker.mismatch_ticks = 0;
     tracker.pending_count = 0;
     tracker.side_uncertain = 0;
     tracker.nprev = 0;
-    analyzer_set_position(&tracker.pos);
+    analyzer_set_position(&tracker.pos, game_line());
 }
 
 
@@ -4346,7 +4314,7 @@ static void choose_engine(int idx)
     snprintf(saved_engine, sizeof(saved_engine), "%.1000s", engine_paths[cfg.engine]);
     have_saved_engine = 1;
     save_cfg();
-    if (state == TRACKING) analyzer_set_position(&tracker.pos); // might be paused
+    if (state == TRACKING) analyzer_set_position(&tracker.pos, game_line()); // might be paused
 }
 
 // lc0 can take ages to load its net, dont freeze clicks waiting
@@ -4357,7 +4325,7 @@ static void check_switch(void)
     if (r < 0 && now_ms() - switch_since < 25000) return;
     switch_ticket = 0;
     if (r == 1) {
-        if (state == TRACKING) analyzer_set_position(&tracker.pos);
+        if (state == TRACKING) analyzer_set_position(&tracker.pos, game_line());
         return;
     }
     set_note("that engine wont start on this pc, using mine");
@@ -4365,7 +4333,7 @@ static void check_switch(void)
     analyzer_switch_async(NULL);
     snprintf(saved_engine, sizeof(saved_engine), "%s", "");
     save_cfg();
-    if (state == TRACKING) analyzer_set_position(&tracker.pos);
+    if (state == TRACKING) analyzer_set_position(&tracker.pos, game_line());
 }
 
 static void update_poll(void);

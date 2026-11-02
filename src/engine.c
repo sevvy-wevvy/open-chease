@@ -815,6 +815,15 @@ static int is_repetition(const Pos *p)
     return 0;
 }
 
+int pos_repeats(const Pos *p)
+{
+    int lim = p->nhist - p->half, n = 0;
+    if (lim < 0) lim = 0;
+    for (int i = p->nhist - 2; i >= lim; i -= 2)
+        if (i < 1024 && p->hist[i] == p->key) n++;
+    return n;
+}
+
 static TTEntry *tt_probe(Searcher *s, u64 key) { return &s->tt[key & s->tt_mask]; }
 
 static void tt_store(Searcher *s, u64 key, int depth, int score, int flag, Move m, int ply)
