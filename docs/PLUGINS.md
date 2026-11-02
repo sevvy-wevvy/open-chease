@@ -341,6 +341,7 @@ Your OK is for those exact files. Edit any file in it or update it and it asks a
 While a plugin runs open-chease checks every couple seconds if it (or anything it started) connected to something thats not your own computer.<br>
 If it goes online without saying so in <code>internet = &lt;why&gt;</code>, it gets stopped right away and you get asked.<br>
 If it did say why it still gets a went online chip and you get asked, but it keeps running and you see its reason. Hit Its fine and it doesnt ask again until its files change.<br> <br>
+A few files dont count as changes: <code>frame.ppm</code> (screen reading writes it), and <code>build.log</code> and <code>.built</code> for plugins with a build line. Since those get skipped, a <code>run</code> line that points at one of them gets flagged as shady.<br> <br>
 <b>Be careful anyway</b><br>
 The check looks for known patterns, it cant catch everything. Someone who really wants to hide something can. A plugin with no chips isnt proof its safe, it just means nothing obvious showed up.<br>
 <b>Only run plugins you trust</b>, or ones you read yourself.<br> <br>
