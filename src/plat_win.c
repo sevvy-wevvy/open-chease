@@ -543,6 +543,58 @@ static DWORD WINAPI tgz_thread(void *arg)
     return ok ? 0 : 1;
 }
 
+typedef struct {
+    char cmd[1200], dir[1100], log[1100];
+} CmdJob;
+
+static DWORD WINAPI cmd_thread(void *arg)
+{
+    CmdJob *cj = arg;
+    char sysd[MAX_PATH], line[1600] = "", pre[MAX_PATH + 20];
+    UINT sl = GetSystemDirectoryA(sysd, sizeof(sysd));
+    DWORD code = 1;
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+    HANDLE out = CreateFileA(cj->log, GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL), in = nul_handle();
+    if (sl && sl < sizeof(sysd) && out != INVALID_HANDLE_VALUE) {
+        snprintf(pre, sizeof(pre), "%s\\cmd.exe", sysd);
+        quote_arg(line, sizeof(line), pre);
+        snprintf(line + strlen(line), sizeof(line) - strlen(line), " /d /s /c \"%s\"", cj->cmd);
+        PROCESS_INFORMATION pi;
+        if (spawn(pre, line, cj->dir, in, out, out, &pi)) {
+            WaitForSingleObject(pi.hProcess, INFINITE);
+            GetExitCodeProcess(pi.hProcess, &code);
+            CloseHandle(pi.hProcess), CloseHandle(pi.hThread);
+        }
+    }
+    if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
+    if (in != INVALID_HANDLE_VALUE) CloseHandle(in);
+    free(cj);
+    return code;
+}
+
+intptr_t cmd_start(const char *cmd, const char *dir, const char *log)
+{
+    CmdJob *cj = calloc(1, sizeof(CmdJob));
+    if (!cj) return 0;
+    snprintf(cj->cmd, sizeof(cj->cmd), "%s", cmd);
+    snprintf(cj->dir, sizeof(cj->dir), "%s", dir);
+    snprintf(cj->log, sizeof(cj->log), "%s", log);
+    HANDLE h = CreateThread(NULL, 0, cmd_thread, cj, 0, NULL);
+    if (!h) free(cj);
+    return (intptr_t)h;
+}
+
+int on_path(const char *name, char *out, size_t n)
+{
+    char got[MAX_PATH], low[MAX_PATH];
+    DWORD l = SearchPathA(NULL, name, ".exe", sizeof(got), got, NULL);
+    if (!l || l >= sizeof(got)) return 0;
+    for (DWORD i = 0; i <= l; i++) low[i] = got[i] >= 'A' && got[i] <= 'Z' ? got[i] + 32 : got[i];
+    if (strstr(low, "\\windowsapps\\")) return 0; // the store stub, it just opens the store
+    snprintf(out, n, "%s", got);
+    return 1;
+}
+
 static intptr_t start_job(Job *jb, LPTHREAD_START_ROUTINE fn)
 {
     HANDLE h = CreateThread(NULL, 0, fn, jb, 0, NULL);

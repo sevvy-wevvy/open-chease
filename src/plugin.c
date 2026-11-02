@@ -92,6 +92,7 @@ static void read_manifest(Plugin *p, const char *path)
     FILE *f = fopen(path, "r");
     if (!f) return;
     char ln[600];
+    int os_run = 0, os_build = 0; // run.linux and friends win over plain run, whichever comes first
     while (fgets(ln, sizeof(ln), f)) {
         ln[strcspn(ln, "\r\n")] = 0;
         char *eq = strchr(ln, '=');
@@ -101,11 +102,29 @@ static void read_manifest(Plugin *p, const char *path)
         while (*k == ' ') k++;
         while (e > k && e[-1] == ' ') *--e = 0;
         while (*v == ' ') v++;
+        e = v + strlen(v);
+        while (e > v && e[-1] == ' ') *--e = 0;
         tidy(v);
-        if (!strcmp(k, "run")) snprintf(p->run, sizeof(p->run), "%s", v);
-        else if (!strcmp(k, "name")) snprintf(p->title, sizeof(p->title), "%s", v);
+        char *dot = strchr(k, '.');
+        if (dot && (!strncmp(k, "run.", 4) || !strncmp(k, "build.", 6))) {
+            if (strcmp(dot + 1, PL_OS)) continue;
+            *dot = 0;
+            if (*k == 'r') snprintf(p->run, sizeof(p->run), "%s", v), os_run = 1;
+            else snprintf(p->build, sizeof(p->build), "%s", v), os_build = 1;
+        } else if (!strcmp(k, "run")) {
+            if (!os_run) snprintf(p->run, sizeof(p->run), "%s", v);
+        } else if (!strcmp(k, "build")) {
+            if (!os_build) snprintf(p->build, sizeof(p->build), "%s", v);
+        } else if (!strcmp(k, "name")) snprintf(p->title, sizeof(p->title), "%s", v);
         else if (!strcmp(k, "description")) snprintf(p->desc, sizeof(p->desc), "%s", v);
         else if (!strcmp(k, "version")) snprintf(p->ver, sizeof(p->ver), "%s", v);
+        else if (!strcmp(k, "author")) snprintf(p->author, sizeof(p->author), "%s", v);
+        else if (!strcmp(k, "url")) snprintf(p->url, sizeof(p->url), "%s", v);
+        else if (!strcmp(k, "lang")) snprintf(p->lang, sizeof(p->lang), "%s", v);
+        else if (!strcmp(k, "needs")) snprintf(p->needs, sizeof(p->needs), "%s", v);
+        else if (!strcmp(k, "platforms")) snprintf(p->platforms, sizeof(p->platforms), "%s", v);
+        else if (!strcmp(k, "update")) snprintf(p->update, sizeof(p->update), "%s", v);
+        else if (!strcmp(k, "internet")) snprintf(p->internet, sizeof(p->internet), "%s", v);
     }
     fclose(f);
 }
@@ -197,9 +216,10 @@ int plug_found(const char *tmp, const char *sub, const char *repo, char src[][11
     return n;
 }
 
-void plug_start(Plugin *p)
+void plug_launch(Plugin *p)
 {
     if (p->alive) return;
+    p->want = 0, p->nmenu = 0;
     p->nset = p->nitem = p->nnext = p->nin = p->nout = p->junk = p->tick_ms = 0;
     p->panel.nline = p->npanel.nline = 0;
     p->panel.title[0] = p->npanel.title[0] = p->tab[0] = 0;
@@ -216,6 +236,11 @@ void plug_start(Plugin *p)
 
 void plug_stop(Plugin *p, const char *why)
 {
+    p->want = 0;
+    if (p->bjob) {
+        plug_run_stop(p);
+        snprintf(p->status, sizeof(p->status), "%s", why);
+    }
     if (!p->alive) return;
     fd_close(p->to);
     fd_close(p->from);
@@ -224,7 +249,7 @@ void plug_stop(Plugin *p, const char *why)
     proc_reap(p->pid);
     p->pid = 0;
     p->alive = 0;
-    p->nitem = p->nnext = 0;
+    p->nitem = p->nnext = p->nmenu = 0;
     p->panel.nline = 0, p->panel.title[0] = 0;
     snprintf(p->status, sizeof(p->status), "%s", why);
     if (loud) fprintf(stderr, "plugin %s: %s\n", p->name, why);
@@ -268,7 +293,30 @@ int plug_running(void)
 {
     for (int i = 0; i < nplugs; i++)
         if (plugs[i].alive) return 1;
-    return 0;
+    return plug_busy(); // checks and builds get polled too
+}
+
+int plug_menu_list(int *pi, int *k, int max)
+{
+    int n = 0;
+    long last = -1;
+    while (n < max) { // smallest seq after the last one, theres only a handful
+        int bi = -1, bk = -1;
+        for (int i = 0; i < nplugs; i++)
+            for (int j = 0; plugs[i].alive && j < plugs[i].nmenu; j++) {
+                long s = plugs[i].menu[j].seq;
+                if (s > last && (bi < 0 || s < plugs[bi].menu[bk].seq)) bi = i, bk = j;
+            }
+        if (bi < 0) break;
+        pi[n] = bi, k[n++] = bk, last = plugs[bi].menu[bk].seq;
+    }
+    return n;
+}
+
+void plug_menu_click(int pi, int k)
+{
+    if (pi < 0 || pi >= nplugs || k < 0 || k >= plugs[pi].nmenu) return;
+    plug_send(&plugs[pi], "click %s", plugs[pi].menu[k].key);
 }
 
 void plug_quit(void)
@@ -363,6 +411,31 @@ static void label_tip(PlugSet *st, char *rest)
     else st->tip[0] = 0;
     cut(st->label, sizeof(st->label), rest);
     if (!*st->label) snprintf(st->label, sizeof(st->label), "%s", st->key);
+}
+
+static int menu_cmd(Plugin *p, char *s)
+{
+    static long seq;
+    char *key = word(&s);
+    if (!key || strlen(key) >= sizeof(p->menu[0].key) || !ok_name(key)) return 0;
+    int k = 0;
+    while (k < p->nmenu && strcmp(p->menu[k].key, key)) k++;
+    while (*s == ' ') s++;
+    if (!*s) { // no label, take it away
+        if (k == p->nmenu) return 0;
+        memmove(&p->menu[k], &p->menu[k + 1], sizeof(p->menu[0]) * (size_t)(p->nmenu - k - 1));
+        p->nmenu--;
+        return 1;
+    }
+    if (k == PL_MENU) return 0;
+    PlugMenu *m = &p->menu[k];
+    char *bar = strchr(s, '|');
+    if (bar) *bar = 0, cut(m->tip, sizeof(m->tip), bar + 1);
+    else m->tip[0] = 0;
+    cut(m->label, sizeof(m->label), s);
+    if (!*m->label) snprintf(m->label, sizeof(m->label), "%s", key);
+    if (k == p->nmenu) snprintf(m->key, sizeof(m->key), "%s", key), m->seq = ++seq, p->nmenu++;
+    return 1;
 }
 
 static void declare(Plugin *p, char *s)
@@ -512,6 +585,7 @@ static int handle(Plugin *p, char *ln, long now) // 1 = something on screen chan
         return 0;
     }
     if (!strcmp(cmd, "setting")) return declare(p, s), 1;
+    if (!strcmp(cmd, "menu")) return menu_cmd(p, s);
     if (!strcmp(cmd, "tab")) {
         cut(p->tab, sizeof(p->tab), s);
         return 1;
@@ -549,7 +623,7 @@ static int flush(Plugin *p, long now)
 
 int plug_poll(long now)
 {
-    int dirty = 0;
+    int dirty = plug_run_poll(now);
     for (int i = 0; i < nplugs; i++) {
         Plugin *p = &plugs[i];
         if (!p->alive) continue;

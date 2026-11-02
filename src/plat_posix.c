@@ -395,6 +395,42 @@ int clip_get(char *out, int n)
     return got > 0;
 }
 
+int on_path(const char *name, char *out, size_t n)
+{
+    const char *s = getenv("PATH");
+    struct stat st;
+    if (!s || !*name || strchr(name, '/')) return 0;
+    while (*s) {
+        size_t l = strcspn(s, ":");
+        snprintf(out, n, "%.*s/%s", (int)(l ? l : 1), l ? s : ".", name);
+        if (!stat(out, &st) && S_ISREG(st.st_mode) && !access(out, X_OK)) return 1;
+        s += l;
+        if (*s) s++;
+    }
+    return 0;
+}
+
+intptr_t cmd_start(const char *cmd, const char *dir, const char *log)
+{
+    pid_t pid = fork();
+    if (pid == 0) {
+        setpgid(0, 0);
+#ifdef __linux__
+        prctl(PR_SET_PDEATHSIG, SIGKILL);
+#endif
+        signal(SIGPIPE, SIG_DFL);
+        int in = open("/dev/null", O_RDONLY), out = open(log, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (in >= 0) dup2(in, 0);
+        if (out >= 0) dup2(out, 1), dup2(out, 2);
+        for (int fd = 3; fd < 1024; fd++) close(fd);
+        if (chdir(dir)) _exit(127);
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
+    if (pid > 0) setpgid(pid, pid);
+    return pid < 0 ? 0 : pid;
+}
+
 intptr_t stage_start(const char *home, const char *branch)
 {
     const char *env[] = {"H", home, "OPEN_CHEASE_BRANCH", branch, NULL};

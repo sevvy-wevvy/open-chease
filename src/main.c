@@ -32,7 +32,8 @@ enum {
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
     ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE, ACT_HIDE, ACT_KEYROW, ACT_SHEET, ACT_SEARCH, ACT_EXPORT,
     ACT_IMPORT, ACT_EYES, ACT_UPGRADE, ACT_COMPACT, ACT_PLUG_ON, ACT_PLUG_DIR, ACT_PLUG_SET, ACT_PLUG_SLIDE,
-    ACT_PLUG_URL, ACT_PLUG_PASTE, ACT_PLUG_ADD, ACT_PLUG_TEMPLATE, ACT_PLUG_HELP
+    ACT_PLUG_URL, ACT_PLUG_PASTE, ACT_PLUG_ADD, ACT_PLUG_TEMPLATE, ACT_PLUG_HELP, ACT_PLUG_MENU, ACT_PLUG_LINK, ACT_PLUG_UPDATE,
+    ACT_PLUG_GET, ACT_PLUG_RECHECK
 };
 
 typedef struct {
@@ -1545,6 +1546,11 @@ static void draw_icon(Canvas *c, Rect r, int kind, uint32_t col)
         draw_triangle(c, cx, y + s * 0.78, cx - s * 0.3, y + s * 0.45, cx + s * 0.3, y + s * 0.45, col);
         draw_line(c, x + s * 0.1, y + s * 0.93, x + s * 0.9, y + s * 0.93, w, col);
         break;
+    case 11: // puzzle piece, plugin stuff
+        draw_round_rect(c, (Rect){x + s * 0.12, y + s * 0.3, s * 0.58, s * 0.58}, s * 0.08, col);
+        draw_round_rect(c, (Rect){x + s * 0.29, y + s * 0.06, s * 0.24, s * 0.3}, s * 0.12, col);
+        draw_round_rect(c, (Rect){x + s * 0.64, y + s * 0.47, s * 0.3, s * 0.24}, s * 0.12, col);
+        break;
     case 9:
     case 10: {
         Rect pill = {x, y + s * 0.22, s, s * 0.56};
@@ -1583,8 +1589,14 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     int acts[11] = {ACT_MODE, ACT_COMPACT, ACT_DEBUG, ACT_FIX, ACT_TURN, ACT_RESCAN, ACT_LIB_OPEN, ACT_FLIP, ACT_RESTART, ACT_UPDATE, ACT_QUIT};
     int icons[11] = {9, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8}; // 9 is the switch, flips to 10 when its on
     int group[11] = {0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 4}; // divider line wherever this changes
-    double mw = 236, ih = 42, gap = 9, mh = 11 * ih + 4 * gap + 12; // 4 dividers
+    int ppi[PL_MENU_ALL], pk[PL_MENU_ALL], np = plug_menu_list(ppi, pk, PL_MENU_ALL), n = 11 + np, ndiv = 0;
+    int base[11 + PL_MENU_ALL]; // plugin items go right before Restart, -1-q = the qth one
+    for (int k = 0; k < n; k++) base[k] = k < 8 ? k : k < 8 + np ? -1 - (k - 8) : k - np;
+    for (int k = 1; k < n; k++) ndiv += (base[k] < 0 ? 5 : group[base[k]]) != (base[k - 1] < 0 ? 5 : group[base[k - 1]]);
+    double mw = 236, ih = 42, gap = 9, mh = n * ih + ndiv * gap + 12;
+    if (mh > outr.h - 8) ih = fmax(26, (outr.h - 8 - ndiv * gap - 12) / n), mh = n * ih + ndiv * gap + 12; // tiny screen, squash the rows
     for (int k = 0; k < 11; k++) mw = fmax(mw, text_width(items[k], 0) + 74); // wide fonts
+    for (int q = 0; q < np; q++) mw = fmax(mw, text_width(plugs[ppi[q]].menu[pk[q]].label, 0) + 74);
     Rect m = {p.x + p.w - mw, p.y + p.h + 6, mw, mh};
     if (m.y + mh > outr.y + outr.h) m.y = p.y - mh - 6; // box at the bottom, open upwards
     if (m.y < outr.y) m.y = outr.y + 4;
@@ -1596,27 +1608,32 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     if (!closing) covers(m, bl); // a closing menu shouldnt pause tracking
     panel_bg(c, m, 14, TH->menu);
     if (hit) add_hit(m, ACT_BLOCK); // goes first, clicks check hits newest first so the rows win
-    double y = m.y + 6;
-    for (int k = 0; k < 11; k++) {
-        if (k && group[k] != group[k - 1]) {
+    double y = m.y + 6, bs = fmin(30, ih - 9);
+    for (int k = 0; k < n; k++) {
+        int b = base[k], g = b < 0 ? 5 : group[b];
+        if (k && g != (base[k - 1] < 0 ? 5 : group[base[k - 1]])) {
             draw_line(c, m.x + 14, y + gap / 2 - 1, m.x + m.w - 14, y + gap / 2 - 1, 1, TH->btn);
             y += gap;
         }
+        const PlugMenu *pm = b < 0 ? &plugs[ppi[-1 - b]].menu[pk[-1 - b]] : NULL;
+        const char *label = pm ? pm->label : items[b], *hn = pm ? pm->tip : hint[b];
         Rect it = {m.x + 6, y, m.w - 12, ih - 3};
-        int on = (k == 0 && cfg.mode) || (k == 1 && cfg.compact) || (k == 2 && debug_on) || (k == 3 && fix_mode), quit = acts[k] == ACT_QUIT;
+        int on = (b == 0 && cfg.mode) || (b == 1 && cfg.compact) || (b == 2 && debug_on) || (b == 3 && fix_mode), quit = b >= 0 && acts[b] == ACT_QUIT;
         uint32_t fg = quit ? 0xFFFF5A5A : TH->item_fg;
         draw_round_rect(c, it, 10, on ? TH->btn : TH->item);
         if (on) draw_round_rect(c, (Rect){it.x + 2, it.y + 8, 3, it.h - 16}, 1.5, TH->title);
-        Rect ib = {it.x + 10, it.y + (it.h - 30) / 2, 30, 30};
+        Rect ib = {it.x + 10, it.y + (it.h - bs) / 2, bs, bs};
         draw_round_rect(c, ib, 8, quit ? 0x40FF5A5A : (TH->btn | 0xFF000000));
-        draw_icon(c, (Rect){ib.x + 7, ib.y + 7, 16, 16}, icons[k] == 9 && on ? 10 : icons[k], quit ? 0xFFFF5A5A : on ? TH->title : TH->btn_fg);
-        if (*hint[k]) {
-            draw_text(c, it.x + 48, it.y + 2, items[k], 0, fg);
-            draw_text(c, it.x + 48, it.y + 19, fit_text(c, hint[k], it.w - 54), 0, (TH->item_fg & 0xFFFFFF) | 0x90000000);
+        int icon = pm ? 11 : icons[b] == 9 && on ? 10 : icons[b];
+        draw_icon(c, (Rect){ib.x + bs / 2 - 8, ib.y + bs / 2 - 8, 16, 16}, icon, quit ? 0xFFFF5A5A : on ? TH->title : TH->btn_fg);
+        if (*hn && ih >= 38) {
+            draw_text(c, it.x + 48, it.y + 2, label, 0, fg);
+            draw_text(c, it.x + 48, it.y + 19, fit_text(c, hn, it.w - 54), 0, (TH->item_fg & 0xFFFFFF) | 0x90000000);
         } else {
-            draw_text(c, it.x + 48, it.y + (it.h - 17) / 2, items[k], 0, fg);
+            draw_text(c, it.x + 48, it.y + (it.h - 17) / 2, label, 0, fg);
         }
-        if (hit) add_hit(it, acts[k]);
+        if (hit && pm) add_hit_arg(it, ACT_PLUG_MENU, ppi[-1 - b] * 64 + pk[-1 - b]);
+        else if (hit) add_hit(it, acts[b]);
         y += ih;
     }
     canvas_blit(dst, c, closing ? 1 - an : an, 0, closing ? -6 * an : -12 * (1 - an), -1);
@@ -1915,6 +1932,98 @@ static double plug_add_row(Canvas *c, Rect m, double y, double pad, int draw, in
     return y + 34;
 }
 
+static int plug_link(const char *url, char *out, size_t n) // only plain web links get opened
+{
+    const char *u = url;
+    if (!strncmp(u, "https://", 8)) u += 8;
+    else if (!strncmp(u, "http://", 7)) u += 7;
+    if (!*u || strpbrk(u, " \"'`<>|^\\") || *u == '/' || *u == '.') return 0;
+    snprintf(out, n, "%s%s", u == url ? "https://" : "", url);
+    return 1;
+}
+
+static double plug_entry(Canvas *c, Rect m, double y, double pad, int i, int draw, int hit) // one plugin in the Plugins tab
+{
+    Plugin *p = &plugs[i];
+    double w = m.w - 2 * pad;
+    int osok = plug_os_ok(p), ot = own_tab(p);
+    Rect row = {m.x + pad, y, w, 25};
+    if (draw) {
+        draw_round_rect(c, row, 7, TH->item);
+        Rect sw = {row.x + row.w - 46, row.y + 3.5, 38, 18}, fb = {sw.x - 84, row.y + 3, 76, row.h - 6}, ub = {fb.x - 84, fb.y, 76, fb.h};
+        double d = 14, v = p->on ? 1 : 0;
+        if (osok) {
+            draw_round_rect(c, sw, 9, mix(TH->btn, TH->title, v));
+            draw_round_rect(c, (Rect){sw.x + 2 + (sw.w - d - 4) * v, sw.y + 2, d, d}, d / 2, mix(0xFFE8E8E8, 0xFF181818, v));
+        }
+        draw_button(c, fb, "Folder", TH->btn, TH->btn_fg);
+        if (*p->update) draw_button(c, ub, pget_pid ? "..." : "Update", TH->btn, TH->btn_fg);
+        char t[80];
+        snprintf(t, sizeof(t), "%s%s%s", p->title, *p->ver ? "  v" : "", p->ver);
+        draw_text(c, row.x + 10, row.y + 4, fit_text(c, t, (*p->update ? ub.x : fb.x) - row.x - 18), 0, osok ? TH->title : TH->sub);
+        if (hit) add_hit(row, ACT_BLOCK), add_hit_arg(fb, ACT_PLUG_DIR, i);
+        if (hit && osok) add_hit_arg(sw, ACT_PLUG_ON, i);
+        if (hit && *p->update) add_hit_arg(ub, ACT_PLUG_UPDATE, i);
+        if (osok) tip_spot(sw, "turns this plugin on or off. plugins are programs, only run ones you trust");
+        tip_spot(fb, "opens the folder this plugin lives in");
+        if (*p->update) tip_spot(ub, "gets the newest version from its github, same as adding it again");
+    }
+    y += 28;
+    char link[220];
+    int has_link = plug_link(p->url, link, sizeof(link));
+    if (*p->author || has_link) { // by sev  github.com/me/myplugin
+        double x = m.x + pad + 10;
+        char by[60];
+        snprintf(by, sizeof(by), "by %s", p->author);
+        if (*p->author) {
+            if (draw) draw_text(c, x, y, fit_text(c, by, w * 0.4), 0, TH->sub);
+            x += fmin(text_lw(c, by, 0), w * 0.4) + 14;
+        }
+        if (has_link) {
+            const char *shown = link + (link[4] == 's' ? 8 : 7);
+            if (!strncmp(shown, "www.", 4)) shown += 4;
+            shown = fit_text(c, shown, m.x + m.w - pad - 10 - x);
+            Rect lr = {x - 3, y - 1, text_lw(c, shown, 0) + 6, 19};
+            if (draw) draw_text(c, x, y, shown, 0, osok ? TH->title : TH->sub);
+            if (draw && hit) add_hit_arg(lr, ACT_PLUG_LINK, i);
+            if (draw) tip_spot(lr, "opens its page in your browser");
+        }
+        y += 20;
+    }
+    char info[300], why[80];
+    int r = plug_ready(p, why, sizeof(why)), miss = -1, bad = 0;
+    if (!osok) snprintf(info, sizeof(info), "%s", why);
+    else if (p->alive && *p->said) snprintf(info, sizeof(info), "%s", p->said);
+    else if (p->alive && ot >= 0) snprintf(info, sizeof(info), "%s%ssettings are in the %s tab", p->desc, *p->desc ? ", " : "", all_tabs[ot]);
+    else if (p->alive) snprintf(info, sizeof(info), "%s", *p->desc ? p->desc : "running");
+    else if (p->bfail || p->bjob) snprintf(info, sizeof(info), "%s", p->status), bad = p->bfail;
+    else if (r < 0) snprintf(info, sizeof(info), "%s", why), miss = plug_missing(p), bad = 1;
+    else if (p->on) snprintf(info, sizeof(info), "%s", *p->status ? p->status : "starting"), bad = !p->want;
+    else snprintf(info, sizeof(info), "%s", *p->desc ? p->desc : "off");
+    if (draw) draw_text(c, m.x + pad + 10, y, fit_text(c, info, w - 20), 0, bad ? 0xFFFF7A5A : TH->sub);
+    y += 22;
+    for (int k = 0; p->bfail && k < 3 && p->blog[k][0]; k++, y += 18)
+        if (draw) draw_text(c, m.x + pad + 18, y, fit_text(c, p->blog[k], w - 28), 0, (TH->sub & 0xFFFFFF) | 0xC0000000);
+    if (osok && (miss >= 0 || p->bfail)) { // Get python / Check again, or Build again
+        char gl[40];
+        snprintf(gl, sizeof(gl), "Get %s", plug_tool_name(miss));
+        const char *again = p->bfail ? "Build again" : "Check again";
+        double gw = miss >= 0 ? fmax(100, text_lw(c, gl, 0) + 24) : 0, aw = fmax(110, text_lw(c, again, 0) + 24);
+        Rect gb = {m.x + pad + 10, y, gw, 24}, ab = {gb.x + (gw ? gw + 8 : 0), y, aw, 24};
+        if (draw) {
+            if (miss >= 0) draw_button(c, gb, gl, TH->title, 0xFF181818);
+            draw_button(c, ab, again, TH->btn, TH->btn_fg);
+            if (hit && miss >= 0) add_hit_arg(gb, ACT_PLUG_GET, miss);
+            if (hit) add_hit_arg(ab, ACT_PLUG_RECHECK, i);
+            if (miss >= 0) tip_spot(gb, "opens the download page. install it, then hit Check again");
+            tip_spot(ab, p->bfail ? "builds it again, after you fixed whatever build.log says" : "looks again, no restart needed");
+        }
+        y += 30;
+    }
+    if (p->alive && ot < 0 && p->nset) y = plug_grid(c, m, y, pad, i, draw, hit) + 2;
+    return y + 6;
+}
+
 static double plug_tab(Canvas *c, Rect m, double y, double pad, int t, int draw, int hit)
 {
     double w = m.w - 2 * pad;
@@ -1946,35 +2055,7 @@ static double plug_tab(Canvas *c, Rect m, double y, double pad, int t, int draw,
         }
         return card.y + card.h + 10 + 30;
     }
-    for (int i = 0; i < nplugs; i++) {
-        Plugin *p = &plugs[i];
-        Rect row = {m.x + pad, y, w, 25};
-        if (draw) {
-            draw_round_rect(c, row, 7, TH->item);
-            Rect sw = {row.x + row.w - 46, row.y + 3.5, 38, 18}, fb = {sw.x - 84, row.y + 3, 76, row.h - 6};
-            double d = 14, v = p->on ? 1 : 0;
-            draw_round_rect(c, sw, 9, mix(TH->btn, TH->title, v));
-            draw_round_rect(c, (Rect){sw.x + 2 + (sw.w - d - 4) * v, sw.y + 2, d, d}, d / 2, mix(0xFFE8E8E8, 0xFF181818, v));
-            draw_button(c, fb, "Folder", TH->btn, TH->btn_fg);
-            char t[80];
-            snprintf(t, sizeof(t), "%s%s%s", p->title, *p->ver ? "  v" : "", p->ver);
-            draw_text(c, row.x + 10, row.y + 4, fit_text(c, t, fb.x - row.x - 18), 0, TH->title);
-            if (hit) add_hit(row, ACT_BLOCK), add_hit_arg(sw, ACT_PLUG_ON, i), add_hit_arg(fb, ACT_PLUG_DIR, i);
-            tip_spot(sw, "turns this plugin on or off. plugins are programs, only run ones you trust");
-            tip_spot(fb, "opens the folder this plugin lives in");
-        }
-        y += 28;
-        char info[300];
-        int ot = own_tab(p);
-        if (p->alive && *p->said) snprintf(info, sizeof(info), "%s", p->said);
-        else if (p->alive && ot >= 0) snprintf(info, sizeof(info), "%s%ssettings are in the %s tab", p->desc, *p->desc ? ", " : "", all_tabs[ot]);
-        else if (p->alive || !p->on) snprintf(info, sizeof(info), "%s", *p->desc ? p->desc : p->on ? "running" : "off");
-        else snprintf(info, sizeof(info), "%s", p->status);
-        if (draw) draw_text(c, m.x + pad + 10, y, fit_text(c, info, w - 20), 0, p->on && !p->alive ? 0xFFFF7A5A : TH->sub);
-        y += 22;
-        if (p->alive && ot < 0 && p->nset) y = plug_grid(c, m, y, pad, i, draw, hit) + 2;
-        y += 6;
-    }
+    for (int i = 0; i < nplugs; i++) y = plug_entry(c, m, y, pad, i, draw, hit);
     return y + 30;
 }
 
@@ -4973,6 +5054,13 @@ static void plug_import_poll(void)
     set_note(note);
 }
 
+static void plug_rescan(void) // picks up folders dropped in by hand, the ones it has stay as they are
+{
+    plug_scan(data_dir, verbose);
+    for (int i = 0; i < nplugs; i++)
+        if (plugs[i].on && !plugs[i].alive && !plugs[i].bjob && !plugs[i].want && !strcmp(plugs[i].status, "off")) plug_start(&plugs[i]);
+}
+
 static void plug_key(int ch)
 {
     size_t l = strlen(plug_url);
@@ -5348,6 +5436,7 @@ static void hotkey_fire(int k)
         settings_open = !settings_open;
         dd_open = -1;
         menu_open = confirm_quit = 0;
+        if (settings_open && set_tab == TAB_PLUG) plug_rescan();
         break;
     case K_FLIP:
         if (!live) break;
@@ -6081,6 +6170,7 @@ static void handle_click(double x, double y)
             break;
         case ACT_SETTINGS:
             settings_open = !settings_open;
+            if (settings_open && set_tab == TAB_PLUG) plug_rescan();
             dd_open = -1;
             menu_open = 0;
             confirm_quit = 0;
@@ -6129,6 +6219,7 @@ static void handle_click(double x, double y)
             set_note(cfg.mode == 1 ? "helper mode, no more moves" : cfg.mode == 2 ? "both, moves and the helper stuff" : "cheat mode, moves are back");
             break;
         case ACT_TAB:
+            if (hits[i].arg == TAB_PLUG && set_tab != TAB_PLUG) plug_rescan();
             set_tab = hits[i].arg;
             dd_open = -1;
             break;
@@ -6374,10 +6465,29 @@ static void handle_click(double x, double y)
             else plug_typing = 1, set_note("paste a github link in first");
             break;
         case ACT_PLUG_TEMPLATE:
-            plug_import("sevvy-wevvy/open-chease/tree/plugin-template");
+            plug_import("sevvy-wevvy/open-chease/tree/plugin-template/template");
             break;
         case ACT_PLUG_HELP:
-            if (open_folder("https://github.com/sevvy-wevvy/open-chease/blob/dev/PLUGINS.md")) set_note("couldnt open the browser");
+            if (open_folder("https://github.com/sevvy-wevvy/open-chease/blob/dev/docs/PLUGINS.md")) set_note("couldnt open the browser");
+            break;
+        case ACT_PLUG_MENU:
+            menu_open = 0;
+            plug_menu_click(hits[i].arg / 64, hits[i].arg % 64);
+            break;
+        case ACT_PLUG_LINK: {
+            char link[220];
+            if (plug_link(plugs[hits[i].arg].url, link, sizeof(link)) && open_folder(link)) set_note("couldnt open the browser");
+            break;
+        }
+        case ACT_PLUG_UPDATE:
+            plug_import(plugs[hits[i].arg].update);
+            break;
+        case ACT_PLUG_GET:
+            if (plug_tool_url(hits[i].arg) && open_folder(plug_tool_url(hits[i].arg))) set_note("couldnt open the browser");
+            break;
+        case ACT_PLUG_RECHECK:
+            set_note(plugs[hits[i].arg].bfail ? "building it again" : "looking again");
+            plug_recheck();
             break;
         case ACT_PLUG_DIR: {
             char dir[1100];

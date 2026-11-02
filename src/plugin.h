@@ -11,6 +11,18 @@
 #define PL_ITEMS 160
 #define PL_LINES 10
 #define PL_CHOICES 10
+#define PL_MENU 4 // menu items per plugin
+#define PL_MENU_ALL 6 // and in the whole ... menu
+#define PL_PROTO 1
+#define PL_PROTO_S "1"
+
+#ifdef _WIN32
+#define PL_OS "windows"
+#elif defined(__APPLE__)
+#define PL_OS "mac"
+#else
+#define PL_OS "linux"
+#endif
 
 enum { PS_BOOL, PS_CHOICE, PS_SLIDER, PS_BUTTON };
 
@@ -36,6 +48,13 @@ typedef struct {
 } PlugPanel;
 
 typedef struct {
+    char key[32], label[24], tip[100];
+    long seq; // first come first shown
+} PlugMenu;
+
+enum { PT_PYTHON, PT_NODE, PT_CC, PT_CXX, PT_RUST, PT_DOTNET, PT_N };
+
+typedef struct {
     char name[32], title[40], dir[1024], run[400], desc[160], ver[24];
     int on, alive, fresh;
     proc_t pid;
@@ -53,6 +72,14 @@ typedef struct {
     PlugItem item[PL_ITEMS], next[PL_ITEMS];
     int nitem, nnext;
     PlugPanel panel, npanel;
+    PlugMenu menu[PL_MENU];
+    int nmenu;
+    char author[40], url[200], lang[16], needs[120], platforms[60], build[400], update[200], internet[160];
+    int want, bfail; // want = start it once the checks or the build are done
+    intptr_t bjob;
+    long bstart;
+    char blog[3][90]; // end of build.log when it failed
+    uint64_t srchash;
 } Plugin;
 
 extern Plugin plugs[PL_MAX];
@@ -75,5 +102,21 @@ void plug_change(Plugin *p, int k, int v); // the user changed a setting
 void plug_cfg_line(const char *key, const char *val);
 void plug_cfg_save(FILE *f);
 int plug_square(const char *s); // "e4" -> 28, -1 if its not one
+void plug_launch(Plugin *p); // starts the program, plug_start does the checks first
+int plug_menu_list(int *pi, int *k, int max); // every plugin menu item in the order they came, returns how many
+void plug_menu_click(int pi, int k);
+
+// plugrun.c: languages, versions, builds
+int plug_cleared(Plugin *p);
+int plug_os_ok(const Plugin *p);
+int plug_lang(const Plugin *p); // PT_* it needs, -1 = nothing to check
+int plug_ready(Plugin *p, char *why, int n); // 1 good to go, 0 still checking, -1 cant (why says it)
+int plug_missing(const Plugin *p); // PT_* thats missing or too old, -1 if none
+const char *plug_tool_name(int t);
+const char *plug_tool_url(int t);
+void plug_recheck(void); // forget what was found and failed builds, start the ones that are on
+int plug_run_poll(long now); // 1 = a row changed
+int plug_busy(void);
+void plug_run_stop(Plugin *p);
 
 #endif
