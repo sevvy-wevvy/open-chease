@@ -55,7 +55,13 @@ typedef struct {
     void *user;
 } SearchLimits;
 
+typedef struct {
+    void *e;
+    u64 mask;
+} EngineTable; // a side search gets its own so it doesnt stomp on the main one
+
 void engine_init(void);
+int engine_table_init(EngineTable *t, int mb);
 void engine_tt_resize(int mb);
 void engine_tt_clear(void);
 
@@ -78,5 +84,6 @@ Move move_from_uci(Pos *p, const char *s); // 0 if its not legal here
 u64 perft(Pos *p, int depth);
 int evaluate(const Pos *p);
 Move engine_search(Pos *p, const SearchLimits *lim, SearchInfo *final);
+Move engine_search_in(Pos *p, const SearchLimits *lim, SearchInfo *final, EngineTable *t); // NULL = the shared table
 
 #endif

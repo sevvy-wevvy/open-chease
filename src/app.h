@@ -264,6 +264,22 @@ typedef struct {
     char name[48];
 } Opinion;
 
+typedef struct {
+    u64 key;
+    int done, n;
+    Move mv[4], reply[4]; // the bait move and how they punish it
+    int loss[4], mate[4]; // loss in centipawns against the best move, mate in moves if it gets you mated
+    int lost[4]; // piece type you end up down, -1 = just a worse spot
+} Traps;
+
+int qs_caps(Pos *p, int alpha, int beta, int d); // captures only
+int quick_search(Pos *p, int depth, int alpha, int beta); // full width, then qs_caps 4 deep, 30000 = mate
+int see_gain(Pos *p, Move m); // what a move wins on its square after all the trades, centipawns
+Move style_choose(const Pos *p, const Analysis *an, int style); // play style pick among the engine lines
+int trap_scan(Pos *p, Traps *out, int ms, atomic_int *stop); // blocking, 0 = got stopped
+void trap_ask(const Pos *p); // NULL = stop looking
+int trap_get(u64 key, Traps *t);
+
 void second_set(int k, const char *path, int elo, int ms); // k 0 = second opinion, 1 = the elo capped one helper mode uses
 void second_ask(int k, const Pos *p);
 int second_get(int k, Opinion *o);

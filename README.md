@@ -200,6 +200,7 @@ The box always has whose turn it is, your win % (and how much the last move chan
 <b>Danger alerts</b> - "your queen is in danger" when something of yours can get taken for cheap, and "they have mate in 3" when its coming. Set it to With arrow and it also draws an arrow from the piece thats attacking it<br>
 <b>Threats</b> - what they'd play if they got another move right now, like "Nc2+ would fork your king and rook". With arrow draws it on the board too<br>
 Both arrows are red and dashed by default, Threat arrow, Threat color and Threat size in Gear > Helper change that<br>
+<b>Trap warnings</b> - when their last move leaves something that looks free but taking it goes bad, like "trap! taking on d1 gets you mated in 2". It marks the square too, and knows a few famous ones by name (Legal's mate, Elephant trap, Fishing Pole...)<br>
 <b>Hint button</b> - the ? next to the gear. First click shows which piece, second where it goes, third the whole move<br>
 <b>What a ___ plays</b> - pick 1400 to 2400 and it tells you what someone that rated would probably play. Its your engine turned down, so dont take it as gospel<br>
 With a second opinion engine picked in Gear > Engine it also tells you when the two engines dont agree. Usually means its a tricky spot<br> <br>
@@ -237,9 +238,10 @@ The lists live in the <code>engines</code> folder here so new ones show up witho
 <b>Fun</b><br>
 Mode is Cheats, Helper or Both (see Helper Mode above)<br>
 The move picker can give you the best move, one thats close enough, a random top 3, a coin flip, a totally random move, the worst move or only blunders. Theres also 5 human ones from 800 to 2400. They pick like a person that rated would (recaptures first, checks, early queen moves when its low rated) and the higher ones lean on the real engine move a lot more. In my tests 800 loses about a pawn a move on average and 2400 about a fifth of one<br>
+Play style changes which move it shows when a few are about as good: Aggressive, Solid, Tricky (the one where their most natural reply is a mistake), Sacrificial (gambits and sacs that still hold up) or Positional (quiet moves, space, no trades). It never goes more than about half a pawn under the best move<br>
 A strength cap (Full down to 1400), trash talk, grades for your moves and theirs with a roast attached, and confetti when you win<br> <br>
 <b>Helper</b><br>
-Material, taken pieces, opening & phase, win graph, turn timer, game report, last move, check warning, hanging pieces, move list, danger alerts, session score, threats, the hint button and what a ___ plays. Each one is its own setting<br>
+Material, taken pieces, opening & phase, win graph, turn timer, game report, last move, check warning, hanging pieces, move list, danger alerts, session score, threats, trap warnings, the hint button and what a ___ plays. Each one is its own setting<br>
 Danger alerts and threats can be off, just text or text with an arrow, and the arrow gets its own style, color and size<br> <br>
 <b>Vision</b><br>
 "Show what it sees" on from the start, square names on every square, and Rescan board (same as the one in the ... menu)<br>

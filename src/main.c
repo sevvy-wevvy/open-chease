@@ -158,10 +158,11 @@ static struct {
     int heatmap, safety, kingdanger, ghost, ghostlook, ghostnum, ghostcolor, arrowanim, style;
     int confview, eyes, findstrict, lockboard, lowpower, dragwait, popups;
     int eyespos, eyessize;
+    int traps;
 // positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
          0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5, 4, 1, 0, 0,
-         0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1, 0, 2},
+         0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1, 0, 2, 0},
   cfg_default; // copied before load_cfg, the reset button goes back to this
 
 static const char *theme_names[NTHEMES];
@@ -192,7 +193,7 @@ static const char *kd_names[] = {"Off", "Text", "On board", "Both"};
 static const char *ghost_names[] = {"Off", "1 move", "2 moves", "3 moves", "4 moves", "5 moves", "6 moves"};
 static const char *ghostlook_names[] = {"Letters", "Dots", "Arrows"};
 static const char *anim_names[] = {"Off", "Fast", "Slow"};
-static const char *style_names[] = {"Normal", "Aggressive", "Solid"};
+static const char *style_names[] = {"Normal", "Aggressive", "Solid", "Tricky", "Sacrificial", "Positional"};
 static const char *strict_names[] = {"Loosest", "Loose", "Normal", "Picky", "Pickiest"};
 static const char *power_names[] = {"Off", "Saver", "Max"};
 static const char *hstyle_names[] = {"Outline", "Corners", "Brackets", "Dashed", "Underline"};
@@ -349,7 +350,7 @@ static Setting sets[] = {
     {"Eval bar", "evalbar", &cfg.evalbar, 3, evalbar_names, NULL, "a black and white bar next to the board like on chess sites, shows whos ahead"},
     {"Mode", "mode", &cfg.mode, 3, mode_names, "Fun", "cheats shows moves, helper only gives tips without moves, both does both"},
     {"Move picker", "picker", &cfg.chaos, 12, chaos_names, NULL, "which move it shows you. best is best, the rest are for messing around"},
-    {"Play style", "style", &cfg.style, 3, style_names, NULL, "when a few moves are about as good, aggressive picks the attacking one and solid picks the safe one"},
+    {"Play style", "style", &cfg.style, 6, style_names, NULL, "when a few moves are about as good, aggressive attacks, solid plays safe, tricky sets traps, sacrificial gives stuff up for play and positional makes quiet improving moves"},
     {"Strength", "strength", &cfg.strength, 5, strength_names, NULL, "caps how strong the engine plays, lower ones look more human"},
     {"Trash talk", "trash", &cfg.trash, 2, onoff, NULL, "adds a little roast to the move line, just for fun"},
     {"Rate my moves", "rateme", &cfg.rateme, 2, onoff, NULL, "grades every move after you play it, from ! to ??"},
@@ -397,6 +398,7 @@ static Setting sets[] = {
     {"Threat arrow", "threatarrow", &cfg.tharrow, 9, arrow_names, NULL, "how the threat and danger arrows look"},
     {"Threat color", "threatcolor", &cfg.thcolor, 12, color_names, NULL, "color of the threat and danger arrows"},
     {"Threat size", "threatsz", &cfg.ththick, 10, thick_names, NULL, "how thick the threat and danger arrows are"},
+    {"Trap warnings", "traps", &cfg.traps, 2, onoff, NULL, "warns when something of theirs looks free but taking it goes badly, like a poisoned pawn"},
     {"Hint button", "hints", &cfg.hints, 2, onoff, NULL, "adds a hint button, each click shows a bit more of the best move"},
     {"Control heatmap", "heatmap", &cfg.heatmap, 2, onoff, NULL, "tints squares by who controls them more, green is yours and red is theirs"},
     {"Piece safety", "safety", &cfg.safety, 3, safety_names, NULL, "little numbers on pieces, attackers minus defenders. red means it can get taken"},
@@ -2078,83 +2080,13 @@ static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
     if (lib_open) draw_library(c, outr, bl, hit); // last so its on top of everything
 }
 
-static int qs(Pos *p, int alpha, int beta, int d)
-{
-    int stand = evaluate(p);
-    if (d == 0 || stand >= beta) return stand;
-    if (stand > alpha) alpha = stand;
-    Move ms[256];
-    int n = pos_gen_legal(p, ms);
-    for (int i = 0; i < n && alpha < beta; i++) {
-        if (p->sq[M_TO(ms[i])] == EMPTY && M_FLAG(ms[i]) != FL_EP) continue; // captures only, so a trade isnt scored halfway
-        Undo u;
-        if (!pos_make(p, ms[i], &u)) continue;
-        int sc = -qs(p, -beta, -alpha, d - 1);
-        pos_unmake(p, &u);
-        if (sc > alpha) alpha = sc;
-    }
-    return alpha;
-}
-
-static int quick(Pos *p, int depth, int alpha, int beta) // own stack, doesnt touch the shared tables
-{
-    if (!depth) return qs(p, alpha, beta, 4); // 4 captures deep is plenty for these picks
-    Move ms[256];
-    int n = pos_gen_legal(p, ms);
-    if (!n) return pos_in_check(p, p->side) ? -30000 : 0;
-    for (int i = 0; i < n && alpha < beta; i++) {
-        Undo u;
-        if (!pos_make(p, ms[i], &u)) continue;
-        int sc = -quick(p, depth - 1, -beta, -alpha);
-        pos_unmake(p, &u);
-        if (sc > alpha) alpha = sc;
-    }
-    return alpha;
-}
-
-static int king_dist(int a, int b)
-{
-    int f = abs((a & 7) - (b & 7)), r = abs((a >> 3) - (b >> 3));
-    return f > r ? f : r;
-}
-
-// play style: among the engine lines that are about as good, take the most attacking or the safest one
-static Move style_pick(const Analysis *an)
-{
-    if (!an->best) return 0;
-    Move cand[3] = {an->best, 0, 0};
-    int nc = 1;
-    for (int k = 0; k < 2; k++)
-        if (an->alt[k] && !an->mate && !an->alt_mate[k] && an->score - an->alt_score[k] <= 35) cand[nc++] = an->alt[k];
-    int me = tracker.pos.side, best = -999, bi = 0;
-    u64 ek = tracker.pos.bb[(me ^ 1) * 6 + KING];
-    int ksq = ek ? __builtin_ctzll(ek) : 0, kd0 = king_danger(&tracker.pos, me);
-    for (int i = 0; i < nc; i++) {
-        Pos t = tracker.pos;
-        Move m = cand[i];
-        int to = M_TO(m), cap = t.sq[to] != EMPTY || M_FLAG(m) == FL_EP, pawn = t.sq[M_FROM(m)] % 6 == PAWN;
-        int closer = king_dist(M_FROM(m), ksq) - king_dist(to, ksq);
-        Undo u;
-        if (!pos_make(&t, m, &u)) continue;
-        int v;
-        if (cfg.style == 1) {
-            v = 3 * pos_in_check(&t, me ^ 1) + 2 * cap + closer + (pawn && (me == WHITE ? to >> 3 >= 4 : to >> 3 <= 3));
-        } else {
-            int safe = pos_attackers(&t, to, me) >= pos_attackers(&t, to, me ^ 1);
-            v = 3 * (M_FLAG(m) == FL_CASTLE) + (safe ? 2 : -2) + (kd0 - king_danger(&t, me)) - cap;
-        }
-        if (v > best) best = v, bi = i; // ties keep the engines order
-    }
-    return cand[bi];
-}
-
 static Move fun_pick(const Analysis *an)
 {
     static u64 ck;
     static int cdeep;
     static int cmode = -1;
     static Move cm;
-    if (!cfg.chaos && cfg.style) return style_pick(an);
+    if (!cfg.chaos && cfg.style) return style_choose(&tracker.pos, an, cfg.style);
     if (!cfg.chaos || !an->best) return an->best;
     int deep = an->depth >= 12;
     if (ck == tracker.pos.key && cmode == cfg.chaos && (cdeep || !deep)) return cm; // same spot same pick, or the arrow jumps around every redraw
@@ -2166,7 +2098,7 @@ static Move fun_pick(const Analysis *an)
     for (int i = 0; i < n; i++) {
         Undo u;
         pos_make(&p, ms[i], &u);
-        sc[i] = -quick(&p, 1, -99999, 99999); // the engine only scores its top lines, this needs every move
+        sc[i] = -quick_search(&p, 1, -99999, 99999); // the engine only scores its top lines, this needs every move
         pos_unmake(&p, &u);
         if (sc[i] > best) best = sc[i];
         if (sc[i] < worst) worst = sc[i];
@@ -2685,7 +2617,7 @@ static void find_threat(void)
     for (int i = 0; i < n; i++) {
         Undo u;
         if (!pos_make(&t, ms[i], &u)) continue;
-        int sc = -quick(&t, 1, -99999, 99999);
+        int sc = -quick_search(&t, 1, -99999, 99999);
         pos_unmake(&t, &u);
         if (sc > best) best = sc, bm = ms[i];
     }
@@ -2696,7 +2628,7 @@ static void find_threat(void)
     move_to_san(&s2, bm, san);
     threat_mv = bm;
     int vic = t.sq[M_TO(bm)];
-    if (best >= 20000) { // quick() gives 30000 for mate
+    if (best >= 20000) { // quick_search gives 30000 for mate
         snprintf(threat_txt, sizeof(threat_txt), "they threaten mate with %s", san);
         return;
     }
@@ -2715,6 +2647,61 @@ static void find_threat(void)
         snprintf(threat_txt, sizeof(threat_txt), "%s would fork your %s and %s", san, pn[seen[0]], pn[seen[1]]);
     else
         snprintf(threat_txt, sizeof(threat_txt), "watch out for %s", san);
+}
+
+static const char *trap_book[][2] = {
+    {"e2e4 e7e5 g1f3 d7d6 f1c4 c8g4 b1c3 g7g6 f3e5", "Legal's mate"},
+    {"e2e4 e7e5 g1f3 d7d6 f1c4 c8g4 b1c3 h7h6 f3e5", "Legal's mate"},
+    {"e2e4 e7e5 g1f3 b8c6 f1c4 c6d4 f3e5 d8g5", "Blackburne Shilling trap"},
+    {"d2d4 d7d5 c2c4 e7e6 b1c3 g8f6 c1g5 b8d7 c4d5 e6d5", "Elephant trap"},
+    {"e2e4 e7e5 g1f3 b8c6 f1b5 g8f6 e1g1 f6g4 h2h3 h7h5", "Fishing Pole"},
+    {"e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 d7d6 d2d4 b7b5 a4b3 c6d4 f3d4 e5d4", "Noah's Ark trap"},
+};
+#define NTRAPBOOK ((int)(sizeof(trap_book) / sizeof(trap_book[0])))
+static u64 trap_keys[NTRAPBOOK];
+static Traps traps_now;
+static int have_traps;
+
+static void init_trap_book(void)
+{
+    for (int i = 0; i < NTRAPBOOK; i++) {
+        Pos p;
+        pos_startpos(&p);
+        char buf[200], *save, *tok;
+        snprintf(buf, sizeof(buf), "%s", trap_book[i][0]);
+        for (tok = strtok_r(buf, " ", &save); tok; tok = strtok_r(NULL, " ", &save)) {
+            Move m = move_from_uci(&p, tok);
+            Undo u;
+            if (!m || !pos_make(&p, m, &u)) break;
+        }
+        trap_keys[i] = tok ? 0 : p.key;
+    }
+}
+
+static void trap_text(char *out, size_t n)
+{
+    static const char *lost[] = {"loses a pawn", "loses a piece", "loses a piece", "loses a rook", "loses the queen"};
+    out[0] = 0;
+    if (!have_traps || !traps_now.n) return;
+    Move m = traps_now.mv[0], ms[256];
+    Pos t = tracker.pos;
+    int to = M_TO(m), all = 1, nm = pos_gen_legal(&t, ms);
+    int cap = t.sq[to] != EMPTY || M_FLAG(m) == FL_EP;
+    for (int i = 0; i < nm; i++) { // say taking on d5 only when every way of taking there is bad
+        if ((int)M_TO(ms[i]) != to || (t.sq[to] == EMPTY && M_FLAG(ms[i]) != FL_EP)) continue;
+        int in = 0;
+        for (int k = 0; k < traps_now.n; k++) in |= traps_now.mv[k] == ms[i];
+        all &= in;
+    }
+    char what[48], who[24];
+    if (cap && all) snprintf(who, sizeof(who), "taking on %c%c", 'a' + (to & 7), '1' + (to >> 3));
+    else move_to_san(&t, m, who);
+    if (traps_now.mate[0]) snprintf(what, sizeof(what), "gets you mated in %d", traps_now.mate[0]);
+    else snprintf(what, sizeof(what), "%s", traps_now.lost[0] >= 0 ? lost[traps_now.lost[0]] : "loses material");
+    const char *name = NULL;
+    for (int i = 0; i < NTRAPBOOK; i++)
+        if (trap_keys[i] && trap_keys[i] == tracker.pos.key) name = trap_book[i][1];
+    snprintf(out, n, "trap! %s %s%s%s%s", who, what, name ? " (" : "", name ? name : "", name ? ")" : "");
 }
 
 static int hint_lv;
@@ -3107,12 +3094,22 @@ static void redraw(void)
                 else if (my_turn) losses++, stats_add('l');
                 else wins++, stats_add('w');
             }
-            char alert[64] = "", mvs[96] = "", tips[3][100];
+            char alert[64] = "", mvs[96] = "", tips[4][100];
             int ntips = 0;
-            uint32_t tipc[3];
+            uint32_t tipc[4];
             Opinion o0, o1;
             int have0 = second_get(0, &o0) && o0.key == tracker.pos.key && o0.best;
             int have1 = second_get(1, &o1) && o1.key == tracker.pos.key && o1.best;
+            if (i == lead) {
+                trap_ask(cfg.traps && my_turn && nlegal ? &tracker.pos : NULL);
+                have_traps = cfg.traps && my_turn && nlegal && trap_get(tracker.pos.key, &traps_now);
+            }
+            if (have_traps && traps_now.n) {
+                trap_text(tips[ntips], 100);
+                tipc[ntips++] = 0xFFFF7ACB;
+                for (int k = 0; k < traps_now.n && !hushed(); k++)
+                    edge_tint(c, sq_rect(bl, M_TO(traps_now.mv[k]), bottom), faded_line(0xD0FF3BB0));
+            }
             if (cfg.mode && nlegal) {
                 danger_text(alert, sizeof(alert), &an, have_an, my_turn);
                 if (cfg.movelist) moves_text(mvs, sizeof(mvs), 8);
@@ -4877,7 +4874,7 @@ static void import_cfg(void)
     if (have_saved_engine && k != cfg.engine && (k || !*saved_engine)) choose_engine(k);
     keep_second();
     analyzer_set_think_ms(think_secs[cfg.think] * 1000);
-    analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], cfg.chaos >= 10 && cfg.lines < 2 ? 3 : cfg.lines + 1);
+    analyzer_set_options(threads_vals[cfg.threads], hash_vals[cfg.hash], (cfg.chaos >= 10 || cfg.style) && cfg.lines < 2 ? 3 : cfg.lines + 1);
     analyzer_set_elo(strength_elo[cfg.strength]);
     dd_open = -1;
     save_cfg();
@@ -5663,6 +5660,7 @@ int main(int argc, char **argv)
     }
     engine_init();
     init_openings();
+    init_trap_book();
     quit_signals(on_signal);
 
     const char *data = getenv("OPEN_CHEASE_DATA");
