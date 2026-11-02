@@ -71,6 +71,9 @@ E=bin/open-chease-engine tests/perft.sh
 tests/fetch_pieces.sh cburnett staunty alpha maestro merida
 python3 tests/run_vision.py 9 40
 
+# tilted boards (3d games), also needs numpy
+python3 tests/run_persp.py 1 40 20
+
 # board tracking, needs pip install chess
 python3 tests/track_sim.py --games 10 --seed 21
 ```

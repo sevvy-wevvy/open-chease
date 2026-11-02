@@ -674,6 +674,58 @@ static Rect board_logical(const Board *b)
     return (Rect){o->logical.x + b->x * k, o->logical.y + b->y * k, b->s * 8 * k, b->s * 8 * k};
 }
 
+static Canvas tilt_c; // board marks for a tilted board get drawn flat in here, then warped onto the real canvas
+
+static Canvas *board_canvas(Canvas *c, Rect bl)
+{
+    if (!board.persp) return c;
+    int w = (int)ceil(bl.w * c->scale) + 2;
+    if (w < 8 || w > 8192) return c;
+    if (tilt_c.w != w) {
+        free(tilt_c.px);
+        tilt_c = (Canvas){0};
+        tilt_c.px = calloc((size_t)w * w, 4);
+        if (!tilt_c.px) return c;
+        tilt_c.w = tilt_c.h = w;
+    } else {
+        canvas_clear(&tilt_c);
+    }
+    tilt_c.ox = bl.x, tilt_c.oy = bl.y, tilt_c.scale = c->scale;
+    return &tilt_c;
+}
+
+static void board_matrix(double *m) // logical coords in the square round the board to where that spot really is on the tilted board
+{
+    Output *o = &cap->out[board.out];
+    double k = kx(board.out), s = board.s;
+    double to_units[9] = {1 / (k * s), 0, -(o->logical.x / k + board.x) / s, 0, 1 / (k * s), -(o->logical.y / k + board.y) / s, 0, 0, 1};
+    double to_logical[9] = {k, 0, o->logical.x, 0, k, o->logical.y, 0, 0, 1};
+    hm_mul(to_logical, board.hm, m);
+    hm_mul(m, to_units, m);
+}
+
+static void board_flush(Canvas *c, Canvas *bc)
+{
+    if (bc == c) return;
+    double m[9];
+    board_matrix(m);
+    canvas_warp(c, bc, m);
+}
+
+static Rect board_hit(Rect r) // squares turn into odd shapes when tilted, the middle bit of one is a safe click
+{
+    if (!board.persp) return r;
+    double m[9], x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    board_matrix(m);
+    for (int k = 0; k < 4; k++) {
+        double x, y;
+        hm_map(m, r.x + (k & 1 ? r.w : 0), r.y + (k & 2 ? r.h : 0), &x, &y);
+        x0 = fmin(x0, x), y0 = fmin(y0, y), x1 = fmax(x1, x), y1 = fmax(y1, y);
+    }
+    double w = (x1 - x0) * 0.6, h = (y1 - y0) * 0.6;
+    return (Rect){(x0 + x1 - w) / 2, (y0 + y1 - h) / 2, w, h};
+}
+
 static void add_hit_arg(Rect r, int action, int arg)
 {
     if (nhits < MAX_HITS) hits[nhits++] = (Hit){r, action, arg};
@@ -1995,6 +2047,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
 static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
 {
     double s = bl.w / 8;
+    Canvas *bc = board_canvas(c, bl);
     if ((debug_on || fix_mode) && !hushed()) {
         for (int sq = 0; sq < 64; sq++) {
             int pc = tracker.pos.sq[sq];
@@ -2003,20 +2056,22 @@ static void draw_extras(Canvas *c, Rect bl, Rect p, Rect outr, int hit)
             sq_display(sq, tracker.white_bottom, &r, &col);
             Rect lb = {bl.x + col * s + 4, bl.y + r * s + 4, 18, 19};
             int white = pc / 6 == WHITE;
-            draw_round_rect(c, lb, 4, white ? 0xF0FFFFFF : 0xF0101010);
-            draw_frame(c, lb, 1, 0xFFFF2BD6);
+            draw_round_rect(bc, lb, 4, white ? 0xF0FFFFFF : 0xF0101010);
+            draw_frame(bc, lb, 1, 0xFFFF2BD6);
             char t[2] = {piece_letters[pc % 6], 0};
-            draw_text(c, lb.x + 4, lb.y + 1, t, 0, white ? 0xFF000000 : 0xFFFFFFFF);
+            draw_text(bc, lb.x + 4, lb.y + 1, t, 0, white ? 0xFF000000 : 0xFFFFFFFF);
         }
     }
-    if (fix_mode) {
+    if (fix_mode)
         for (int sq = 0; sq < 64; sq++) {
             int r, col;
             sq_display(sq, tracker.white_bottom, &r, &col);
             Rect sr = {bl.x + col * s, bl.y + r * s, s, s};
-            if (sq == fix_sq) draw_frame(c, (Rect){sr.x + 2, sr.y + 2, s - 4, s - 4}, 4, 0xFFFF2BD6);
-            if (hit) add_hit_arg(sr, ACT_SQ, sq);
+            if (sq == fix_sq) draw_frame(bc, (Rect){sr.x + 2, sr.y + 2, s - 4, s - 4}, 4, 0xFFFF2BD6);
+            if (hit) add_hit_arg(board_hit(sr), ACT_SQ, sq);
         }
+    board_flush(c, bc);
+    if (fix_mode) {
         if (fix_sq >= 0) {
             double h = 78;
             Rect pk = {bl.x, bl.y + bl.h + 8, bl.w, h};
@@ -3054,8 +3109,10 @@ static void redraw(void)
     for (int i = 0; i < ov->ncanvas; i++) {
         Canvas *c = ov->canvas(ov, i);
         if (!c) continue;
-        if (cfg.grid || state == ASKING) draw_grid(c, bl, state == ASKING ? 1 : cfg.grid);
+        Canvas *bc = board_canvas(c, bl);
+        if (cfg.grid || state == ASKING) draw_grid(bc, bl, state == ASKING ? 1 : cfg.grid);
         if (state == ASKING) {
+            board_flush(c, bc);
             Rect p = panel_rect(&bl, 330, 96, &outr);
             draw_round_rect(c, p, 10, 0xF0181818);
             draw_text(c, p.x + 14, p.y + 10, "Chess board found!", 1, 0xFF7CFF7C);
@@ -3082,8 +3139,8 @@ static void redraw(void)
                 sync_seconds(my_turn);
                 if (cfg.mode && cfg.threats) find_threat();
             }
-            draw_helper_board(c, bl, bottom);
-            if (cfg.mode && cfg.heatmap) draw_heatmap(c, bl, bottom);
+            draw_helper_board(bc, bl, bottom);
+            if (cfg.mode && cfg.heatmap) draw_heatmap(bc, bl, bottom);
             char extra[96];
             helper_text(extra, sizeof(extra));
             if (cfg.mode && (cfg.kingdanger & 1)) {
@@ -3119,10 +3176,10 @@ static void redraw(void)
                 uint32_t thc = ((pick_color(cfg.thcolor, 0xC8FF4D4D) & 0xFFFFFF) | 0xB0000000);
                 double thk = arrow_tk(cfg.ththick) * 0.75;
                 if (cfg.danger == 2 && danger_mv && !(my_turn && cfg.threats == 2 && danger_mv == threat_mv))
-                    draw_move(c, bl, danger_mv, bottom, thc, cfg.tharrow, thk, 0, 0, NULL);
+                    draw_move(bc, bl, danger_mv, bottom, thc, cfg.tharrow, thk, 0, 0, NULL);
                 if (my_turn && cfg.threats && threat_mv) {
                     if (cfg.threats == 2)
-                        draw_move(c, bl, threat_mv, bottom, thc, cfg.tharrow, thk, 0, 0, NULL);
+                        draw_move(bc, bl, threat_mv, bottom, thc, cfg.tharrow, thk, 0, 0, NULL);
                     snprintf(tips[ntips], 100, "%s", threat_txt), tipc[ntips++] = 0xFFFF7A5A;
                 }
                 if (my_turn && cfg.hints && hint_key == tracker.pos.key && hint_lv && have_an && an.best) {
@@ -3139,7 +3196,7 @@ static void redraw(void)
                     else
                         snprintf(tips[ntips], 100, "hint: %s", hs);
                     tipc[ntips++] = TH->title;
-                    draw_move(c, bl, an.best, bottom, hc, hint_lv == 3 ? (cfg.arrow ? cfg.arrow : 1) : 0, arrow_tk(cfg.thick),
+                    draw_move(bc, bl, an.best, bottom, hc, hint_lv == 3 ? (cfg.arrow ? cfg.arrow : 1) : 0, arrow_tk(cfg.thick),
                               1, hint_lv >= 2 ? 3 : 0, NULL); // outline + corners, a ring or dot in the middle hides the piece from the vision
                 }
                 if (my_turn && cfg.level && have1) {
@@ -3167,7 +3224,7 @@ static void redraw(void)
                 else {
                     snprintf(tips[ntips], 100, "%s says %s (%s)", o0.name, ss, osc);
                     if (my_turn)
-                        draw_move(c, bl, o0.best, bottom, 0xB01FE0E0, 6, arrow_tk(cfg.thick) * 0.7, 0, 0, NULL);
+                        draw_move(bc, bl, o0.best, bottom, 0xB01FE0E0, 6, arrow_tk(cfg.thick) * 0.7, 0, 0, NULL);
                 }
                 tipc[ntips++] = TH->title_off;
             }
@@ -3209,20 +3266,20 @@ static void redraw(void)
                                                   "Human 2000", "Human 2400"};
                     static const char *pnames[] = {"pawn", "knight", "bishop", "rook", "queen", "king"};
                     if (cfg.hint == 1) {
-                        draw_move(c, bl, pick, bottom, mc, 0, 1, cfg.from ? cfg.from : 5, 0, NULL);
+                        draw_move(bc, bl, pick, bottom, mc, 0, 1, cfg.from ? cfg.from : 5, 0, NULL);
                         snprintf(line1, sizeof(line1), "Move a %s", pnames[tracker.pos.sq[M_FROM(pick)] % 6]);
                     } else if (cfg.hint == 2) {
-                        draw_move(c, bl, pick, bottom, mc, 0, 1, 0, cfg.to ? cfg.to : 4, NULL);
+                        draw_move(bc, bl, pick, bottom, mc, 0, 1, 0, cfg.to ? cfg.to : 4, NULL);
                         snprintf(line1, sizeof(line1), "Something goes to %c%c", 'a' + (M_TO(pick) & 7), '1' + (M_TO(pick) >> 3));
                     } else {
                         for (int k = cfg.chaos ? -1 : cfg.lines - 1; k >= 0; k--) {
                             if (!an.alt[k]) continue;
                             char num[12];
                             snprintf(num, sizeof(num), "%d", k + 2);
-                            draw_move(c, bl, an.alt[k], bottom, (mc & 0xFFFFFF) | ((mc >> 25) << 24), cfg.arrow ? cfg.arrow : 1, // half alpha
+                            draw_move(bc, bl, an.alt[k], bottom, (mc & 0xFFFFFF) | ((mc >> 25) << 24), cfg.arrow ? cfg.arrow : 1, // half alpha
                                       arrow_tk(cfg.thick) * 0.7, 0, 0, num);
                         }
-                        draw_move(c, bl, pick, bottom, mc, cfg.arrow, arrow_tk(cfg.thick), cfg.from, cfg.to, cfg.label ? psan : NULL);
+                        draw_move(bc, bl, pick, bottom, mc, cfg.arrow, arrow_tk(cfg.thick), cfg.from, cfg.to, cfg.label ? psan : NULL);
                         if (cfg.score && !cfg.chaos)
                             snprintf(line1, sizeof(line1), "%s: %s   (%s)", names[cfg.chaos], psan, sc);
                         else
@@ -3241,33 +3298,34 @@ static void redraw(void)
                 else
                     snprintf(line1, sizeof(line1), "Their turn.");
                 if (have_an && an.best && cfg.theirs >= 2)
-                    draw_move(c, bl, an.best, bottom, pick_color(cfg.tcolor, 0xC8FF4D4D), cfg.tarrow, arrow_tk(cfg.tthick),
+                    draw_move(bc, bl, an.best, bottom, pick_color(cfg.tcolor, 0xC8FF4D4D), cfg.tarrow, arrow_tk(cfg.tthick),
                               cfg.tfrom, cfg.tto, cfg.tlabel ? san : NULL);
             }
-            if (!nlegal && cfg.confetti && pos_in_check(&tracker.pos, tracker.pos.side) && !my_turn) draw_confetti(c, bl);
-            if (cfg.sqnames) draw_sqnames(c, bl, bottom);
+            if (!nlegal && cfg.confetti && pos_in_check(&tracker.pos, tracker.pos.side) && !my_turn) draw_confetti(bc, bl);
+            if (cfg.sqnames) draw_sqnames(bc, bl, bottom);
             if (now_ms() < badge_until && rate_move && !hushed()) {
                 int r, col;
                 double s8 = bl.w / 8;
                 sq_display(M_TO(rate_move), bottom, &r, &col);
                 double d = fmax(20, s8 * 0.32);
                 Rect bd = {bl.x + (col + 1) * s8 - d * 0.75, bl.y + r * s8 - d * 0.25, d, d};
-                draw_round_rect(c, bd, d / 2, badge_col);
+                draw_round_rect(bc, bd, d / 2, badge_col);
                 double tw = text_lw(c, badge, 0);
-                draw_text(c, bd.x + (d - tw) / 2, bd.y + (d - 16) / 2, badge, 0, 0xFFFFFFFF);
+                draw_text(bc, bd.x + (d - tw) / 2, bd.y + (d - 16) / 2, badge, 0, 0xFFFFFFFF);
             }
-            if (cfg.mode && cfg.safety) draw_safety(c, bl, bottom);
-            if (cfg.mode && (cfg.kingdanger & 2)) draw_king_meters(c, bl, bottom);
+            if (cfg.mode && cfg.safety) draw_safety(bc, bl, bottom);
+            if (cfg.mode && (cfg.kingdanger & 2)) draw_king_meters(bc, bl, bottom);
             if (cfg.ghost && cfg.mode != 1 && have_an && nlegal &&
                 !(my_turn && (cfg.hint || cfg.chaos || now_ms() - pos_since < delay_secs[cfg.delay] * 1000L))) // same rules as the main arrow
-                draw_ghosts(c, bl, bottom, &an);
-            if (cfg.confview) draw_confidence(c, bl, bottom);
+                draw_ghosts(bc, bl, bottom, &an);
+            if (cfg.confview) draw_confidence(bc, bl, bottom);
             if (cfg.popups && have_last && last_rd.has_popup) { // their popup wins, dont paint over it
                 Output *po = &cap->out[board.out];
                 double k = kx(board.out);
-                canvas_erase(c, (Rect){po->logical.x + last_rd.popup.x * k, po->logical.y + last_rd.popup.y * k, last_rd.popup.w * k,
+                canvas_erase(bc, (Rect){po->logical.x + last_rd.popup.x * k, po->logical.y + last_rd.popup.y * k, last_rd.popup.w * k,
                                        last_rd.popup.h * k});
             }
+            board_flush(c, bc);
             if (cfg.eyes && !eyes_big && now_ms() - eyes_t >= 340) draw_eyes(c, bl, outr, bottom, i == lead);
             if (cfg.evalbar && have_an && nlegal) draw_evalbar(c, bl, &an, bottom, tracker.pos.side);
             snprintf(line2, sizeof(line2), "You: %s  |  %s d%d  |  %s", wb ? "White" : "Black",
