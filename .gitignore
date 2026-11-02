@@ -1,0 +1,9 @@
+myplugin
+myplugin.exe
+*.pdb
+out/
+obj/
+bin/
+build.log
+frame.ppm
+__pycache__/

@@ -4,7 +4,7 @@
 #
 # how it works: open-chease starts this program and talks to it like a uci engine.
 # it writes lines to our stdin, we print lines to stdout, one thing per line,
-# words split by spaces. full list is in PLUGINS.md on github.
+# words split by spaces. full list is in docs/PLUGINS.md on github.
 #
 # stdlib only so it runs on linux, windows and mac with any python3.
 
@@ -40,6 +40,19 @@ SETTINGS = [
 
 opts = {}  # key -> value, filled by "set" lines
 
+
+# menu
+# items in the ... menu. "menu <key> <label> | <tip>", label 23 chars max, 4 items per plugin
+# (and 6 from all plugins together, first come first served, so dont hog them).
+# clicking one sends "click <key>", same as a settings button, so one key can be both.
+# send the same key again to change the label, "menu <key>" with nothing after removes it.
+# they go away by themselves when the plugin stops. older open-chease versions
+# dont know menu and skip the line, so its safe to send anyway
+
+def menu():
+    send("menu hi Say hi | same as the Say hi button in the settings",
+         f"menu pause {'Resume drawing' if paused else 'Pause drawing'} | stops drawing on the board till you hit it again")
+
 COLORS = ["1fe0e0", "40e070", "ff5fb0", "ffd23f"]
 
 
@@ -54,6 +67,7 @@ over = None      # "checkmate win" etc when the game ended
 swatch = None    # "#rrggbb" average color from the last screen read
 waiting = False  # asked for a frame and its not back yet
 wiped = False
+paused = False   # the Pause drawing menu item
 
 
 # talking
@@ -80,6 +94,7 @@ def on_hello(w):
     # "hello 1 template": 1 is the protocol version, then our folder name
     send(*SETTINGS)
     send(f"tab {TAB}")
+    menu()
     send(f"log running, settings are in the {TAB} tab")
 
 
@@ -95,8 +110,8 @@ def on_set(w):
 
 
 def on_click(w):
-    # "click hi", one of our buttons got pressed
-    global wiped
+    # "click hi", one of our buttons or menu items got pressed
+    global wiped, paused
     key = w[1] if len(w) > 1 else ""
     if key == "hi":
         send("note hi from the plugin template")
@@ -105,6 +120,12 @@ def on_click(w):
     elif key == "wipe":
         wiped = True
         send("clear")  # clear works right away, no show needed
+    elif key == "pause":
+        paused = not paused
+        menu()  # same key again, so the label flips
+        if paused:
+            send("clear")
+        redraw()
 
 
 def on_board(w):
@@ -271,7 +292,7 @@ def score_text(kind, score):
 
 
 def redraw():
-    if not board or wiped:
+    if not board or wiped or paused:
         return
     size = board[2]
     out = []
@@ -326,6 +347,10 @@ def redraw():
 # lines we dont know get skipped, newer versions of open-chease might send more.
 
 def main():
+    # open-chease talks utf-8. windows python picks some other encoding for pipes,
+    # and one bad byte would throw outside the try below and kill us, so replace those
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     for line in sys.stdin:
         w = line.split()
         if not w:

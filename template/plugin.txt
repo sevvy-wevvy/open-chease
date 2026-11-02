@@ -1,9 +1,44 @@
 # plugin.txt, the only file open-chease looks for in your folder
 # lines starting with # get skipped, everything else is key = value
-# only run is needed, the rest is just what shows in the Plugins tab
+# only run is needed, the rest is for the Plugins tab. keys it doesnt know get skipped,
+# so a plugin.txt made for a newer open-chease still loads on an older one
 
 # the title in the Plugins tab (39 chars max), the folder name is used if you leave it out
 name = Plugin template
+
+# shows under the title till your plugin sends a log line (159 chars max)
+description = uses every bit of the plugin system, copy it and rip out what you dont need
+
+# shows as "v1.0" next to the title (23 chars max)
+version = 1.0
+
+# who made it, shows in the Plugins tab
+author = sev
+
+# your page, shows in the Plugins tab and clicking it opens it
+url = https://github.com/sevvy-wevvy/open-chease/tree/plugin-template
+
+# what has to be installed for it to run: python, c, cpp, csharp, rust, javascript,
+# typescript or other. leave it out and its guessed from run and the files.
+# if its not installed the plugin doesnt load and the row says whats missing with a Get link
+lang = python
+
+# lowest version it needs, "python 3.8", "node 22.18" or "open-chease 1" (the protocol
+# version from hello). not met = it doesnt load and the row says why.
+# reconfigure() at the bottom of template.py is the newest thing it uses, that came in 3.7
+needs = python 3.7
+
+# which OSes it works on, linux, windows and mac split by commas. leave it out for all of them.
+# on any other OS the row is greyed out and it never starts
+# platforms = linux,windows,mac
+
+# if your plugin goes online, say why here. it still gets a warning, but with your reason
+# internet = checks github for a newer version
+
+# a github link to where this plugin lives. gives the row an Update button that grabs it
+# again from there, same as Add plugin. point it at YOUR repo, not this one, or an update
+# overwrites your changes with the template
+# update = https://github.com/you/yourplugin
 
 # the command to start it. if the first word is a file in this folder it runs that,
 # otherwise it looks on PATH, so "run = python3 template.py --fast" works too.
@@ -13,8 +48,9 @@ name = Plugin template
 # so keep it as just the file name and it works everywhere
 run = template.py
 
-# shows under the title till your plugin sends a log line (159 chars max)
-description = uses every bit of the plugin system, copy it and rip out what you dont need
-
-# shows as "v1.0" next to the title (23 chars max)
-version = 1.0
+# compiled languages also get "build = ..." (runs once in this folder, and again when the
+# source changes, output goes to build.log), and every OS can have its own build and run:
+# build.windows, build.linux, build.mac, run.windows, run.linux, run.mac.
+# python needs none of that, see the c, cpp, rust and csharp folders for how it looks
+#
+# plugins always start off, the user turns them on in the Plugins tab. theres no key for that

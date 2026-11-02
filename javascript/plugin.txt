@@ -1,0 +1,16 @@
+# plugin.txt, lines starting with # get skipped, everything else is key = value.
+# unknown keys get skipped too. full list of keys with notes is in template/plugin.txt
+
+name = JavaScript example
+description = best move arrow, a menu item and a box, in javascript
+version = 1.0
+author = sev
+url = https://github.com/sevvy-wevvy/open-chease/tree/plugin-template/javascript
+
+# needs node on PATH. Object.hasOwn in main.js is node 16.9+, 18 is the oldest one still around
+lang = javascript
+needs = node 18
+
+# nothing to build. node isnt a file in this folder so it gets looked up on PATH,
+# and it always starts inside this folder so main.js is found. same line on every OS
+run = node main.js

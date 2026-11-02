@@ -1,0 +1,20 @@
+# plugin.txt for a compiled plugin. you ship Program.cs and myplugin.csproj, open-chease builds it.
+# lines starting with # get skipped, everything else is key = value. unknown keys get skipped too
+# full list of keys with notes is in template/plugin.txt
+
+name = C# example
+description = best move arrow, a menu item and a box, in C#
+version = 1.0
+author = sev
+url = https://github.com/sevvy-wevvy/open-chease/tree/plugin-template/csharp
+
+# needs the .NET sdk (8 or newer), the runtime alone cant build
+lang = csharp
+
+# runs once inside this folder and again whenever the source changes, output goes to build.log.
+# the first build ever on a machine can take a while, dotnet sets itself up.
+# same line on every OS, dotnet does the rest
+build = dotnet build -c Release -o out
+
+# dotnet isnt a file in this folder so it gets looked up on PATH
+run = dotnet out/myplugin.dll

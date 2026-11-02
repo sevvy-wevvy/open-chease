@@ -1,0 +1,19 @@
+# plugin.txt for a compiled plugin. you ship main.rs only, open-chease builds it.
+# lines starting with # get skipped, everything else is key = value. unknown keys get skipped too
+# full list of keys with notes is in template/plugin.txt
+
+name = Rust example
+description = best move arrow, a menu item and a box, in rust
+version = 1.0
+author = sev
+url = https://github.com/sevvy-wevvy/open-chease/tree/plugin-template/rust
+
+lang = rust
+
+# plain rustc, no cargo and no crates, so theres nothing to download.
+# runs once inside this folder and again whenever main.rs changes, output goes to build.log
+build = rustc -O -o myplugin main.rs
+build.windows = rustc -O -o myplugin.exe main.rs
+
+run = myplugin
+run.windows = myplugin.exe

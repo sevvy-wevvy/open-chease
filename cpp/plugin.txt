@@ -1,0 +1,21 @@
+# plugin.txt for a compiled plugin. you ship main.cpp only, open-chease builds it.
+# lines starting with # get skipped, everything else is key = value. unknown keys get skipped too
+# full list of keys with notes is in template/plugin.txt
+
+name = C++ example
+description = best move arrow, a menu item and a box, in C++
+version = 1.0
+author = sev
+url = https://github.com/sevvy-wevvy/open-chease/tree/plugin-template/cpp
+
+lang = cpp
+
+# build runs once inside this folder, and again whenever main.cpp changes.
+# what it prints goes to build.log here, the last lines show in the Plugins tab if it fails.
+# c++ is g++ or clang++ on linux and mac. windows gets g++ from mingw (winlibs.com or msys2),
+# -static there so it doesnt need the mingw dlls next to it
+build = c++ -O2 -std=c++17 -o myplugin main.cpp
+build.windows = g++ -O2 -std=c++17 -static -o myplugin.exe main.cpp
+
+run = myplugin
+run.windows = myplugin.exe

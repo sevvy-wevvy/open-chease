@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    the smallest project file dotnet build takes. the file name (myplugin.csproj)
+    becomes the dll name, so out/myplugin.dll is what plugin.txt runs.
+    net8.0 builds on the .NET 8 sdk and anything newer, RollForward lets the dll
+    run on a newer runtime too, so people dont need the exact same version as you
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <RollForward>Major</RollForward>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>
