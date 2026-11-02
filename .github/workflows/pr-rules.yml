@@ -23,8 +23,12 @@ jobs:
           if [ "$BASE" != "dev" ]; then
             why="PRs go to the dev branch, this one is against $BASE."
           fi
-          if gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)' | grep -q '^bin/'; then
+          files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)')
+          if echo "$files" | grep -q '^bin/'; then
             why="$why It changes files in bin/, those get rebuilt before shipping so PRs cant touch them."
+          fi
+          if echo "$files" | grep -qE '^src/plug|^PLUGINS\.md$|^plugins-examples/|^tests/plug'; then
+            why="$why It changes plugin code or docs, plugins run other peoples programs so only I change that part. Open an issue instead."
           fi
           if [ -n "$why" ]; then
             gh pr close "$PR" -R "$REPO" --comment "Closed automatically. $why Check [CONTRIBUTING.md](https://github.com/$REPO/blob/dev/CONTRIBUTING.md), fix it and open a new PR against dev."

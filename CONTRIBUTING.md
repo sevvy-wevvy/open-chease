@@ -33,7 +33,8 @@ Changes to the engine lists (the <code>engines</code> folder) or where anything 
 <p align="center">
 Everything lands on <b>dev</b> first. Once its been around for a bit it moves to <b>beta</b>, then <b>main</b>. I do the moving, you only ever PR into dev.<br> <br>
 Dont touch <code>bin/</code> in your PR. Those are the prebuilt binaries people download, they get rebuilt before shipping.<br> <br>
-PRs against any branch besides dev, or that change anything in <code>bin/</code>, get closed automatically.
+Plugin stuff is off limits too: <code>src/plugin*</code>, <code>PLUGINS.md</code>, <code>plugins-examples/</code>, the plugin tests and the plugin parts of <code>main.c</code>. Plugins run other peoples programs on your computer, so only I change that code. Found a bug in it or want something new? <a href="https://github.com/sevvy-wevvy/open-chease/issues">Open an issue</a>.<br> <br>
+PRs against any branch besides dev, or that change anything in <code>bin/</code> or the plugin files, get closed automatically.
 </p>
 </details>
 
@@ -112,7 +113,7 @@ CI runs on linux, windows and both macs when you open the PR. It has to be green
 <p align="center">
 ☐ Its against dev<br>
 ☐ It does one thing<br>
-☐ No changes in <code>bin/</code><br>
+☐ No changes in <code>bin/</code> or any plugin code<br>
 ☐ I tested it and wrote how<br>
 ☐ Screenshots if you can see it<br>
 ☐ Vision and sim numbers didnt drop<br>
