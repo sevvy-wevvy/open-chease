@@ -30,7 +30,7 @@ enum {
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
     ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE, ACT_HIDE, ACT_KEYROW, ACT_SHEET, ACT_SEARCH, ACT_EXPORT,
-    ACT_IMPORT, ACT_EYES
+    ACT_IMPORT, ACT_EYES, ACT_COMPACT
 };
 
 typedef struct {
@@ -158,10 +158,11 @@ static struct {
     int heatmap, safety, kingdanger, ghost, ghostlook, ghostnum, ghostcolor, arrowanim, style;
     int confview, eyes, findstrict, lockboard, lowpower, dragwait, popups;
     int eyespos, eyessize;
+    int font, compact;
 // positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
          0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5, 4, 1, 0, 0,
-         0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1, 0, 2},
+         0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1, 0, 2, 0, 0},
   cfg_default; // copied before load_cfg, the reset button goes back to this
 
 static const char *theme_names[NTHEMES];
@@ -173,6 +174,7 @@ static const char *grid_names[] = {"Off", "Lines", "Outline", "Corners"};
 static const char *arrow_names[] = {"Off", "Straight", "Knight bends", "Curve", "Swoosh", "Dashed", "Dotted", "Glow", "Double"};
 static const char *thick_names[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
 static const char *eyespos_names[] = {"Auto", "Left", "Right", "Top", "Bottom"};
+static const char *font_names[] = {"Normal", "Pixel", "Mono", "Serif", "Lato", "Narrow"};
 static const char *mark_names[] = {"Off", "Outline", "Filled", "Corners", "Dot", "Ring", "Big dot",
                                    "Cross", "Triangles", "Brackets", "Dashed", "Double", "Glow", "Underline"};
 static const char *color_names[] = {"Theme", "Gold", "Green", "Blue", "Red", "Pink", "Purple", "White", "Orange", "Cyan", "Rainbow", "Black"}; // black goes last so old saves dont shift
@@ -347,6 +349,8 @@ static Setting sets[] = {
     {"Show score", "score", &cfg.score, 2, onoff, NULL, "shows whos winning as a number next to the move"},
     {"Score as", "scorefmt", &cfg.scorefmt, 3, scorefmt_names, NULL, "pawns is +1.5 style, centipawns is +150, win % is your chance of winning"},
     {"Eval bar", "evalbar", &cfg.evalbar, 3, evalbar_names, NULL, "a black and white bar next to the board like on chess sites, shows whos ahead"},
+    {"Font", "font", &cfg.font, 6, font_names, NULL, "the letters everything is written in, pixel is the blocky game one"},
+    {"Compact", "compact", &cfg.compact, 2, onoff, NULL, "shrinks the info box to a tiny pill with just the move, the buttons stay on it"},
     {"Mode", "mode", &cfg.mode, 3, mode_names, "Fun", "cheats shows moves, helper only gives tips without moves, both does both"},
     {"Move picker", "picker", &cfg.chaos, 12, chaos_names, NULL, "which move it shows you. best is best, the rest are for messing around"},
     {"Play style", "style", &cfg.style, 3, style_names, NULL, "when a few moves are about as good, aggressive picks the attacking one and solid picks the safe one"},
@@ -1221,7 +1225,7 @@ static int dl_percent(double mb)
 
 static int set_tab;
 static long menu_t = -99999, menu_shut = -99999, set_t = -99999, set_shut = -99999, lib_t = -99999, conf_t = -99999,
-            tab_t = -99999, dd_t = -99999, tog_t = -99999;
+            tab_t = -99999, dd_t = -99999, tog_t = -99999, compact_t = -99999;
 static int tab_dir, tab_prev, tog_i = -1;
 static double anim_force = -1;
 
@@ -1242,14 +1246,16 @@ static int animating(void)
     long n = now_ms();
     // a bit longer than each ease() so the last frame lands at 1
     return n - menu_t < 200 || n - menu_shut < 140 || n - set_t < 220 || n - set_shut < 140 || n - lib_t < 240 ||
-           n - conf_t < 200 || n - tab_t < 200 || n - dd_t < 170 || n - tog_t < 170 || n - pick_t < 240 || n - eyes_t < 340 || bar_moving ||
+           n - conf_t < 200 || n - tab_t < 200 || n - dd_t < 170 || n - tog_t < 170 || n - pick_t < 240 || n - compact_t < 270 || n - eyes_t < 340 || bar_moving ||
            arrow_busy;
 }
 
 static void track_anims(void)
 {
-    static int was_menu, was_set, was_lib, was_conf, was_tab, was_dd = -1;
+    static int was_menu, was_set, was_lib, was_conf, was_tab, was_dd = -1, was_compact = -1;
     long n = now_ms();
+    if (was_compact >= 0 && cfg.compact != was_compact) compact_t = n;
+    was_compact = cfg.compact;
     if (menu_open != was_menu) {
         if (menu_open) menu_t = n;
         else menu_shut = n;
@@ -1543,17 +1549,19 @@ static int set_matches(int i) { return has_ci(sets[i].label, set_query) || (sets
 
 static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
 {
-    const char *items[10] = {"Helper mode", debug_on ? "Hide what it sees" : "Show what it sees",
+    const char *items[11] = {"Helper mode", "Compact", debug_on ? "Hide what it sees" : "Show what it sees",
                              fix_mode ? "Done fixing" : "Fix pieces", tracker.pos.side == WHITE ? "Its black's turn" : "Its white's turn",
                              "Rescan board", "Engines", "Switch team", "Restart", "Update", "Quit"};
-    const char *hint[10] = {cfg.mode == 1 ? "on, moves are hidden" : cfg.mode == 2 ? "moves + helper stuff" : "hides the moves", "tags on every square",
+    const char *hint[11] = {cfg.mode == 1 ? "on, moves are hidden" : cfg.mode == 2 ? "moves + helper stuff" : "hides the moves",
+                            cfg.compact ? "on, just the move" : "tiny box, just the move", "tags on every square",
                             "click one, pick whats there", "", "if it got lost", "get, pick or delete them", "", "",
                             "pulls the newest version", ""};
-    if (update_new) hint[8] = "new version out";
-    int acts[10] = {ACT_MODE, ACT_DEBUG, ACT_FIX, ACT_TURN, ACT_RESCAN, ACT_LIB_OPEN, ACT_FLIP, ACT_RESTART, ACT_UPDATE, ACT_QUIT};
-    int icons[10] = {9, 0, 1, 2, 3, 4, 5, 6, 7, 8}; // 9 is the switch, flips to 10 when its on
-    int group[10] = {0, 1, 1, 1, 1, 2, 2, 3, 3, 4}; // divider line wherever this changes
-    double mw = 236, ih = 42, gap = 9, mh = 10 * ih + 4 * gap + 12; // 4 dividers
+    if (update_new) hint[9] = "new version out";
+    int acts[11] = {ACT_MODE, ACT_COMPACT, ACT_DEBUG, ACT_FIX, ACT_TURN, ACT_RESCAN, ACT_LIB_OPEN, ACT_FLIP, ACT_RESTART, ACT_UPDATE, ACT_QUIT};
+    int icons[11] = {9, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8}; // 9 is the switch, flips to 10 when its on
+    int group[11] = {0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 4}; // divider line wherever this changes
+    double mw = 236, ih = 42, gap = 9, mh = 11 * ih + 4 * gap + 12; // 4 dividers
+    for (int k = 0; k < 11; k++) mw = fmax(mw, text_width(items[k], 0) + 74); // wide fonts
     Rect m = {p.x + p.w - mw, p.y + p.h + 6, mw, mh};
     if (m.y + mh > outr.y + outr.h) m.y = p.y - mh - 6; // box at the bottom, open upwards
     if (m.y < outr.y) m.y = outr.y + 4;
@@ -1566,13 +1574,13 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     panel_bg(c, m, 14, TH->menu);
     if (hit) add_hit(m, ACT_BLOCK); // goes first, clicks check hits newest first so the rows win
     double y = m.y + 6;
-    for (int k = 0; k < 10; k++) {
+    for (int k = 0; k < 11; k++) {
         if (k && group[k] != group[k - 1]) {
             draw_line(c, m.x + 14, y + gap / 2 - 1, m.x + m.w - 14, y + gap / 2 - 1, 1, TH->btn);
             y += gap;
         }
         Rect it = {m.x + 6, y, m.w - 12, ih - 3};
-        int on = (k == 0 && cfg.mode) || (k == 1 && debug_on) || (k == 2 && fix_mode), quit = acts[k] == ACT_QUIT;
+        int on = (k == 0 && cfg.mode) || (k == 1 && cfg.compact) || (k == 2 && debug_on) || (k == 3 && fix_mode), quit = acts[k] == ACT_QUIT;
         uint32_t fg = quit ? 0xFFFF5A5A : TH->item_fg;
         draw_round_rect(c, it, 10, on ? TH->btn : TH->item);
         if (on) draw_round_rect(c, (Rect){it.x + 2, it.y + 8, 3, it.h - 16}, 1.5, TH->title);
@@ -1940,14 +1948,14 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         draw_text(c, m.x + pad + 2, m.y + top + per * rh + 2, more, 0, TH->sub);
     }
     if (vt == 0) backup_row(c, (Rect){m.x + pad, m.y + top + per * rh + 4, m.w - 2 * pad, rh - 3}, hit);
-    Rect rs = {m.x + pad, m.y + top + body - 30, 150, 26};
+    Rect rs = {m.x + pad, m.y + top + body - 30, fmax(150, text_lw(c, "Reset this tab", 0) + 20), 26}; // wider fonts get a wider button
     if (vt >= 0 && vt != TAB_THEMES && vt != TAB_STATS) {
         draw_button(c, rs, "Reset this tab", TH->btn, TH->btn_fg);
         if (hit) add_hit(rs, ACT_RESET);
         tip_spot(rs, "puts every setting in this tab back to how it started");
     }
     if (vt == 0) {
-        Rect tt = {rs.x + rs.w + 8, rs.y, 140, 26};
+        Rect tt = {rs.x + rs.w + 8, rs.y, fmax(140, text_lw(c, "More themes >", 0) + 20), 26};
         draw_button(c, tt, "More themes >", TH->btn, TH->btn_fg);
         if (hit) add_hit_arg(tt, ACT_TAB, TAB_THEMES);
     }
@@ -3020,8 +3028,49 @@ static void draw_eyes(Canvas *c, Rect bl, Rect outr, int bottom, int hit)
     else add_hit(p, ACT_EYES);
 }
 
+static Canvas *box_start(Canvas *c, Rect p, int own)
+{
+    Canvas *l = own ? layer(2, c, p) : NULL;
+    if (!l) panel_bg(c, p, 12, faded(TH->panel));
+    return l ? l : c;
+}
+
+static void clip_layer(Canvas *l, Rect r)
+{
+    int x0 = (int)((r.x - l->ox) * l->scale), y0 = (int)((r.y - l->oy) * l->scale);
+    int x1 = (int)ceil((r.x + r.w - l->ox) * l->scale), y1 = (int)ceil((r.y + r.h - l->oy) * l->scale);
+    for (int y = 0; y < l->h; y++)
+        for (int x = 0; x < l->w; x++)
+            if (x < x0 || x >= x1 || y < y0 || y >= y1) l->px[(size_t)y * l->w + x] = 0;
+}
+
+static void box_buttons(Canvas *c, Rect er, Rect hb, Rect gb, Rect mb, Rect bx, int show_hint, int hit)
+{
+    draw_eye(c, er, 1, TH->title_off);
+    if (hit) add_hit(er, ACT_HIDE), eye_r = er;
+    if (show_hint) {
+        int lv = hint_key == tracker.pos.key ? hint_lv : 0, big = hb.h >= 26;
+        draw_round_rect(c, hb, 5, lv ? (TH->btn | 0xFF000000) + 0x00202020 : TH->btn);
+        char q[4] = "?";
+        if (lv) q[0] = (char)('0' + lv);
+        double tw = text_lw(c, q, big);
+        draw_text(c, hb.x + (hb.w - tw) / 2, hb.y + (hb.h - (big ? 22 : 15)) / 2, q, big, TH->btn_fg);
+        if (hit) add_hit(hb, ACT_HINT);
+    }
+    draw_gear(c, gb, settings_open);
+    if (update_new) draw_round_rect(c, (Rect){gb.x + gb.w - 7, gb.y - 2, 9, 9}, 4.5, 0xFFFF4D4D);
+    draw_dots(c, mb, menu_open);
+    draw_close(c, bx);
+    if (hit) {
+        add_hit(gb, ACT_SETTINGS);
+        add_hit(mb, ACT_MENU);
+        add_hit(bx, ACT_STOP);
+    }
+}
+
 static void redraw(void)
 {
+    set_font(cfg.font);
     track_anims();
     bar_moving = arrow_busy = 0;
     tip_wait = tip_shown = 0;
@@ -3092,7 +3141,7 @@ static void redraw(void)
                          king_danger(&tracker.pos, tracker.user_color ^ 1));
             }
             int checked = cfg.checkwarn && pos_in_check(&tracker.pos, tracker.pos.side);
-            char line1[256], line2[320], san[16] = "", sc[32] = "";
+            char line1[256], line2[320], san[16] = "", sc[32] = "", cl[64] = ""; // cl is the short one for compact
             if (have_an && an.best) {
                 Pos tmp = tracker.pos;
                 move_to_san(&tmp, an.best, san);
@@ -3223,6 +3272,7 @@ static void redraw(void)
                                       arrow_tk(cfg.thick) * 0.7, 0, 0, num);
                         }
                         draw_move(c, bl, pick, bottom, mc, cfg.arrow, arrow_tk(cfg.thick), cfg.from, cfg.to, cfg.label ? psan : NULL);
+                        snprintf(cl, sizeof(cl), "%s%s%s", psan, cfg.score && !cfg.chaos ? " " : "", cfg.score && !cfg.chaos ? sc : "");
                         if (cfg.score && !cfg.chaos)
                             snprintf(line1, sizeof(line1), "%s: %s   (%s)", names[cfg.chaos], psan, sc);
                         else
@@ -3237,12 +3287,16 @@ static void redraw(void)
                 }
             } else {
                 if (have_an && an.best && (cfg.theirs == 1 || cfg.theirs == 3))
-                    snprintf(line1, sizeof(line1), "Their turn. They'll likely play %s", san);
+                    snprintf(line1, sizeof(line1), "Their turn. They'll likely play %s", san), snprintf(cl, sizeof(cl), "them: %s", san);
                 else
                     snprintf(line1, sizeof(line1), "Their turn.");
                 if (have_an && an.best && cfg.theirs >= 2)
                     draw_move(c, bl, an.best, bottom, pick_color(cfg.tcolor, 0xC8FF4D4D), cfg.tarrow, arrow_tk(cfg.tthick),
                               cfg.tfrom, cfg.tto, cfg.tlabel ? san : NULL);
+            }
+            if (!*cl) {
+                const char *cut = strstr(line1, "   ");
+                snprintf(cl, sizeof(cl), "%.*s", (int)(cut ? cut - line1 : 63), line1);
             }
             if (!nlegal && cfg.confetti && pos_in_check(&tracker.pos, tracker.pos.side) && !my_turn) draw_confetti(c, bl);
             if (cfg.sqnames) draw_sqnames(c, bl, bottom);
@@ -3289,13 +3343,18 @@ static void redraw(void)
             }
             int t1big = cfg.size > 0, t1zoom = cfg.size == 2 ? 2 : 1, t2big = cfg.size == 2;
             double bs = cfg.size == 0 ? 22 : (cfg.size == 1 ? 26 : 34);
-            Rect p, gb, mb, bx, hb = {0, 0, 0, 0}, er;
+            Rect p = {0}, gb, mb, bx, hb = {0, 0, 0, 0}, er;
+            double ck = ease(compact_t, 260);
+            if (!cfg.compact) ck = 1 - ck; // 1 is all the way small
+            Canvas *bc = c; // the full box, gets its own layer while it shrinks or grows
+            int fhit = i == lead && !cfg.compact;
             double es = cfg.size == 0 ? 16 : cfg.size == 1 ? 20 : 26, ew = es + 2; // the hide eye at the top left
             int show_hint = cfg.mode == 1 && cfg.hints && my_turn && nlegal, nbt = 3 + show_hint;
             double vw = cfg.size == 0 ? 190 : (cfg.size == 1 ? 220 : 270);
             int side = (cfg.spot == 2 && bl.x - vw - 8 >= outr.x + 4) ||
                        (cfg.spot == 3 && bl.x + bl.w + 8 + vw <= outr.x + outr.w - 4);
-            if (side) {
+            if (ck >= 1) {
+            } else if (side) {
                 const char *ls[32];
                 int big[32], zoom[32], nl = 0;
                 uint32_t lc[32];
@@ -3355,11 +3414,11 @@ static void redraw(void)
                 double h = bs + 16;
                 for (int k = 0; k < nl; k++) h += (big[k] ? 24 : 19) * zoom[k] + 2;
                 p = (Rect){cfg.spot == 2 ? bl.x - vw - 8 : bl.x + bl.w + 8, bl.y, vw, h};
-                panel_bg(c, p, 12, faded(TH->panel));
+                bc = box_start(c, p, ck > 0);
                 double y = p.y + bs + 14;
                 for (int k = 0; k < nl; k++) {
                     set_text_zoom(zoom[k]);
-                    draw_text(c, p.x + 12, y, big[k] || zoom[k] > 1 ? ls[k] : fit_text(c, ls[k], p.w - 24), big[k], lc[k]);
+                    draw_text(bc, p.x + 12, y, big[k] || zoom[k] > 1 ? ls[k] : fit_text(c, ls[k], p.w - 24), big[k], lc[k]);
                     set_text_zoom(1);
                     y += (big[k] ? 24 : 19) * zoom[k] + 2;
                 }
@@ -3385,11 +3444,11 @@ static void redraw(void)
                 double w = fmax(w1 + ew, text_width(line2, t2big)) + 28 + nbt * (bs + 4);
                 if (w < 300) w = 300;
                 p = panel_rect(&bl, w, ph, &outr);
-                panel_bg(c, p, 12, faded(TH->panel));
+                bc = box_start(c, p, ck > 0);
                 set_text_zoom(t1zoom);
-                draw_text(c, p.x + 14 + ew, p.y + 6, line1, t1big, my_turn ? TH->title : TH->title_off);
+                draw_text(bc, p.x + 14 + ew, p.y + 6, line1, t1big, my_turn ? TH->title : TH->title_off);
                 set_text_zoom(1);
-                draw_text(c, p.x + 14, p.y + y2, line2, t2big, TH->sub);
+                draw_text(bc, p.x + 14, p.y + y2, line2, t2big, TH->sub);
                 double by = p.y + (ph - bs) / 2;
                 hb = (Rect){p.x + p.w - 4 * (bs + 4) - 4, by, bs, bs};
                 gb = (Rect){p.x + p.w - 3 * (bs + 4) - 4, by, bs, bs};
@@ -3397,27 +3456,34 @@ static void redraw(void)
                 bx = (Rect){p.x + p.w - (bs + 4) - 4, by, bs, bs};
                 er = (Rect){p.x + 10, p.y + 6 + ((t1big ? 22 : 15) * t1zoom - es) / 2, es, es};
             }
-            draw_wgraph(c, p, bl, outr);
-            draw_eye(c, er, 1, TH->title_off);
-            if (i == lead) add_hit(er, ACT_HIDE), eye_r = er;
-            if (show_hint) {
-                int lv = hint_key == tracker.pos.key ? hint_lv : 0;
-                draw_round_rect(c, hb, 5, lv ? (TH->btn | 0xFF000000) + 0x00202020 : TH->btn);
-                char q[4] = "?";
-                if (lv) q[0] = (char)('0' + lv);
-                double tw = text_lw(c, q, 1);
-                draw_text(c, hb.x + (hb.w - tw) / 2, hb.y + (hb.h - 22) / 2, q, 1, TH->btn_fg);
-                if (i == lead) add_hit(hb, ACT_HINT);
+            if (ck < 1) box_buttons(bc, er, hb, gb, mb, bx, show_hint, fhit);
+            if (ck > 0) {
+                double ph = cfg.size == 0 ? 26 : cfg.size == 1 ? 30 : 38, qs = ph - 8, qe = qs - 2;
+                cut_to(cl, outr.w * 0.6, t1big);
+                double tw = text_width(cl, t1big), pw = 10 + qe + 8 + tw + 10 + nbt * (qs + 3) + 3;
+                Rect q = panel_rect(&bl, pw, ph, &outr), mr = q;
+                if (bc != c) { // shrink the big box into the pill, its insides fade out first and the pill ones fade in after
+                    mr = (Rect){p.x + (q.x - p.x) * ck, p.y + (q.y - p.y) * ck, p.w + (q.w - p.w) * ck, p.h + (q.h - p.h) * ck};
+                    panel_bg(c, mr, 12 + (ph / 2 - 12) * ck, faded(TH->panel));
+                    double dx = mr.x + mr.w / 2 - p.x - p.w / 2, dy = mr.y + mr.h / 2 - p.y - p.h / 2; // insides stay centered on it
+                    clip_layer(bc, (Rect){mr.x - dx, mr.y - dy, mr.w, mr.h});
+                    canvas_blit(c, bc, fmax(0, 1 - 2.5 * ck), dx, dy, -1);
+                }
+                Canvas *qc = ck < 1 ? layer(1, c, q) : NULL;
+                if (!qc) qc = c;
+                if (ck >= 1) panel_bg(c, q, ph / 2, faded(TH->panel));
+                double by = q.y + (ph - qs) / 2, r = q.x + q.w - 6;
+                bx = (Rect){r - qs, by, qs, qs};
+                mb = (Rect){bx.x - qs - 3, by, qs, qs};
+                gb = (Rect){mb.x - qs - 3, by, qs, qs};
+                hb = (Rect){gb.x - qs - 3, by, qs, qs};
+                er = (Rect){q.x + 10, q.y + (ph - qe) / 2, qe, qe};
+                draw_text(qc, er.x + qe + 8, q.y + ph / 2 - (t1big ? 12 : 9), cl, t1big, my_turn ? TH->title : TH->title_off);
+                box_buttons(qc, er, hb, gb, mb, bx, show_hint, i == lead && cfg.compact);
+                if (qc != c) canvas_blit(c, qc, fmax(0, (ck - 0.3) / 0.7), 0, 0, -1);
+                p = ck < 1 ? mr : q;
             }
-            draw_gear(c, gb, settings_open);
-            if (update_new) draw_round_rect(c, (Rect){gb.x + gb.w - 7, gb.y - 2, 9, 9}, 4.5, 0xFFFF4D4D);
-            draw_dots(c, mb, menu_open);
-            draw_close(c, bx);
-            if (i == lead) {
-                add_hit(gb, ACT_SETTINGS);
-                add_hit(mb, ACT_MENU);
-                add_hit(bx, ACT_STOP);
-            }
+            if (ck < 0.5) draw_wgraph(c, p, bl, outr); // the pill is just the move
             draw_extras(c, bl, p, outr, i == lead);
         }
         if (state == TRACKING && cfg.eyes && (eyes_big || now_ms() - eyes_t < 340)) // big or growing, goes over everything
@@ -4889,7 +4955,8 @@ static void backup_row(Canvas *c, Rect row, int hit)
 {
     draw_round_rect(c, row, 7, TH->item);
     draw_text(c, row.x + 10, row.y + 4, "Backup", 0, TH->item_fg);
-    Rect im = {row.x + row.w - 76, row.y + 3, 70, row.h - 6}, ex = {im.x - 76, im.y, 70, im.h};
+    double bw = fmax(70, text_lw(c, "Export", 0) + 16);
+    Rect im = {row.x + row.w - bw - 6, row.y + 3, bw, row.h - 6}, ex = {im.x - bw - 6, im.y, bw, im.h};
     draw_button(c, ex, "Export", TH->btn, TH->btn_fg);
     draw_button(c, im, "Import", TH->btn, TH->btn_fg);
     if (hit) add_hit(ex, ACT_EXPORT), add_hit(im, ACT_IMPORT);
@@ -5586,6 +5653,11 @@ static void handle_click(double x, double y)
             break;
         case ACT_QUIT_NO:
             confirm_quit = 0;
+            break;
+        case ACT_COMPACT:
+            cfg.compact = !cfg.compact;
+            save_cfg();
+            menu_open = 0;
             break;
         case ACT_EYES:
             eyes_big = !eyes_big;
