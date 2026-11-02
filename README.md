@@ -15,7 +15,7 @@
 
 <p align="center">
   open-chease watches your screen for a chess board, outlines every square in green and draws an arrow on the best move for your team.<br>
-  It updates twice a second and works on Linux (Hyprland, GNOME, XFCE, sway and most other X11 desktops), Windows 10/11 and macOS 14+.<br>
+  It updates twice a second and works on Linux (Hyprland, GNOME, KDE Plasma, Cinnamon, XFCE, sway and most other X11 desktops), Windows 10/11 and macOS 14+.<br>
   I mainly made this to mess with my friends, so please dont use it in rated games. chess.com and lichess will ban you for it.<br> <br>
   Do you like this project? If so, please let me know!
   <a href="https://sevvy-wevvy.com/discord">Discord</a>
@@ -268,7 +268,7 @@ These work with run.sh and get.sh, and with run.ps1 / the scriptblock way on win
 <b>--team white</b> or <b>--team black</b> - Skips the question and always plays that side<br>
 <b>--builtin</b> - Uses my engine even if Stockfish is there<br>
 <b>--engine PATH</b> - Use any other UCI engine<br>
-<b>--backend wayland / gnome / x11</b> - Force how it grabs the screen if it picks wrong (linux only, windows and mac only have one way)<br>
+<b>--backend wayland / portal / gnome / x11</b> - Force how it grabs the screen if it picks wrong (linux only, windows and mac only have one way)<br>
 <b>-v</b> or <b>-vv</b> - Prints what its seeing
 </p>
 </details>
@@ -280,7 +280,7 @@ These work with run.sh and get.sh, and with run.ps1 / the scriptblock way on win
 Start it before the game starts if you can. It learns your piece set from the starting position and in my tests it got 99.9% of moves right that way. It remembers the set for each board look, so once its seen a game start on a site it uses the right pieces there even when you jump in mid game later. Jumping in mid game works too but it has to guess the pieces from shapes it already knows, so with a weird piece set its more like 80%. If it gets something wrong use Fix pieces.<br> <br>
 Flat board themes work best (lichess brown/blue/green, chess.com green, most others). Wood and marble boards work too but worse, it finds almost all of them and reads every piece right on about 7 out of 10. Recolored piece sets (pink, gold) are hit or miss, mostly when the pieces are close to the square color.<br> <br>
 If part of the board is covered or scrolled off screen it keeps following the moves it can see, but it wont re-read the whole board until you can see all of it again. Same with the settings or ... menu, if they sit on the board it pauses and catches up when you close them.<br> <br>
-GNOME shows the screen sharing icon while its running, thats normal. On XFCE the compositor has to be on (its on by default, it'll tell you if it isnt).
+GNOME shows the screen sharing icon while its running, thats normal. On KDE Plasma (wayland) it asks which screens to share the first time, pick all of them and it remembers, so it wont ask again until you take the permission away. On XFCE the compositor has to be on (its on by default, it'll tell you if it isnt). On Cinnamon if the overlay vanishes over a fullscreen browser turn off "Disable compositing for full-screen windows" in Effects.
 </p>
 </details>
 
@@ -305,8 +305,8 @@ Still broken? Open an <a href="https://github.com/sevvy-wevvy/open-chease/issues
 <summary align="center"><b>🧠 How It Works 🧠</b></summary>
 
 <p align="center">
-<b>Grabbing the screen</b> - wlr-screencopy on Hyprland/sway, Mutters ScreenCast on GNOME, XGetImage on X11 stuff like XFCE, plain GDI BitBlt on Windows and ScreenCaptureKit on macOS<br>
-<b>The overlay</b> - a click through layer-shell surface on Hyprland and sway, and a click through override-redirect window on GNOME and X11 since those dont have layer-shell. It only sends the parts of the screen that changed. On Windows its a layered window per monitor and on mac a borderless NSWindow, both of those let clicks through except when the mouse is over one of the buttons<br>
+<b>Grabbing the screen</b> - wlr-screencopy on Hyprland/sway, Mutters ScreenCast on GNOME, the xdg-desktop-portal ScreenCast on KDE, the Cinnamon wayland session and any other wayland desktop without screencopy (it saves the portals restore token in the data folder so it only asks once), XGetImage on X11 stuff like XFCE and Cinnamon, plain GDI BitBlt on Windows and ScreenCaptureKit on macOS<br>
+<b>The overlay</b> - a click through layer-shell surface on Hyprland, sway and KDE, and a click through override-redirect window on GNOME, Cinnamon and X11 since those dont have layer-shell. It only sends the parts of the screen that changed. On Windows its a layered window per monitor and on mac a borderless NSWindow, both of those let clicks through except when the mouse is over one of the buttons<br>
 <b>Finding boards</b> - looks for rows of alternating square colors, tries every 8x8 grid that fits, then snaps it to the real square edges. If that finds nothing it tries again on a blurred copy looking for square edges instead of exact colors (thats how wood and marble boards get found). If the screen didnt change since the last look it skips it, and after 30 seconds with no board it only looks once a second<br>
 <b>Following the game</b> - checks which squares have a white piece, a black piece or nothing, and matches that against every legal move (and pairs of moves) to figure out what was played. Promoted pieces get compared to the pieces already on the board<br>
 <b>The engine</b> - its my own, in src/engine.c, does about 2 million positions a second. bin/open-chease-engine is the same thing as a normal UCI engine if you want to use it somewhere else. If Stockfish is around it uses that instead
