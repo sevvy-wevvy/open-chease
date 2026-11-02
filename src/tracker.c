@@ -111,12 +111,55 @@ static float similarity(const float *a, const float *b)
     return mx > 0 ? mn / mx : 0;
 }
 
+// middle of the box round a shapes cells, doubled so halves stay whole numbers
+static void middle(const float *m, float th, int *cx, int *cy)
+{
+    int x0 = FEAT_N, x1 = -1, y0 = FEAT_N, y1 = -1;
+    for (int i = 0; i < FEAT_N * FEAT_N; i++)
+        if (m[i] >= th && m[i] != 0.5f) {
+            int x = i % FEAT_N, y = i / FEAT_N;
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+        }
+    if (x1 < 0) x0 = y0 = 0, x1 = y1 = FEAT_N - 1;
+    *cx = x0 + x1, *cy = y0 + y1;
+}
+
+static int clamp3(int v) { return v > 3 ? 3 : v < -3 ? -3 : v; }
+
+static int wobbly;
+
+// bobbing or wobbling sprites: slide the shape so its middle sits on the templates middle, keep whichever fits better
+static float shape_match(const float *a, const float *b)
+{
+    float plain = similarity(a, b), mn = 0, mx = 0;
+    if (!wobbly) return plain;
+    int ax, ay, bx, by;
+    middle(a, 1, &ax, &ay);
+    middle(b, 0.5f, &bx, &by);
+    int dx = clamp3((bx - ax + (bx > ax ? 1 : -1)) / 2), dy = clamp3((by - ay + (by > ay ? 1 : -1)) / 2);
+    if (!dx && !dy) return plain;
+    for (int y = 0; y < FEAT_N; y++)
+        for (int x = 0; x < FEAT_N; x++) {
+            int ox = x - dx, oy = y - dy;
+            float tv = b[y * FEAT_N + x];
+            if (tv < 0 || ox < 0 || oy < 0 || ox >= FEAT_N || oy >= FEAT_N || a[oy * FEAT_N + ox] == 0.5f) continue;
+            float ov = a[oy * FEAT_N + ox];
+            mn += ov < tv ? ov : tv;
+            mx += ov > tv ? ov : tv;
+        }
+    float moved = mx > 0 ? mn / mx : 0;
+    return moved > plain ? moved : plain;
+}
+
 static void type_scores(const Templates *t, const BoardRead *r, int sq, float *out)
 {
     int c = r->obs[sq] == OBS_WHITE ? WHITE : BLACK;
     for (int ty = 0; ty < 6; ty++) {
-        float a = similarity(r->mask[sq], t->t[c][ty]);
-        float b = similarity(r->mask[sq], t->t[c ^ 1][ty]);
+        float a = shape_match(r->mask[sq], t->t[c][ty]);
+        float b = shape_match(r->mask[sq], t->t[c ^ 1][ty]);
         out[ty] = a > b * 0.97f ? a : b * 0.97f; // other colors shape still counts, a bit less
     }
 }
@@ -162,6 +205,37 @@ static void expected_obs(const Pos *p, uint8_t *out)
     }
 }
 
+void tracker_rebase(Tracker *t)
+{
+    pos_to_fen(&t->pos, t->line.root);
+    t->line.n = 0;
+}
+
+static void line_add(Tracker *t, Move mv)
+{
+    if (t->pos.half == 0 || t->line.n == 160) tracker_rebase(t); // nothing before a capture or pawn move can repeat
+    else t->line.mv[t->line.n++] = mv;
+}
+
+void tracker_line(const Tracker *t, char *out, size_t n)
+{
+    Pos p;
+    size_t l = (size_t)snprintf(out, n, "fen %s", t->line.root);
+    int ok = pos_from_fen(&p, t->line.root);
+    for (int i = 0; ok && i < t->line.n && l + 8 < n; i++) {
+        char u[8];
+        move_to_uci(t->line.mv[i], u);
+        Move m = move_from_uci(&p, u);
+        Undo un;
+        ok = m && pos_make(&p, m, &un);
+        l += (size_t)snprintf(out + l, n - l, "%s%s", i ? " " : " moves ", u);
+    }
+    if (ok && p.side == t->pos.side && !memcmp(p.sq, t->pos.sq, 64)) return;
+    char fen[128]; // the line went off somewhere, a promo fix or a hand edit, so just the position
+    pos_to_fen(&t->pos, fen);
+    snprintf(out, n, "fen %s", fen);
+}
+
 void tracker_start(Tracker *t, int user_color)
 {
     memset(t, 0, sizeof(*t));
@@ -169,6 +243,7 @@ void tracker_start(Tracker *t, int user_color)
     t->white_bottom = user_color == WHITE;
     for (int k = 0; k < 4; k++) t->promo_ticks[k] = 10; // 10 = slot free
     pos_startpos(&t->pos);
+    tracker_rebase(t);
     t->sure = ~0ULL;
     t->lock_side = -1;
     snprintf(t->status, sizeof(t->status), "tracking");
@@ -351,16 +426,29 @@ static void push_prev(Tracker *t)
 {
     memmove(&t->prev[1], &t->prev[0], sizeof(Pos) * 2);
     memmove(&t->prev_sure[1], &t->prev_sure[0], sizeof(u64) * 2);
+    memmove(&t->prev_line[1], &t->prev_line[0], sizeof(GameLine) * 2);
     t->prev[0] = t->pos;
     t->prev_sure[0] = t->sure;
+    t->prev_line[0] = t->line;
     if (t->nprev < 3) t->nprev++;
 }
 
-static void play_line(Tracker *t, Pos from, u64 sure, const Match *m, const BoardRead *r, Templates *tpl)
+static void move_votes(Tracker *t, int f, int to, int promo) // promoted ones go to verify_promo (-1)
+{
+    memcpy(t->vote[to], t->vote[f], sizeof(t->vote[to]));
+    memcpy(t->vsum[to], t->vsum[f], sizeof(t->vsum[to]));
+    t->nvote[to] = promo ? -1 : t->nvote[f];
+    t->nvote[f] = 0;
+}
+
+static void play_line(Tracker *t, Pos from, u64 sure, const Match *m, const BoardRead *r, Templates *tpl, const GameLine *gl)
 {
     push_prev(t);
+    if (memcmp(from.sq, t->pos.sq, sizeof(from.sq))) memset(t->nvote, 0, sizeof(t->nvote));
     t->pos = from;
     t->sure = sure;
+    if (gl) t->line = *gl;
+    else tracker_rebase(t); // from isnt where we were, the moves so far dont lead there
     for (int i = 0; i < m->n; i++) {
         Move mv = m->seq[i];
         for (int k = 0; k < 4; k++)
@@ -384,6 +472,9 @@ static void play_line(Tracker *t, Pos from, u64 sure, const Match *m, const Boar
             }
         }
         int f = M_FROM(mv), to = M_TO(mv);
+        move_votes(t, f, to, M_PROMO(mv));
+        if (M_FLAG(mv) == FL_CASTLE) move_votes(t, to > f ? f + 3 : f - 4, to > f ? f + 1 : f - 1, 0);
+        if (M_FLAG(mv) == FL_EP) t->nvote[to ^ 8] = 0;
         u64 was = t->sure >> f & 1;
         t->sure &= ~(1ULL << f | 1ULL << to);
         if (was && !M_PROMO(mv)) t->sure |= 1ULL << to;
@@ -393,6 +484,7 @@ static void play_line(Tracker *t, Pos from, u64 sure, const Match *m, const Boar
         }
         Undo u;
         pos_make(&t->pos, mv, &u);
+        line_add(t, mv);
         t->last_move = mv;
     }
     drop_moved_locks(t);
@@ -456,7 +548,7 @@ static int heal_types(Tracker *t, const BoardRead *r, Templates *tpl)
     pos_put(&fixed, from, us * 6 + best);
     Match m;
     if (!find_line(&fixed, r, 1, &m)) return 0;
-    play_line(t, fixed, t->sure, &m, r, tpl);
+    play_line(t, fixed, t->sure, &m, r, tpl, NULL);
     return 1;
 }
 
@@ -476,7 +568,8 @@ static int apply_matching(Tracker *t, const BoardRead *r, Templates *tpl)
     int extra = nw > __builtin_popcountll(t->pos.occ[WHITE]) || nb > __builtin_popcountll(t->pos.occ[BLACK]);
     int depth = changed >= 3 && !extra ? 3 : 2; // missed a frame or two, look deeper
     if (find_line(&t->pos, r, depth, &m)) {
-        play_line(t, t->pos, t->sure, &m, r, tpl);
+        GameLine gl = t->line;
+        play_line(t, t->pos, t->sure, &m, r, tpl, &gl);
         return 1;
     }
     if (t->side_uncertain) { // after a re-read the turn is a guess
@@ -484,7 +577,7 @@ static int apply_matching(Tracker *t, const BoardRead *r, Templates *tpl)
         flipped.side ^= 1;
         pos_finish_setup(&flipped);
         if (!pos_in_check(&flipped, flipped.side ^ 1) && find_line(&flipped, r, 2, &m)) {
-            play_line(t, flipped, t->sure, &m, r, tpl);
+            play_line(t, flipped, t->sure, &m, r, tpl, NULL);
             return 1;
         }
     }
@@ -497,9 +590,12 @@ static int apply_matching(Tracker *t, const BoardRead *r, Templates *tpl)
         if (od2 == 0 && cd2 <= 1) {
             t->pos = t->prev[k];
             t->sure = t->prev_sure[k];
+            memset(t->nvote, 0, sizeof(t->nvote));
+            t->line = t->prev_line[k];
             t->last_move = 0;
             memmove(&t->prev[0], &t->prev[k + 1], sizeof(Pos) * (t->nprev - k - 1));
             memmove(&t->prev_sure[0], &t->prev_sure[k + 1], sizeof(u64) * (t->nprev - k - 1));
+            memmove(&t->prev_line[0], &t->prev_line[k + 1], sizeof(GameLine) * (t->nprev - k - 1));
             t->nprev -= k + 1;
             return 1;
         }
@@ -509,12 +605,15 @@ static int apply_matching(Tracker *t, const BoardRead *r, Templates *tpl)
         if (find_line(&back, r, 2, &m) && m.c == 0) {
             Pos keep[3];
             u64 keep_sure[3];
+            GameLine keep_line[3];
             memcpy(keep, t->prev, sizeof(keep));
             memcpy(keep_sure, t->prev_sure, sizeof(keep_sure));
+            memcpy(keep_line, t->prev_line, sizeof(keep_line));
             int nk = t->nprev - k - 1;
-            play_line(t, back, keep_sure[k], &m, r, tpl);
+            play_line(t, back, keep_sure[k], &m, r, tpl, &keep_line[k]);
             memcpy(&t->prev[1], &keep[k + 1], sizeof(Pos) * (nk > 2 ? 2 : nk));
             memcpy(&t->prev_sure[1], &keep_sure[k + 1], sizeof(u64) * (nk > 2 ? 2 : nk));
+            memcpy(&t->prev_line[1], &keep_line[k + 1], sizeof(GameLine) * (nk > 2 ? 2 : nk));
             t->nprev = 1 + (nk > 2 ? 2 : nk);
             return 1;
         }
@@ -546,6 +645,7 @@ static void verify_promo(Tracker *t, const BoardRead *r, const Templates *tpl)
         // promo popup hides the square at first
         if (t->promo_votes[k][best] >= 2 && best != pc % 6 && t->promo_votes[k][best] * 2 > t->promo_ticks[k]) {
             pos_put(&t->pos, sq, (pc / 6) * 6 + best);
+            if (!t->line.n) tracker_rebase(t);
             t->promo_ticks[k] = 10;
         }
     }
@@ -555,15 +655,16 @@ static void verify_promo(Tracker *t, const BoardRead *r, const Templates *tpl)
 // one wrong color is still the start, 32 pieces on the start squares cant be anything else
 static int is_start_obs(const uint8_t *obs, int rotated)
 {
-    int seen = 0, flips = 0;
+    int seen = 0, flips[2] = {0, 0};
     for (int i = 0; i < 64; i++) {
         int want = i < 16 ? OBS_WHITE : (i >= 48 ? OBS_BLACK : OBS_EMPTY), got = obs[rotated ? 63 - i : i];
         if (got == OBS_UNKNOWN) continue;
         if ((got == OBS_EMPTY) != (want == OBS_EMPTY)) return 0;
-        if (got != want && ++flips > 1) return 0;
+        if (got != want) flips[i >= 48]++;
         seen++;
     }
-    return seen >= 52;
+    // the layout is what counts, colors can be off on pieces that are close to the square color (roblox)
+    return seen >= 52 && flips[0] <= 4 && flips[1] <= 4;
 }
 
 static int is_startpos(const Pos *p)
@@ -598,7 +699,9 @@ void tracker_resync(Tracker *t, const BoardRead *r, Templates *tpl)
         return;
     t->pos = np;
     t->sure = is_start_obs(r->obs, 0) ? ~0ULL : 0;
+    memset(t->nvote, 0, sizeof(t->nvote));
     apply_locks(t, r);
+    tracker_rebase(t);
     t->synced = 1;
     t->last_move = 0;
     t->side_uncertain = t->lock_side < 0;
@@ -631,7 +734,27 @@ static const Templates *fit_builtin(Templates *tpl, const BoardRead *r)
 
 static const int type_cap[6] = {8, 2, 2, 2, 1, 1};
 
-static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *outp)
+static int guess_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *outp);
+
+static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *outp) // no sliding here, it picks wrong kings
+{
+    int w = wobbly;
+    wobbly = 0;
+    int ok = guess_position(t, r, tpl, outp);
+    wobbly = w;
+    return ok;
+}
+
+// a piece still on its starting square is most likely the one that started there, worth a little on a close call
+static float home_bonus(const BoardRead *r, int sq, int ty)
+{
+    static const signed char back[8] = {ROOK, KNIGHT, BISHOP, QUEEN, KING, BISHOP, KNIGHT, ROOK};
+    int rank = sq >> 3;
+    if (!((rank == 0 && r->obs[sq] == OBS_WHITE) || (rank == 7 && r->obs[sq] == OBS_BLACK)) || back[sq & 7] != ty) return 0;
+    return 0.06f;
+}
+
+static int guess_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *outp)
 {
     if (r->nhidden) return 0;
     const Templates *use = fit_builtin(tpl, r);
@@ -641,6 +764,7 @@ static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *ou
         types[sq] = -1;
         if (r->obs[sq] != OBS_WHITE && r->obs[sq] != OBS_BLACK) continue;
         type_scores(use, r, sq, sc[sq]);
+        for (int ty = 0; ty < 6; ty++) sc[sq][ty] += home_bonus(r, sq, ty);
         int rank = sq >> 3;
         if (rank == 0 || rank == 7) sc[sq][PAWN] = -1;
         sc[sq][KING] = -1;
@@ -652,6 +776,7 @@ static int read_position(Tracker *t, const BoardRead *r, Templates *tpl, Pos *ou
             if (r->obs[sq] != want) continue;
             float ks[6];
             type_scores(use, r, sq, ks);
+            for (int ty = 0; ty < 6; ty++) ks[ty] += home_bonus(r, sq, ty);
             float alt = 0;
             for (int ty = 0; ty < 5; ty++)
                 if (ty != PAWN && ks[ty] > alt) alt = ks[ty];
@@ -727,8 +852,138 @@ static int piece_diff(const Pos *a, const Pos *b)
     return d;
 }
 
+static int back_to_start(Pos *p, int d) // knights going home in a reversible line, thats not a new game
+{
+    if (is_startpos(p)) return 1;
+    Move ms[256];
+    int n = d ? pos_gen_legal(p, ms) : 0;
+    for (int i = 0; i < n; i++) {
+        Undo u;
+        pos_make(p, ms[i], &u);
+        int ok = back_to_start(p, d - 1);
+        pos_unmake(p, &u);
+        if (ok) return 1;
+    }
+    return 0;
+}
+
+// pieces we only guessed from one read: keep adding up how they look, a type that keeps losing gets swapped
+#define VOTE_N 4 // calm reads before a guessed type can change
+#define VOTE_M 0.04f
+
+static int guessed(const Tracker *t, int sq) { return t->nvote[sq] >= VOTE_N && !((t->sure | t->locked) >> sq & 1); }
+
+static int vote_best(const Tracker *t, int sq, int skip)
+{
+    int best = -1, rank = sq >> 3;
+    for (int ty = 0; ty < KING; ty++)
+        if (ty != skip && !(ty == PAWN && (rank == 0 || rank == 7)) && (best < 0 || t->vote[sq][ty] > t->vote[sq][best])) best = ty;
+    return best;
+}
+
+// how much a beats b, the cleanest read has to say so and the rest cant disagree
+static float vote_gap(const Tracker *t, int sq, int a, int b)
+{
+    float avg = (t->vsum[sq][a] - t->vsum[sq][b]) / t->nvote[sq], best = t->vote[sq][a] - t->vote[sq][b];
+    return avg < VOTE_M / 2 ? (avg < best ? avg : best) : best;
+}
+
+static void vote_types(Tracker *t, const BoardRead *r, const Templates *tpl)
+{
+    if (!t->anim || !tpl->have || (t->sure | t->locked) == ~0ULL) return;
+    Pos *p = &t->pos;
+    for (int sq = 0; sq < 64; sq++) {
+        int pc = p->sq[sq];
+        if (pc == EMPTY || t->nvote[sq] < 0 || ((t->sure | t->locked) >> sq & 1) || r->hidden[sq] || r->obs[sq] != (pc / 6 == WHITE ? OBS_WHITE : OBS_BLACK)) continue;
+        float sc[6], top = 0, had = 0;
+        type_scores(tpl, r, sq, sc);
+        for (int ty = 0; ty < 6; ty++) {
+            if (sc[ty] > top) top = sc[ty];
+            if (t->vote[sq][ty] > had) had = t->vote[sq][ty];
+        }
+        if (!t->nvote[sq] || top > had) memcpy(t->vote[sq], sc, sizeof(sc)); // cleanest frame
+        if (!t->nvote[sq]) memset(t->vsum[sq], 0, sizeof(t->vsum[sq]));
+        for (int ty = 0; ty < 6; ty++) t->vsum[sq][ty] += sc[ty];
+        if (++t->nvote[sq] >= 40) { // old reads fade out
+            for (int ty = 0; ty < 6; ty++) t->vsum[sq][ty] *= 0.5f;
+            t->nvote[sq] = 20;
+        }
+    }
+    int fix = 0;
+    for (int c = 0; c < 2; c++) {
+        int ksq = -1, kq = -1;
+        float km = VOTE_M;
+        for (int sq = 0; sq < 64; sq++) {
+            int pc = p->sq[sq];
+            if (pc == c * 6 + KING) ksq = sq;
+            else if (pc != EMPTY && pc / 6 == c && guessed(t, sq) && vote_gap(t, sq, KING, pc % 6) >= km) km = vote_gap(t, sq, KING, pc % 6), kq = sq;
+        }
+        if (ksq >= 0 && kq >= 0 && guessed(t, ksq)) {
+            int nt = vote_best(t, ksq, -1);
+            if (vote_gap(t, ksq, nt, KING) >= VOTE_M && !(p->sq[kq] % 6 == PAWN && ((ksq >> 3) == 0 || (ksq >> 3) == 7))) {
+                pos_put(p, kq, c * 6 + KING);
+                pos_put(p, ksq, c * 6 + nt);
+                t->nvote[kq] = t->nvote[ksq] = 0;
+                fix = 1;
+            }
+        }
+        int cnt[6] = {0};
+        for (int sq = 0; sq < 64; sq++)
+            if (p->sq[sq] != EMPTY && p->sq[sq] / 6 == c) cnt[p->sq[sq] % 6]++;
+        for (int sq = 0; sq < 64; sq++) {
+            int pc = p->sq[sq];
+            if (pc == EMPTY || pc / 6 != c || pc % 6 == KING || !guessed(t, sq)) continue;
+            int best = vote_best(t, sq, pc % 6);
+            if (best < 0 || vote_gap(t, sq, best, pc % 6) < VOTE_M || cnt[best] >= type_cap[best]) continue; // no third bishop out of a queen that looks off
+            cnt[pc % 6]--, cnt[best]++;
+            pos_put(p, sq, c * 6 + best);
+            t->nvote[sq] = 0;
+            fix = 1;
+        }
+    }
+    if (!fix) return;
+    pos_finish_setup(p);
+    tracker_rebase(t);
+}
+
+// animated board: squares that just flickered dont count, a move has to sit still on its own squares
+static int steady_move(Tracker *t, const BoardRead *r, Templates *tpl, const uint8_t *exp, const uint8_t *was)
+{
+    int shaky = 0;
+    for (int i = 0; i < 64; i++) shaky += r->obs[i] != was[i] && r->obs[i] != exp[i];
+    if (shaky > 4) return 0;
+    BoardRead *s = malloc(sizeof(BoardRead));
+    if (!s) return 0;
+    *s = *r;
+    for (int i = 0; i < 64; i++)
+        if (r->obs[i] != was[i] && r->obs[i] != exp[i]) s->obs[i] = OBS_UNKNOWN;
+    int od, cd, nw = 0, nb = 0, ok = 0;
+    diff2(exp, s->obs, &od, &cd);
+    for (int i = 0; i < 64; i++) nw += s->obs[i] == OBS_WHITE, nb += s->obs[i] == OBS_BLACK;
+    Match m;
+    if (od == 0 && cd <= 1) ok = 1; // just flicker
+    else if (nw <= __builtin_popcountll(t->pos.occ[WHITE]) && nb <= __builtin_popcountll(t->pos.occ[BLACK]) && find_line(&t->pos, s, 2, &m)) {
+        ok = 1;
+        for (int i = 0; i < m.n; i++)
+            if (s->obs[M_FROM(m.seq[i])] == OBS_UNKNOWN || s->obs[M_TO(m.seq[i])] == OBS_UNKNOWN) ok = 0;
+        if (ok) {
+            GameLine gl = t->line;
+            play_line(t, t->pos, t->sure, &m, s, tpl, &gl);
+        }
+    }
+    free(s);
+    return ok;
+}
+
 void tracker_update(Tracker *t, const BoardRead *r, Templates *tpl)
 {
+    if (r->busy >= 12) { // most of the board repainted, three reads running = animated, not a move
+        if (++t->anim_run >= 3) t->anim = 40;
+    } else {
+        t->anim_run = 0;
+        if (t->anim) t->anim--;
+    }
+    wobbly = t->anim > 0;
     uint8_t exp[64];
     expected_obs(&t->pos, exp);
     int od, cd;
@@ -739,8 +994,13 @@ void tracker_update(Tracker *t, const BoardRead *r, Templates *tpl)
         t->mismatch_ticks = 0;
         t->implausible_ticks = 0;
         verify_promo(t, r, tpl);
+        vote_types(t, r, tpl);
         snprintf(t->status, sizeof(t->status), "in sync");
         return;
+    }
+    if (start == 1 && t->line.n) {
+        Pos p = t->pos;
+        if (back_to_start(&p, 2)) start = 0;
     }
     if (start) {
         int uc = t->user_color, wb = t->white_bottom;
@@ -760,10 +1020,17 @@ void tracker_update(Tracker *t, const BoardRead *r, Templates *tpl)
     int implausible = nw > pw + 1 || nb > pb + 1 || (nw > pw && nb > pb); // pieces dont appear out of nowhere, its mid animation or a drag
     // has to hold still for one read first
     if (memcmp(t->pending, r->obs, 64)) {
+        uint8_t was[64];
+        memcpy(was, t->pending, 64);
         memcpy(t->pending, r->obs, 64);
         t->pending_count = 1;
         t->mismatch_ticks++;
         snprintf(t->status, sizeof(t->status), "board changing");
+        if (t->anim && steady_move(t, r, tpl, exp, was)) {
+            t->mismatch_ticks = 0;
+            t->implausible_ticks = 0;
+            snprintf(t->status, sizeof(t->status), "in sync");
+        }
         return;
     }
     t->pending_count++;

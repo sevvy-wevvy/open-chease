@@ -61,6 +61,11 @@ static struct {
     void (*mini_unref)(void *);
     void (*obj_unref)(void *);
     void (*unsubscribe)(GDBusConnection *, unsigned);
+    GVariant *(*call_fds)(GDBusConnection *, const char *, const char *, const char *, const char *, GVariant *,
+                          const void *, int, int, void *, void **, void *, GError **);
+    int (*fd_list_get)(void *, int, GError **);
+    const char *(*unique_name)(GDBusConnection *);
+    void (*gobj_unref)(void *);
 } G;
 
 typedef struct {
@@ -80,6 +85,8 @@ static Stream streams[MAX_OUTPUTS];
 static int nstreams, changed, loaded;
 static long changed_at;
 static unsigned session_sub;
+static int portal, pw_fd = -1;
+static char token_path[1100];
 
 static int load(void)
 {
@@ -88,18 +95,18 @@ static int load(void)
     void *gst = dlopen("libgstreamer-1.0.so.0", RTLD_NOW | RTLD_GLOBAL);
     void *app = dlopen("libgstapp-1.0.so.0", RTLD_NOW | RTLD_GLOBAL);
     if (!gio || !glib) {
-        fprintf(stderr, "gnome capture: cant find glib/gio\n");
+        fprintf(stderr, "screen grab: cant find glib/gio\n");
         return 0;
     }
     if (!gst || !app) {
-        fprintf(stderr, "gnome capture: cant find gstreamer, install libgstreamer-1.0 and libgstapp-1.0\n");
+        fprintf(stderr, "screen grab: cant find gstreamer, install libgstreamer-1.0 and libgstapp-1.0\n");
         return 0;
     }
 #define L(lib, field, name)                                                   \
     do {                                                                      \
         *(void **)(&G.field) = dlsym(lib, name);                              \
         if (!G.field) {                                                       \
-            fprintf(stderr, "gnome capture: missing %s\n", name);             \
+            fprintf(stderr, "screen grab: missing %s\n", name);               \
             return 0;                                                         \
         }                                                                     \
     } while (0)
@@ -129,6 +136,10 @@ static int load(void)
     L(gst, obj_unref, "gst_object_unref");
     L(gio, unsubscribe, "g_dbus_connection_signal_unsubscribe");
     L(app, try_pull_sample, "gst_app_sink_try_pull_sample");
+    L(gio, call_fds, "g_dbus_connection_call_with_unix_fd_list_sync");
+    L(gio, fd_list_get, "g_unix_fd_list_get");
+    L(gio, unique_name, "g_dbus_connection_get_unique_name");
+    L(gio, gobj_unref, "g_object_unref");
 #undef L
     return 1;
 }
@@ -181,18 +192,52 @@ static void stop_streams(void)
     session_sub = 0;
     if (*session_path) {
         GError *err = NULL;
-        GVariant *r = G.call_sync(bus, "org.gnome.Mutter.ScreenCast", session_path, "org.gnome.Mutter.ScreenCast.Session",
-                                  "Stop", NULL, NULL, 0, 2000, NULL, &err);
+        GVariant *r = portal ? G.call_sync(bus, "org.freedesktop.portal.Desktop", session_path, "org.freedesktop.portal.Session",
+                                           "Close", NULL, NULL, 0, 2000, NULL, &err)
+                             : G.call_sync(bus, "org.gnome.Mutter.ScreenCast", session_path, "org.gnome.Mutter.ScreenCast.Session",
+                                           "Stop", NULL, NULL, 0, 2000, NULL, &err);
         if (r) G.unref(r);
         if (err) G.error_free(err);
     }
     *session_path = 0;
+    if (pw_fd >= 0) close(pw_fd);
+    pw_fd = -1;
     memset(streams, 0, sizeof(streams));
     nstreams = 0;
 }
 
+static int start_pipes(Backend *b)
+{
+    for (int i = 0; i < nstreams; i++) {
+        Stream *s = &streams[i];
+        char desc[512], fd[24] = "";
+        if (pw_fd >= 0) snprintf(fd, sizeof(fd), "fd=%d ", pw_fd);
+        // 2 fps max and only the newest buffer, the board doesnt move that fast
+        snprintf(desc, sizeof(desc),
+                 "pipewiresrc %spath=%u always-copy=true ! videorate drop-only=true max-rate=2 ! videoconvert ! "
+                 "video/x-raw,format=BGRx ! appsink name=sink max-buffers=1 drop=true sync=false",
+                 fd, s->node);
+        GError *e = NULL;
+        s->pipe = G.parse_launch(desc, &e);
+        if (!s->pipe) {
+            fprintf(stderr, "screen grab: couldnt start gstreamer: %s\n", e ? e->message : "?");
+            return 0;
+        }
+        s->sink = G.bin_get_by_name(s->pipe, "sink");
+        G.set_state(s->pipe, 4); // GST_STATE_PLAYING
+        snprintf(b->out[i].name, 64, "%.63s", s->connector);
+    }
+    b->nout = nstreams;
+    for (int i = 0; i < nstreams; i++)
+        b->out[i].logical = (Rect){streams[i].x, streams[i].y, streams[i].w, streams[i].h};
+    return 1;
+}
+
+static int portal_start(Backend *b);
+
 static int start_streams(Backend *b)
 {
+    if (portal) return portal_start(b);
     GVariant *st = call("org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",
                         "org.gnome.Mutter.DisplayConfig", "GetCurrentState", NULL);
     if (!st) return 0;
@@ -275,26 +320,8 @@ static int start_streams(Backend *b)
             G.unref(v);
             G.unref(r);
         }
-        char desc[512];
-        // 2 fps max and only the newest buffer, the board doesnt move that fast
-        snprintf(desc, sizeof(desc),
-                 "pipewiresrc path=%u always-copy=true ! videorate drop-only=true max-rate=2 ! videoconvert ! "
-                 "video/x-raw,format=BGRx ! appsink name=sink max-buffers=1 drop=true sync=false",
-                 s->node);
-        GError *e = NULL;
-        s->pipe = G.parse_launch(desc, &e);
-        if (!s->pipe) {
-            fprintf(stderr, "gnome capture: couldnt start gstreamer: %s\n", e ? e->message : "?");
-            return 0;
-        }
-        s->sink = G.bin_get_by_name(s->pipe, "sink");
-        G.set_state(s->pipe, 4); // GST_STATE_PLAYING
-        snprintf(b->out[i].name, 64, "%.63s", s->connector);
     }
-    b->nout = nstreams;
-    for (int i = 0; i < nstreams; i++)
-        b->out[i].logical = (Rect){streams[i].x, streams[i].y, streams[i].w, streams[i].h};
-    return 1;
+    return start_pipes(b);
 }
 
 // skip the portal, no share-screen popup every launch
@@ -400,3 +427,198 @@ static int gnome_capture(Backend *b)
 
 static Backend gnome_backend = {.name = "mutter-screencast", .init = gnome_init, .capture = gnome_capture};
 Backend *backend_gnome(void) { return &gnome_backend; }
+
+#define PORTAL "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop"
+
+static GVariant *resp;
+static unsigned resp_code;
+static int resp_got;
+
+static void on_response(GDBusConnection *c, const char *sender, const char *path, const char *iface,
+                        const char *sig, GVariant *params, void *user)
+{
+    if (resp) G.unref(resp);
+    resp = NULL;
+    G.variant_get(params, "(u@a{sv})", &resp_code, &resp);
+    resp_got = 1;
+}
+
+// portal calls answer later with a Response signal, wait for that
+static GVariant *portal_ask(const char *method, GVariant *args, const char *token, int wait_ms)
+{
+    char path[256], sender[64];
+    snprintf(sender, sizeof(sender), "%s", G.unique_name(bus) + 1); // ":1.42" -> "1_42"
+    for (char *q = sender; *q; q++)
+        if (*q == '.') *q = '_';
+    snprintf(path, sizeof(path), "/org/freedesktop/portal/desktop/request/%s/%s", sender, token);
+    resp_got = 0;
+    unsigned sub = G.subscribe(bus, "org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request", "Response", path, NULL, 0,
+                               on_response, NULL, NULL);
+    GError *err = NULL;
+    GVariant *r = G.call_sync(bus, PORTAL, "org.freedesktop.portal.ScreenCast", method, args, NULL, 0, 30000, NULL, &err);
+    if (!r) {
+        fprintf(stderr, "portal capture: %s failed: %s\n", method, err ? err->message : "?");
+        if (err) G.error_free(err);
+        G.unsubscribe(bus, sub);
+        return NULL;
+    }
+    G.unref(r);
+    long deadline = now_ms() + wait_ms;
+    while (!resp_got && now_ms() < deadline)
+        if (!G.iteration(NULL, 0)) usleep(10000);
+    G.unsubscribe(bus, sub);
+    if (!resp_got) {
+        fprintf(stderr, "portal capture: no answer to %s\n", method);
+        return NULL;
+    }
+    if (resp_code) {
+        fprintf(stderr, "portal capture: %s\n", resp_code == 1 ? "you said no to sharing the screen" : "the portal said no");
+        return NULL;
+    }
+    GVariant *out = resp;
+    resp = NULL;
+    return out;
+}
+
+static unsigned portal_prop(const char *name)
+{
+    GError *err = NULL;
+    unsigned v = 0;
+    GVariant *r = G.call_sync(bus, PORTAL, "org.freedesktop.DBus.Properties", "Get",
+                              G.new_parsed("('org.freedesktop.portal.ScreenCast', %s)", name), NULL, 0, 30000, NULL, &err);
+    if (!r) {
+        if (err) G.error_free(err);
+        return 0;
+    }
+    GVariant *box = G.child(r, 0), *in = NULL;
+    G.variant_get(box, "v", &in);
+    if (in) {
+        G.variant_get(in, "u", &v);
+        G.unref(in);
+    }
+    G.unref(box);
+    G.unref(r);
+    return v;
+}
+
+static int portal_start(Backend *b)
+{
+    static int calls;
+    char tok[32], stok[32], rt[512] = "";
+    unsigned ver = portal_prop("version"), cursors = portal_prop("AvailableCursorModes");
+    if (!ver) {
+        fprintf(stderr, "portal capture: no screencast portal, is xdg-desktop-portal running?\n");
+        return 0;
+    }
+    FILE *f = ver >= 4 ? fopen(token_path, "r") : NULL;
+    if (f) {
+        size_t n = fread(rt, 1, sizeof(rt) - 1, f);
+        rt[n] = 0;
+        fclose(f);
+        for (char *q = rt; *q; q++) // its a uuid, anything else would break the format string below
+            if (!((*q >= 'a' && *q <= 'z') || (*q >= 'A' && *q <= 'Z') || (*q >= '0' && *q <= '9') || *q == '-' || *q == '_')) *q = 0;
+    }
+    snprintf(tok, sizeof(tok), "oc%d_%d", (int)getpid(), ++calls);
+    snprintf(stok, sizeof(stok), "ocs%d_%d", (int)getpid(), calls);
+    GVariant *r = portal_ask("CreateSession", G.new_parsed("({'handle_token': <%s>, 'session_handle_token': <%s>},)", tok, stok), tok, 30000);
+    if (!r) return 0;
+    const char *sp = NULL;
+    G.lookup(r, "session_handle", "&s", &sp);
+    snprintf(session_path, sizeof(session_path), "%s", sp ? sp : "");
+    G.unref(r);
+    if (!*session_path) return 0;
+    session_sub = G.subscribe(bus, "org.freedesktop.portal.Desktop", "org.freedesktop.portal.Session", "Closed", session_path,
+                              NULL, 0, on_change, NULL, NULL);
+
+    char opts[768];
+    int n = snprintf(opts, sizeof(opts), "'types': <uint32 1>, 'multiple': <true>"); // 1 = monitors
+    if (cursors & 1) n += snprintf(opts + n, sizeof(opts) - n, ", 'cursor_mode': <uint32 1>"); // hidden
+    if (ver >= 4) n += snprintf(opts + n, sizeof(opts) - n, ", 'persist_mode': <uint32 2>"); // remember it until revoked
+    if (ver >= 4 && *rt) snprintf(opts + n, sizeof(opts) - n, ", 'restore_token': <'%s'>", rt);
+    char fmt[1024];
+    snprintf(tok, sizeof(tok), "oc%d_%d", (int)getpid(), ++calls);
+    snprintf(fmt, sizeof(fmt), "(%%o, {'handle_token': <%%s>, %s})", opts);
+    r = portal_ask("SelectSources", G.new_parsed(fmt, session_path, tok), tok, 30000);
+    if (!r) return 0;
+    G.unref(r);
+
+    snprintf(tok, sizeof(tok), "oc%d_%d", (int)getpid(), ++calls);
+    if (!*rt) fprintf(stderr, "pick the screens to share in the popup, it only asks once\n");
+    r = portal_ask("Start", G.new_parsed("(%o, '', {'handle_token': <%s>})", session_path, tok), tok, 300000); // a person has to click
+    if (!r) return 0;
+    const char *nt = NULL;
+    if (G.lookup(r, "restore_token", "&s", &nt) && nt && strcmp(nt, rt)) {
+        char tmp[1110];
+        snprintf(tmp, sizeof(tmp), "%s.tmp", token_path);
+        FILE *w = fopen(tmp, "w");
+        if (w) {
+            fputs(nt, w);
+            if (!fclose(w)) replace_file(tmp, token_path);
+        }
+    }
+    GVariant *list = NULL;
+    G.lookup(r, "streams", "@a(ua{sv})", &list);
+    size_t ns = list ? G.n_children(list) : 0;
+    for (size_t i = 0; i < ns && nstreams < MAX_OUTPUTS; i++) {
+        Stream *s = &streams[nstreams];
+        GVariant *st = G.child(list, i), *props = NULL;
+        G.variant_get(st, "(u@a{sv})", &s->node, &props);
+        if (props) {
+            G.lookup(props, "position", "(ii)", &s->x, &s->y);
+            G.lookup(props, "size", "(ii)", &s->w, &s->h);
+            G.unref(props);
+        }
+        G.unref(st);
+        snprintf(s->connector, sizeof(s->connector), "screen %d", nstreams + 1);
+        nstreams++;
+    }
+    if (list) G.unref(list);
+    G.unref(r);
+    if (!nstreams) {
+        fprintf(stderr, "portal capture: it shared no screens\n");
+        return 0;
+    }
+
+    void *fds = NULL;
+    GError *err = NULL;
+    r = G.call_fds(bus, PORTAL, "org.freedesktop.portal.ScreenCast", "OpenPipeWireRemote", G.new_parsed("(%o, @a{sv} {})", session_path),
+                   NULL, 0, 30000, NULL, &fds, NULL, &err);
+    if (!r) {
+        fprintf(stderr, "portal capture: OpenPipeWireRemote failed: %s\n", err ? err->message : "?");
+        if (err) G.error_free(err);
+        return 0;
+    }
+    int idx = -1;
+    G.variant_get(r, "(h)", &idx);
+    G.unref(r);
+    if (fds) {
+        pw_fd = idx >= 0 ? G.fd_list_get(fds, idx, NULL) : -1;
+        G.gobj_unref(fds);
+    }
+    if (pw_fd < 0) {
+        fprintf(stderr, "portal capture: got no pipewire connection\n");
+        return 0;
+    }
+    return start_pipes(b);
+}
+
+static int portal_init(Backend *b)
+{
+    if (!loaded) {
+        if (!load()) return 0;
+        GError *err = NULL;
+        bus = G.bus_get_sync(2, NULL, &err); // G_BUS_TYPE_SESSION
+        if (!bus) return 0;
+        G.gst_init(NULL, NULL);
+        loaded = 1;
+    }
+    portal = 1;
+    return start_streams(b);
+}
+
+static Backend portal_backend = {.name = "portal-screencast", .init = portal_init, .capture = gnome_capture};
+Backend *backend_portal(const char *data_dir)
+{
+    snprintf(token_path, sizeof(token_path), "%s/portal-token", data_dir);
+    return &portal_backend;
+}

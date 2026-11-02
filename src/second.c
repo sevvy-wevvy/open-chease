@@ -14,6 +14,7 @@ typedef struct {
     char path[1024], running[1024], failed[1024];
     int elo, ms, started;
     Pos want;
+    char line[1400];
     int have_want;
     u64 asked; // so a late answer for an old position gets dropped
     Opinion res;
@@ -172,12 +173,16 @@ static void *slot_thread(void *arg)
             if (strcmp(s->path, path)) continue; // switched again while it was starting
         }
         Pos p = s->want;
+        char gl[1400];
+        memcpy(gl, s->line, sizeof(gl));
         s->have_want = 0;
         int elo = s->elo, ms = s->ms;
         pthread_mutex_unlock(&s->mu);
 
-        char fen[128], cmd[320];
+        char fen[128], cmd[1500], pc[1420];
         uci_fen(&p, fen);
+        if (*gl) snprintf(pc, sizeof(pc), "%s", gl);
+        else snprintf(pc, sizeof(pc), "fen %s", fen);
         if (elo != sent_elo && s->has_elo) {
             if (elo)
                 snprintf(cmd, sizeof(cmd), "setoption name UCI_LimitStrength value true\nsetoption name UCI_Elo value %d\n", elo);
@@ -189,9 +194,9 @@ static void *slot_thread(void *arg)
         // cant cap it with UCI_Elo so cap the depth, same table as the builtin
         int depth = elo && !s->has_elo ? (elo < 1500 ? 1 : elo < 1800 ? 2 : elo < 2100 ? 3 : 5) : 0;
         if (depth)
-            snprintf(cmd, sizeof(cmd), "position fen %s\ngo depth %d\n", fen, depth);
+            snprintf(cmd, sizeof(cmd), "position %s\ngo depth %d\n", pc, depth);
         else
-            snprintf(cmd, sizeof(cmd), "position fen %s\ngo movetime %d\n", fen, ms);
+            snprintf(cmd, sizeof(cmd), "position %s\ngo movetime %d\n", pc, ms);
         put(s, cmd);
         Opinion o = {0};
         o.key = p.key;
@@ -273,13 +278,14 @@ void second_set(int k, const char *path, int elo, int ms)
     pthread_mutex_unlock(&s->mu);
 }
 
-void second_ask(int k, const Pos *p)
+void second_ask(int k, const Pos *p, const char *line)
 {
     Slot *s = &slots[k];
     pthread_mutex_lock(&s->mu);
     if (*s->path && p->key != s->asked && pos_ok(p)) {
         s->asked = p->key;
         s->want = *p;
+        snprintf(s->line, sizeof(s->line), "%s", line ? line : "");
         s->have_want = 1;
         pthread_cond_signal(&s->cv);
     }

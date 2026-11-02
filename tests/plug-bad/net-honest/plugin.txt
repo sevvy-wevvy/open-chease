@@ -1,0 +1,3 @@
+name = net-honest
+run = main.py
+internet = checks lichess for the opening name\n

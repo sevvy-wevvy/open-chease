@@ -3,7 +3,7 @@ tmpdir = tempfile.mkdtemp(prefix="oc-vision-")
 here = os.path.dirname(os.path.abspath(__file__))
 root = os.path.dirname(here)
 vtest = os.path.join(tmpdir, "vtest")
-subprocess.run(["cc", "-O2", "-I" + os.path.join(root, "src"), "-o", vtest, os.path.join(here, "vtest.c")] + [os.path.join(root, "src", f) for f in ("vision.c", "tracker.c", "engine.c")] + ["-lm", "-lpthread"], check=True)
+subprocess.run(["cc", "-O2", "-I" + os.path.join(root, "src"), "-o", vtest, os.path.join(here, "vtest.c")] + [os.path.join(root, "src", f) for f in ("vision.c", "tracker.c", "engine.c", "gpu.c")] + ["-lm", "-lpthread", "-ldl"], check=True)
 # usage: run_vision.py [seed] [boards], PIECES=dir to try another piece set
 random.seed(int(sys.argv[1]) if len(sys.argv) > 1 else 1)
 pieces = os.environ.get("PIECES", os.path.join(here, "pieces", "cburnett"))

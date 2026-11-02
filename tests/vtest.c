@@ -42,7 +42,9 @@ int main(int argc, char **argv)
         return 2;
     }
     Board b;
-    if (!vision_find_board(&f, &b, NULL, 0, NULL, NULL)) {
+    int hit = 0;
+    for (int k = 0; k < 3 && !hit; k++) hit = vision_find_board(&f, &b, NULL, 0, NULL, NULL); // misses take turns at the slow finders
+    if (!hit) {
         printf("NOBOARD\n");
         return 1;
     }
@@ -57,6 +59,15 @@ int main(int argc, char **argv)
     char fen[128];
     pos_to_fen(&tr.pos, fen);
     printf("BOARD %.1f %.1f %.2f score %d soft %d\n", b.x, b.y, b.s, b.score, b.soft);
+    if (b.persp) {
+        printf("PERSP");
+        for (int k = 0; k < 4; k++) {
+            double x, y;
+            hm_map(b.hm, k == 1 || k == 2 ? 8 : 0, k >= 2 ? 8 : 0, &x, &y);
+            printf(" %.1f %.1f", x, y);
+        }
+        printf("\n");
+    }
     printf("OBS ");
     for (int rr = 7; rr >= 0; rr--) {
         for (int ff = 0; ff < 8; ff++) putchar(".WB?"[r->obs[rr * 8 + ff]]);

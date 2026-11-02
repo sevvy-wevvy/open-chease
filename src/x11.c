@@ -143,9 +143,12 @@ static int x_init(Overlay *ov, Backend *cap)
     // whoever owns _NET_WM_CM_Sn is the compositor
     snprintf(cm, sizeof(cm), "_NET_WM_CM_S%d", scr);
     xs.composited = X.GetSelectionOwner(xs.dpy, X.InternAtom(xs.dpy, cm, False)) != 0;
-    if (!xs.composited)
-        fprintf(stderr, "heads up, theres no compositor running so the overlay will look a bit rough. "
-                        "on xfce turn it on in Settings > Window Manager Tweaks > Compositor\n");
+    if (!xs.composited) {
+        const char *desk = getenv("XDG_CURRENT_DESKTOP");
+        fprintf(stderr, "heads up, theres no compositor running so the overlay will look a bit rough. %s\n",
+                desk && strstr(desk, "Cinnamon") ? "cinnamon always has one, try restarting it with alt+f2 then r"
+                                                 : "on xfce turn it on in Settings > Window Manager Tweaks > Compositor");
+    }
     Window root = X.RootWindow_(xs.dpy, scr);
     xs.w = X.DisplayWidth_(xs.dpy, scr);
     xs.h = X.DisplayHeight_(xs.dpy, scr);
@@ -289,9 +292,9 @@ static void x_commit(Overlay *ov, const Rect *hits, int nhits)
     // xfwm: screen sized window = fullscreen, 1px short dodges that
     if (xs.bw >= xs.w && xs.bh >= xs.h) xs.bh--;
     X.MoveResizeWindow(xs.dpy, xs.win, xs.bx, xs.by, (unsigned)xs.bw, (unsigned)xs.bh);
-    XRectangle rects[128];
+    static XRectangle rects[512]; // the themes tab alone is ~120
     int n = 0;
-    for (int i = 0; i < nhits && n < 128; i++) {
+    for (int i = 0; i < nhits && n < 512; i++) {
         rects[n].x = (short)(hits[i].x * xs.scale - xs.bx);
         rects[n].y = (short)(hits[i].y * xs.scale - xs.by);
         rects[n].width = (unsigned short)(hits[i].w * xs.scale + 1); // +1 so rounding cant shave a button edge

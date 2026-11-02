@@ -118,6 +118,43 @@ void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double
     }
 }
 
+void canvas_warp(Canvas *dst, const Canvas *src, const double *m)
+{
+    double inv[9];
+    if (src->dx1 <= src->dx0 || !hm_inv(m, inv)) return;
+    double x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (int k = 0; k < 4; k++) { // where the drawn part of src lands
+        double lx = src->ox + (k & 1 ? src->dx1 : src->dx0) / src->scale, ly = src->oy + (k & 2 ? src->dy1 : src->dy0) / src->scale, x, y;
+        hm_map(m, lx, ly, &x, &y);
+        x = (x - dst->ox) * dst->scale, y = (y - dst->oy) * dst->scale;
+        x0 = fmin(x0, x), y0 = fmin(y0, y), x1 = fmax(x1, x), y1 = fmax(y1, y);
+    }
+    int a = x0 < 0 ? 0 : (int)x0, b = y0 < 0 ? 0 : (int)y0, e = x1 + 2 > dst->w ? dst->w : (int)x1 + 2, f = y1 + 2 > dst->h ? dst->h : (int)y1 + 2;
+    if (e <= a || f <= b) return;
+    mark(dst, a, b, e, f);
+    for (int y = b; y < f; y++)
+        for (int x = a; x < e; x++) {
+            double sx, sy;
+            hm_map(inv, dst->ox + (x + 0.5) / dst->scale, dst->oy + (y + 0.5) / dst->scale, &sx, &sy);
+            sx = (sx - src->ox) * src->scale - 0.5, sy = (sy - src->oy) * src->scale - 0.5;
+            if (sx < -1 || sy < -1 || sx >= src->w || sy >= src->h) continue;
+            int ix = (int)floor(sx), iy = (int)floor(sy);
+            double fx = sx - ix, fy = sy - iy, acc[4] = {0, 0, 0, 0};
+            for (int k = 0; k < 4; k++) {
+                int px = ix + (k & 1), py = iy + (k >> 1);
+                if (px < 0 || py < 0 || px >= src->w || py >= src->h) continue;
+                uint32_t v = src->px[(size_t)py * src->w + px];
+                if (!v) continue;
+                double wgt = (k & 1 ? fx : 1 - fx) * (k >> 1 ? fy : 1 - fy);
+                for (int ch = 0; ch < 4; ch++) acc[ch] += ((v >> (24 - ch * 8)) & 255) * wgt;
+            }
+            if (acc[0] < 0.5) continue;
+            uint32_t out = 0;
+            for (int ch = 0; ch < 4; ch++) out |= (uint32_t)(acc[ch] + 0.5 > 255 ? 255 : acc[ch] + 0.5) << (24 - ch * 8);
+            blend(&dst->px[(size_t)y * dst->w + x], out);
+        }
+}
+
 static void to_px(const Canvas *c, double lx, double ly, double *px, double *py)
 {
     *px = (lx - c->ox) * c->scale;
@@ -294,7 +331,9 @@ void draw_triangle(Canvas *c, double ax, double ay, double bx, double by, double
         }
 }
 
-static const FontFace *face(int big) { return big ? &font_20 : &font_14; }
+static int font_pick;
+void set_font(int k) { font_pick = k >= 0 && k < NFONTS ? k : 0; }
+static const FontFace *face(int big) { return fonts[font_pick][!!big]; }
 
 static int text_zoom = 1;
 void set_text_zoom(int z) { text_zoom = z < 1 ? 1 : z; }
@@ -313,6 +352,18 @@ double text_width(const char *s, int big)
 
 double text_lw(const Canvas *c, const char *s, int big) { return text_width(s, big) * (c->scale >= 1.75 ? 2 : 1) / c->scale; }
 
+static void glyph(Canvas *c, const FontFace *f, const Glyph *g, int x, int y, int sc, uint32_t argb)
+{
+    int b = f->px * sc; // whole pixel blocks so the blocky font stays crisp
+    for (int gy = 0; gy < g->h; gy++)
+        for (int gx = 0; gx < g->w; gx++) {
+            int i = g->off + gy * g->w + gx, a = (f->bits[i >> 1] >> (i & 1 ? 4 : 0)) & 15;
+            if (!a) continue;
+            for (int dy = 0; dy < b; dy++)
+                for (int dx = 0; dx < b; dx++) plot(c, x + g->x * sc + gx * b + dx, y + g->y * sc + gy * b + dy, argb, a / 15.0);
+        }
+}
+
 double draw_text(Canvas *c, double lx, double ly, const char *s, int big, uint32_t argb)
 {
     const FontFace *f = face(big);
@@ -320,18 +371,14 @@ double draw_text(Canvas *c, double lx, double ly, const char *s, int big, uint32
     to_px(c, lx, ly, &x, &y);
     int sc = (c->scale >= 1.75 ? 2 : 1) * text_zoom; // hidpi
     double start = lx;
+    uint32_t sh = (argb & 0xFF000000) | (argb >> 2 & 0x3F3F3F); // same color but a quarter as bright, like a game font
+    int lum = (argb >> 16 & 255) + (argb >> 8 & 255) + (argb & 255); // dark text on a light button looks smudged with one
     for (; *s; s++) {
         int ch = (unsigned char)*s;
         if (ch < 32 || ch > 126) ch = '?';
         const Glyph *g = &f->glyphs[ch - 32];
-        for (int gy = 0; gy < g->h; gy++)
-            for (int gx = 0; gx < g->w; gx++) {
-                uint8_t a = f->bits[g->off + gy * g->w + gx];
-                if (!a) continue;
-                for (int dy = 0; dy < sc; dy++)
-                    for (int dx = 0; dx < sc; dx++)
-                        plot(c, (int)x + (g->x + gx) * sc + dx, (int)y + (g->y + gy) * sc + dy, argb, a / 255.0);
-            }
+        if (f->px > 1 && lum > 300) glyph(c, f, g, (int)x + f->px * sc, (int)y + f->px * sc, sc, sh);
+        glyph(c, f, g, (int)x, (int)y, sc, argb);
         x += g->adv * sc;
         lx += g->adv * sc / c->scale; // whole px steps, so track logical x separately
     }

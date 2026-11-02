@@ -15,8 +15,9 @@
 
 <p align="center">
   open-chease watches your screen for a chess board, outlines every square in green and draws an arrow on the best move for your team.<br>
-  It updates twice a second and works on Linux (Hyprland, GNOME, XFCE, sway and most other X11 desktops), Windows 10/11 and macOS 14+.<br>
+  It updates twice a second and works on Linux (Hyprland, GNOME, KDE Plasma, Cinnamon, XFCE, sway and most other X11 desktops), Windows 10/11 and macOS 14+.<br>
   I mainly made this to mess with my friends, so please dont use it in rated games. chess.com and lichess will ban you for it.<br> <br>
+  Want it to do something it doesnt? Make a plugin for it, <a href="docs/PLUGINS.md">PLUGINS.md</a> walks you through it even if youve never coded.<br> <br>
   Do you like this project? If so, please let me know!
   <a href="https://sevvy-wevvy.com/discord">Discord</a>
 </p>
@@ -58,7 +59,7 @@ wget -qO- https://raw.githubusercontent.com/sevvy-wevvy/open-chease/main/get.sh 
 ```
 
 <p align="center">
-Everything goes in <code>~/.local/share/open-chease</code>
+Everything goes in <code>~/.local/share/open-chease</code>, and it shows up in your app menu so next time you can just click it. Starting it from there checks for updates first.
 </p>
 
 <br>
@@ -84,7 +85,7 @@ Some engines in the library need the <a href="https://aka.ms/vs/17/release/vc_re
 </p>
 
 <p align="center">
-Everything goes in <code>%LOCALAPPDATA%\open-chease</code>
+Everything goes in <code>%LOCALAPPDATA%\open-chease</code>, and it adds open-chease to the start menu (no console window, checks for updates first). For a desktop one too use <code>--desktop-shortcut</code> (see Options below).
 </p>
 
 <br>
@@ -110,7 +111,7 @@ macOS will ask you to let Terminal record the screen. Turn it on in System Setti
 </p>
 
 <p align="center">
-Everything goes in <code>~/Library/Application Support/open-chease</code>
+Everything goes in <code>~/Library/Application Support/open-chease</code>, and theres an open-chease app in <code>~/Applications</code> after the first run.
 </p>
 
 <br>
@@ -120,7 +121,7 @@ Everything goes in <code>~/Library/Application Support/open-chease</code>
 <h2 align="center">⚙️ Options</h2>
 
 <p align="center">
-The first run also grabs Stockfish (about 80 MB) so the moves are way stronger. Add <code>--no-stockfish</code> if you dont want it, or <code>--update</code> to get the newest open-chease.
+The first run also grabs Stockfish (about 80 MB) so the moves are way stronger. Add <code>--no-stockfish</code> if you dont want it, or <code>--update</code> to get the newest open-chease. On windows <code>--desktop-shortcut</code> puts one on your desktop too.
 </p>
 
 <p align="center"><b>Linux and mac</b></p>
@@ -174,6 +175,7 @@ Open a game on lichess, chess.com or pretty much anywhere with a flat colored bo
 <b>Gear on the top box</b> - Settings, they save so they stick next time (theres a whole section on them below)<br>
 <b>... on the top box</b> - Opens the menu:<br>
 &nbsp;&nbsp;<b>Helper mode</b> - Click it to go Helper, again for Both, again for back to cheats (more below)<br>
+&nbsp;&nbsp;<b>Compact</b> - Shrinks the box to a tiny pill with just the move, like Nf3 +0.4. The eye, gear and ... stay on it<br>
 &nbsp;&nbsp;<b>Show what it sees</b> - Puts a little tag on every square with the piece it thinks is there (white tag = white piece, black tag = black piece)<br>
 &nbsp;&nbsp;<b>Fix pieces</b> - Click a square, then pick what's really there (or Empty, or whose turn it is). Your fixes stick until that piece moves. Click Done fixing in the menu when youre done, the board isnt clickable for the game while this is on<br>
 &nbsp;&nbsp;<b>Its black's/white's turn</b> - If it got whose turn it is wrong<br>
@@ -196,6 +198,8 @@ The box always has whose turn it is, your win % (and how much the last move chan
 <b>Danger alerts</b> - "your queen is in danger" when something of yours can get taken for cheap, and "they have mate in 3" when its coming. Set it to With arrow and it also draws an arrow from the piece thats attacking it<br>
 <b>Threats</b> - what they'd play if they got another move right now, like "Nc2+ would fork your king and rook". With arrow draws it on the board too<br>
 Both arrows are red and dashed by default, Threat arrow, Threat color and Threat size in Gear > Helper change that<br>
+<b>Trap warnings</b> - when their last move leaves something that looks free but taking it goes bad, like "trap! taking on d1 gets you mated in 2". It marks the square too, and knows a few famous ones by name (Legal's mate, Elephant trap, Fishing Pole...)<br>
+<b>Repetition</b> - it keeps the moves since the last capture or pawn move and sends them to the engine, so it wont walk a won game into a threefold draw. Winning and a move would repeat? It says so and shows another one. Losing? It tells you when you can force a draw by repetition. Draws by repetition and the 50 move rule show up at the end like checkmate does<br>
 <b>Hint button</b> - the ? next to the gear. First click shows which piece, second where it goes, third the whole move<br>
 <b>What a ___ plays</b> - pick 1400 to 2400 and it tells you what someone that rated would probably play. Its your engine turned down, so dont take it as gospel<br>
 With a second opinion engine picked in Gear > Engine it also tells you when the two engines dont agree. Usually means its a tricky spot<br> <br>
@@ -214,7 +218,9 @@ Settings are split into tabs: Look, Yours, Theirs, Engine, Fun, Helper, Vision a
 <b>Look</b><br>
 14 themes, where the box sits (top, bottom, or stacked on the left or right), box size and how see-through it is<br>
 The grid can be lines, just the outline, corners or off, in any color<br>
-Score as pawns (+0.4), centipawns (+40) or win %, plus an eval bar next to the board if you want one<br> <br>
+Score as pawns (+0.4), centipawns (+40) or win %, plus an eval bar next to the board if you want one<br>
+Fonts: Normal, Pixel (blocky with a shadow, like a block game), Mono, Serif, Lato and Narrow<br>
+Compact turns the box into a tiny pill with just the move<br> <br>
 <b>Yours</b> (your move)<br>
 Arrows can be straight, bent for knights, curved, a swoosh, dashed, dotted, glowing or double<br>
 The piece to move and where it goes each get their own marker, theres 13 to pick from<br>
@@ -233,9 +239,10 @@ The lists live in the <code>engines</code> folder here so new ones show up witho
 <b>Fun</b><br>
 Mode is Cheats, Helper or Both (see Helper Mode above)<br>
 The move picker can give you the best move, one thats close enough, a random top 3, a coin flip, a totally random move, the worst move or only blunders. Theres also 5 human ones from 800 to 2400. They pick like a person that rated would (recaptures first, checks, early queen moves when its low rated) and the higher ones lean on the real engine move a lot more. In my tests 800 loses about a pawn a move on average and 2400 about a fifth of one<br>
+Play style changes which move it shows when a few are about as good: Aggressive, Solid, Tricky (the one where their most natural reply is a mistake), Sacrificial (gambits and sacs that still hold up) or Positional (quiet moves, space, no trades). It never goes more than about half a pawn under the best move<br>
 A strength cap (Full down to 1400), trash talk, grades for your moves and theirs with a roast attached, and confetti when you win<br> <br>
 <b>Helper</b><br>
-Material, taken pieces, opening & phase, win graph, turn timer, game report, last move, check warning, hanging pieces, move list, danger alerts, session score, threats, the hint button and what a ___ plays. Each one is its own setting<br>
+Material, taken pieces, opening & phase, win graph, turn timer, game report, last move, check warning, hanging pieces, move list, danger alerts, session score, threats, trap warnings, the hint button and what a ___ plays. Each one is its own setting<br>
 Danger alerts and threats can be off, just text or text with an arrow, and the arrow gets its own style, color and size<br> <br>
 <b>Vision</b><br>
 "Show what it sees" on from the start, square names on every square, and Rescan board (same as the one in the ... menu)<br>
@@ -246,7 +253,9 @@ If your piece set keeps getting misread (rooks as knights, that kind of thing) y
 4. come back to Gear > Vision and hit <b>Teach these pieces</b>. It learns the shapes from the board as it is right now and remembers them for that board<br>
 <b>Forget learned pieces</b> throws that away and goes back to the built in shapes<br> <br>
 <b>Themes</b><br>
-Every theme as a little preview card, click one to use it. Under that you can make up to 3 of your own: pick a slot and a part (box, text, buttons, grid, menus...), then click a color. It changes live. <b>Copy current theme</b> starts you off from whatever theme youre on. Your themes save with the rest of the settings
+Every theme as a little preview card, click one to use it. Under that you can make up to 3 of your own: pick a slot and a part (box, text, buttons, grid, menus...), then click a color. It changes live. <b>Copy current theme</b> starts you off from whatever theme youre on. Your themes save with the rest of the settings<br> <br>
+<b>Plugins</b><br>
+Every plugin you installed, with an on/off switch, a button to open its folder and its own settings under it. Paste a github link at the top to add one. Plugins are little programs anyone can make that draw on the overlay, add settings and react to moves, <a href="docs/PLUGINS.md">PLUGINS.md</a> says how. Want to make one? The <a href="https://github.com/sevvy-wevvy/open-chease/tree/plugin-template">plugin-template</a> branch has one that uses everything, with notes all through it, just copy it and start changing stuff
 </p>
 </details>
 
@@ -258,7 +267,7 @@ These work with run.sh and get.sh, and with run.ps1 / the scriptblock way on win
 <b>--team white</b> or <b>--team black</b> - Skips the question and always plays that side<br>
 <b>--builtin</b> - Uses my engine even if Stockfish is there<br>
 <b>--engine PATH</b> - Use any other UCI engine<br>
-<b>--backend wayland / gnome / x11</b> - Force how it grabs the screen if it picks wrong (linux only, windows and mac only have one way)<br>
+<b>--backend wayland / portal / gnome / x11</b> - Force how it grabs the screen if it picks wrong (linux only, windows and mac only have one way)<br>
 <b>-v</b> or <b>-vv</b> - Prints what its seeing
 </p>
 </details>
@@ -269,8 +278,9 @@ These work with run.sh and get.sh, and with run.ps1 / the scriptblock way on win
 <p align="center">
 Start it before the game starts if you can. It learns your piece set from the starting position and in my tests it got 99.9% of moves right that way. It remembers the set for each board look, so once its seen a game start on a site it uses the right pieces there even when you jump in mid game later. Jumping in mid game works too but it has to guess the pieces from shapes it already knows, so with a weird piece set its more like 80%. If it gets something wrong use Fix pieces.<br> <br>
 Flat board themes work best (lichess brown/blue/green, chess.com green, most others). Wood and marble boards work too but worse, it finds almost all of them and reads every piece right on about 7 out of 10. Recolored piece sets (pink, gold) are hit or miss, mostly when the pieces are close to the square color.<br> <br>
+Boards seen at an angle work too, like a 3d game (Roblox chess and that kind of thing) where the camera looks at the board tilted. It has to see all 64 squares and it takes a couple seconds longer to find than a flat one.<br> <br>
 If part of the board is covered or scrolled off screen it keeps following the moves it can see, but it wont re-read the whole board until you can see all of it again. Same with the settings or ... menu, if they sit on the board it pauses and catches up when you close them.<br> <br>
-GNOME shows the screen sharing icon while its running, thats normal. On XFCE the compositor has to be on (its on by default, it'll tell you if it isnt).
+GNOME shows the screen sharing icon while its running, thats normal. On KDE Plasma (wayland) it asks which screens to share the first time, pick all of them and it remembers, so it wont ask again until you take the permission away. On XFCE the compositor has to be on (its on by default, it'll tell you if it isnt). On Cinnamon if the overlay vanishes over a fullscreen browser turn off "Disable compositing for full-screen windows" in Effects.
 </p>
 </details>
 
@@ -295,8 +305,8 @@ Still broken? Open an <a href="https://github.com/sevvy-wevvy/open-chease/issues
 <summary align="center"><b>🧠 How It Works 🧠</b></summary>
 
 <p align="center">
-<b>Grabbing the screen</b> - wlr-screencopy on Hyprland/sway, Mutters ScreenCast on GNOME, XGetImage on X11 stuff like XFCE, plain GDI BitBlt on Windows and ScreenCaptureKit on macOS<br>
-<b>The overlay</b> - a click through layer-shell surface on Hyprland and sway, and a click through override-redirect window on GNOME and X11 since those dont have layer-shell. It only sends the parts of the screen that changed. On Windows its a layered window per monitor and on mac a borderless NSWindow, both of those let clicks through except when the mouse is over one of the buttons<br>
+<b>Grabbing the screen</b> - wlr-screencopy on Hyprland/sway, Mutters ScreenCast on GNOME, the xdg-desktop-portal ScreenCast on KDE, the Cinnamon wayland session and any other wayland desktop without screencopy (it saves the portals restore token in the data folder so it only asks once), XGetImage on X11 stuff like XFCE and Cinnamon, plain GDI BitBlt on Windows and ScreenCaptureKit on macOS<br>
+<b>The overlay</b> - a click through layer-shell surface on Hyprland, sway and KDE, and a click through override-redirect window on GNOME, Cinnamon and X11 since those dont have layer-shell. It only sends the parts of the screen that changed. On Windows its a layered window per monitor and on mac a borderless NSWindow, both of those let clicks through except when the mouse is over one of the buttons<br>
 <b>Finding boards</b> - looks for rows of alternating square colors, tries every 8x8 grid that fits, then snaps it to the real square edges. If that finds nothing it tries again on a blurred copy looking for square edges instead of exact colors (thats how wood and marble boards get found). If the screen didnt change since the last look it skips it, and after 30 seconds with no board it only looks once a second<br>
 <b>Following the game</b> - checks which squares have a white piece, a black piece or nothing, and matches that against every legal move (and pairs of moves) to figure out what was played. Promoted pieces get compared to the pieces already on the board<br>
 <b>The engine</b> - its my own, in src/engine.c, does about 2 million positions a second. bin/open-chease-engine is the same thing as a normal UCI engine if you want to use it somewhere else. If Stockfish is around it uses that instead
@@ -311,7 +321,8 @@ Still broken? Open an <a href="https://github.com/sevvy-wevvy/open-chease/issues
 <code>tests/perft.sh</code> checks the move generator against known numbers<br>
 <code>tests/fetch_pieces.sh cburnett merida alpha staunty maestro</code> grabs piece sets for the vision test<br>
 <code>python3 tests/run_vision.py 1 60</code> runs 60 random boards through the vision code. Add <code>TEXTURES=wood,marble,gradient,noise</code>, <code>THEMES=purple,night,wood,red</code> or <code>TINTS="wFFB0B0,b3050C0"</code> to throw custom looking boards and recolored pieces at it<br>
-<code>python3 tests/track_sim.py --games 60</code> plays 60 whole fake games through the tracker with all the annoying stuff sites do (dragging, move dots, promotion popups, check glow, missed moves) and tells you how many moves it got right. Needs <code>pip install chess</code><br> <br>
+<code>python3 tests/track_sim.py --games 60</code> plays 60 whole fake games through the tracker with all the annoying stuff sites do (dragging, move dots, promotion popups, check glow, missed moves) and tells you how many moves it got right. Needs <code>pip install chess</code><br>
+Add <code>SIM_ANIM=shimmer,bob</code> (or <code>all</code>, kinds are shimmer pulse hue scroll hlpulse sparkle bob scale spin frames glow) to make the board and pieces keep moving like an animated theme does, <code>SIM_ANIM_STR=0.5</code> for less. <code>python3 tests/run_anim.py 1 40</code> does the same on still frames<br> <br>
 tests/page/index.html is a board that plays a game by itself (add <code>?flip=1</code>, <code>?fen=...</code> or <code>?ms=2500</code>). Its really handy for watching the overlay. Serve it with <code>python3 -m http.server</code> from tests/page.
 </p>
 </details>
@@ -333,7 +344,7 @@ As long as it works, and doesnt vary off too far from the main idea its very lik
 
 <p align="center">
 The built in piece shapes come from the lichess piece sets (cburnett, merida, leipzig, tatiana, companion, chessnut, kosal, cardinal, governor, fresca and riohacha), squished down to tiny 24x24 outlines.<br>
-The overlay font is DejaVu Sans Bold.<br>
+The overlay fonts are DejaVu Sans Bold, Sans Mono Bold and Serif Bold (Bitstream Vera license), Lato Black by Łukasz Dziedzic and Liberation Sans Narrow Bold (both SIL Open Font License 1.1), baked into bitmaps by tools/gen_font.py. The Pixel font is drawn by hand in that same file.<br>
 The Wayland and X11 headers in third_party/ are MIT licensed.
 </p>
 </details>
