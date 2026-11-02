@@ -115,7 +115,7 @@ static int poll_tools(long now)
     return dirty;
 }
 
-static int is(const char *w, const char *list) // w is one of the words in list
+static int is(const char *w, const char *list)
 {
     size_t l = strlen(w);
     for (const char *s = list; *s;) {
@@ -139,7 +139,7 @@ static int tool_of(const char *w) // a name from lang or needs, -2 = open-chease
     return -1;
 }
 
-static void first_word(const char *s, char *out, int n) // lowercase, no folders, no .exe
+static void first_word(const char *s, char *out, int n)
 {
     while (*s == ' ' || *s == '"') s++;
     int l = 0;
@@ -405,7 +405,7 @@ static int building(void)
     return 0;
 }
 
-void plug_start(Plugin *p) // os, then languages, then the safety ok, then the build, then run it
+void plug_start(Plugin *p)
 {
     if (p->alive || p->bjob) return;
     p->want = p->bfail = 0;

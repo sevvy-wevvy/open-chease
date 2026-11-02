@@ -66,7 +66,7 @@ int job_done(intptr_t h, int *ok);
 void job_kill(intptr_t h);
 void rm_tree(const char *path);
 int clip_get(char *out, int n); // clipboard text, 0 if theres none
-int on_path(const char *name, char *out, size_t n); // full path of a program on PATH
+int on_path(const char *name, char *out, size_t n);
 intptr_t cmd_start(const char *cmd, const char *dir, const char *log); // shell command inside dir, all its output into log. job_done/job_kill it
 
 void engine_path_for(const char *data, const char *slug, char *out, size_t n);

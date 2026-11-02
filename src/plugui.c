@@ -89,7 +89,7 @@ static double plug_grid(Canvas *c, Rect m, double y, double pad, int pi, int dra
 
 static char plug_url[160];
 int plug_typing;
-static int plug_ask = -1; // the plugin the turn on popup is about
+static int plug_ask = -1;
 static intptr_t pget_pid;
 static double plug_add_row(Canvas *c, Rect m, double y, double pad, int draw, int hit)
 {
@@ -125,7 +125,7 @@ static int plug_link(const char *url, char *out, size_t n) // only plain web lin
     return 1;
 }
 
-static double plug_entry(Canvas *c, Rect m, double y, double pad, int i, int draw, int hit) // one plugin in the Plugins tab
+static double plug_entry(Canvas *c, Rect m, double y, double pad, int i, int draw, int hit)
 {
     Plugin *p = &plugs[i];
     double w = m.w - 2 * pad;
@@ -215,7 +215,7 @@ static double plug_entry(Canvas *c, Rect m, double y, double pad, int i, int dra
     y += 22;
     for (int k = 0; p->bfail && k < 3 && p->blog[k][0]; k++, y += 18)
         if (draw) draw_text(c, m.x + pad + 18, y, fit_text(c, p->blog[k], w - 28), 0, (TH->sub & 0xFFFFFF) | 0xC0000000);
-    if (osok && (miss >= 0 || p->bfail)) { // Get python / Check again, or Build again
+    if (osok && (miss >= 0 || p->bfail)) {
         char gl[40];
         snprintf(gl, sizeof(gl), "Get %s", plug_tool_name(miss));
         const char *again = p->bfail ? "Build again" : "Check again";
@@ -538,7 +538,7 @@ void plug_import_poll(void)
         back[k] = was >= 0 && plugs[was].on;
         char dst[1300];
         snprintf(dst, sizeof(dst), "%.1200s/%.31s", pdir, name[k]);
-        if (was >= 0) { // updating one, stop it and drop it so the scan reads its plugin.txt again
+        if (was >= 0) {
             plug_stop(&plugs[was], "off");
             memmove(&plugs[was], &plugs[was + 1], sizeof(plugs[0]) * (size_t)(nplugs - was - 1));
             nplugs--;
@@ -559,12 +559,12 @@ void plug_import_poll(void)
     else if (!got) snprintf(note, sizeof(note), "couldnt add it, %s", nplugs >= PL_MAX ? "you have the most plugins it can hold" : "the plugins folder wont take it");
     else {
         char says[200] = "";
-        for (int k = 0; k < n && !*says; k++) // first one with something to say, thats usually the only one
+        for (int k = 0; k < n && !*says; k++)
             for (int i = 0; i < nplugs; i++)
                 if (!strcmp(plugs[i].name, name[k]) && plug_flags(&plugs[i])) plug_says(&plugs[i], says, sizeof(says));
         if (*says) snprintf(note, sizeof(note), "%s %.60s, heads up: it %.120s. it shows you what it found before it runs", upd == got ? "updated" : "added", msg, says);
         else if (upd == got) snprintf(note, sizeof(note), "updated %s", msg);
-        else snprintf(note, sizeof(note), "added %s, turn it on below. only turn on plugins you trust", msg);
+        else snprintf(note, sizeof(note), "added %s, turn it on below", msg);
     }
     set_note(note);
 }
@@ -706,7 +706,7 @@ void plug_click(int act, int arg, Rect r, double x, int can_hold)
         int up = !p->on || (!p->alive && !p->trusted); // on but waiting for an ok counts as turning it on
         if (up) {
             plug_recheck(p);
-            if (!p->trusted) { // flagged, it doesnt get to run till they read what was found
+            if (!p->trusted) {
                 plug_ask = arg;
                 break;
             }

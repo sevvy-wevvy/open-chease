@@ -78,7 +78,7 @@ def grad_square(cols, s):
     return _grad[k]
 
 
-# SIM_ANIM=shimmer,pulse,hue,scroll,hlpulse,sparkle,bob,scale,spin,frames,glow (or all), SIM_ANIM_STR=1 how hard.
+# SIM_ANIM=shimmer,pulse,hue,scroll,hlpulse,sparkle,bob,scale,spin,frames,glow (or all), SIM_ANIM_STR=1 how hard
 # t is the frame number, so the board keeps changing while nobody moves
 ANIM = set(os.environ.get("SIM_ANIM", "").replace("all", "shimmer,pulse,hue,scroll,hlpulse,sparkle,bob,scale,spin,frames,glow").split(",")) - {""}
 AS = float(os.environ.get("SIM_ANIM_STR", "1"))

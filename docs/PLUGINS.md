@@ -1,7 +1,7 @@
 <h1 align="center">🧩 open-chease plugins 🧩</h1>
 
 <p align="center">
-<b>Little programs that run next to open-chease, draw on the overlay and add their own settings.</b>
+<b>Little programs that run next to open-chease and draw on the overlay.</b>
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@ Made something cool? Please let me know!
 
 <p align="center">
 <b>1. Whats a plugin?</b><br>
-Its a normal program on your computer. open-chease starts it when you turn it on, then sends it lines of text like <code>move e2e4 e4</code>. The plugin answers with lines like <code>draw arrow g1 f3 #1fe0e0</code> and open-chease draws that on the board. Thats the whole idea.<br> <br>
+Its a normal program on your computer. open-chease starts it when you turn it on, then sends it lines of text like <code>move e2e4 e4</code>. The plugin answers with lines like <code>draw arrow g1 f3 #1fe0e0</code> and open-chease draws that on the board.<br> <br>
 <b>2. Install python</b><br>
 Python is the easiest one to start with. Check if you have it by typing <code>python3 --version</code> in a terminal (<code>py --version</code> on windows).<br>
 Dont have it? On windows and mac get it from <a href="https://www.python.org/downloads/">python.org</a>, on windows tick the "Add python.exe to PATH" box. On linux its almost always there already, if not install <code>python3</code> with your package manager.<br> <br>
@@ -343,10 +343,10 @@ If it goes online without saying so in <code>internet = &lt;why&gt;</code>, it g
 If it did say why it still gets a went online chip and you get asked, but it keeps running and you see its reason. Hit Its fine and it doesnt ask again until its files change.<br> <br>
 A few files dont count as changes: <code>frame.ppm</code> (screen reading writes it), and <code>build.log</code> and <code>.built</code> for plugins with a build line. Since those get skipped, a <code>run</code> line that points at one of them gets flagged as shady.<br> <br>
 <b>Be careful anyway</b><br>
-The check looks for known patterns, it cant catch everything. Someone who really wants to hide something can. A plugin with no chips isnt proof its safe, it just means nothing obvious showed up.<br>
+The check only knows patterns, so someone who really wants to hide something can. No chips just means nothing obvious showed up.<br>
 <b>Only run plugins you trust</b>, or ones you read yourself.<br> <br>
 <b>Making one that comes out clean</b><br>
-Dont start other programs, dont ship built programs, and if your plugin needs the internet say why with <code>internet = </code>.
+Dont start other programs or ship built ones. Needs the internet? Say why with <code>internet = </code>.
 </p>
 </details>
 
@@ -587,7 +587,7 @@ So a broken plugin cant take open-chease down with it:<br> <br>
 <b>23</b> chars per choice<br>
 <b>31</b> chars for setting keys, menu keys or folder names (letters, numbers, <code>-</code> <code>_</code> <code>.</code>)<br>
 <b>39</b> chars for setting labels and the box title<br>
-<b>159</b> chars for tips<br>
+<b>159</b> chars for setting tips, <b>99</b> for menu tips<br>
 <b>23</b> chars for tab names and menu labels<br>
 <b>5</b> plugin tabs in total, after that the rest go in the Plugins tab<br>
 <b>4</b> menu items per plugin<br>

@@ -386,7 +386,7 @@ static void flag(Plugin *p, int cat, const char *rel, int line, const char *what
     else snprintf(p->flag[cat][k], sizeof(p->flag[0][0]), "%.36s %.36s", rel, what);
 }
 
-static int rm_root(const char *low) // rm -rf on / ~ or $HOME
+static int rm_root(const char *low)
 {
     for (const char *q = low; (q = has(q, "rm ")); q++) {
         const char *s = q + 3;
@@ -409,7 +409,7 @@ static int rm_root(const char *low) // rm -rf on / ~ or $HOME
     return 0;
 }
 
-static int url_at(const char *low, char *host, int n) // first http(s) link that isnt this pc
+static int url_at(const char *low, char *host, int n)
 {
     static const char *sch[] = {"http://", "https://", "ws://", "wss://", "ftp://"};
     for (int k = 0; k < 5; k++)
@@ -424,7 +424,7 @@ static int url_at(const char *low, char *host, int n) // first http(s) link that
     return 0;
 }
 
-static int ip_at(const char *s, char *out, int n) // a raw ipv4 that isnt this pc
+static int ip_at(const char *s, char *out, int n)
 {
     for (const char *q = s; *q; q++) {
         if (*q < '0' || *q > '9' || (q > s && (alnum((unsigned char)q[-1]) || q[-1] == '.'))) continue;
@@ -484,7 +484,7 @@ static void scan_text(Plugin *p, FILE *f, const char *rel, int doc)
         cont = l && ln[l - 1] != '\n';
         for (size_t i = 0; i <= l; i++) low[i] = ln[i] >= 'A' && ln[i] <= 'Z' ? ln[i] | 32 : ln[i];
         if (doc == 2 && *low == '#') continue; // plugin.txt comments are just notes, its keys are what counts
-        int got = doc == 1 ? 1 << PF_NET | 1 << PF_RUN : 0; // one reason per kind per line. docs talk about stuff, only the scary bits count there
+        int got = doc == 1 ? 1 << PF_NET | 1 << PF_RUN : 0; // docs talk about stuff, only the scary bits count there
         for (size_t i = 0; i < sizeof(rules) / sizeof(rules[0]); i++) {
             const Rule *r = &rules[i];
             if (got >> r->cat & 1 || !has(low, r->s)) continue;
@@ -494,13 +494,13 @@ static void scan_text(Plugin *p, FILE *f, const char *rel, int doc)
         }
         if (!(got >> PF_WIPE & 1) && rm_root(low)) got |= 1 << PF_WIPE, flag(p, PF_WIPE, rel, line, "rm -rf on home or /");
         if (!(got >> PF_SHADY & 1) && blob(ln)) got |= 1 << PF_SHADY, flag(p, PF_SHADY, rel, line, "long encoded blob");
-        if (doc || got & 1 << PF_NET) continue; // docs are full of links, they dont do anything
+        if (doc || got & 1 << PF_NET) continue;
         char what[64];
         if (url_at(low, w, sizeof(w)) || ip_at(low, w, sizeof(w))) snprintf(what, sizeof(what), "%s", w), flag(p, PF_NET, rel, line, what);
     }
 }
 
-static uint64_t seen[1600]; // hash of every file the last scan looked at
+static uint64_t seen[1600];
 static int nseen;
 static void scan_dir_all(Plugin *p);
 static void plug_check(Plugin *p);
@@ -515,8 +515,7 @@ static int first_word(const char *s, char *out, int n)
     return l;
 }
 
-// files a build made dont count as the plugins own, or every build would need a new ok.
-// the list lives in the data folder, not the plugin, so a plugin cant fake one
+// kept in the data folder so a plugin cant write its own list
 static void made_path(const Plugin *p, char *out, size_t n) { snprintf(out, n, "%.980s/plugin-builds/%s.txt", data_dir, p->name); }
 
 static void made_read(Plugin *p)
@@ -552,7 +551,7 @@ void plug_built(Plugin *p)
     int ok = p->trusted;
     uint64_t was = p->hash;
     p->nmade = 0;
-    scan_dir_all(p); // nothing skipped, sees the new files too
+    scan_dir_all(p);
     for (int i = 0; i < nseen; i++) {
         int old = 0;
         for (int k = 0; k < npre && !old; k++) old = pre[k] == seen[i];
@@ -574,7 +573,7 @@ static void scan_file(Plugin *p, const char *path, const char *rel, long size)
 {
     const char *nm = strrchr(rel, '/');
     nm = nm ? nm + 1 : rel;
-    if (!strcmp(rel, "frame.ppm") || !strcmp(rel, "frame.ppm.tmp")) return; // ours, it changes every frame
+    if (!strcmp(rel, "frame.ppm") || !strcmp(rel, "frame.ppm.tmp")) return; // ours
     if (*p->build && (!strcmp(rel, "build.log") || !strcmp(rel, ".built"))) return; // the build writes these, even when it fails
     FILE *f = fopen(path, "rb");
     if (!f) return;
@@ -587,7 +586,7 @@ static void scan_file(Plugin *p, const char *path, const char *rel, long size)
     while (n == sizeof(h) && left > 0 && (got = fread(buf, 1, sizeof(buf), f)) > 0) fh = fnv(fh, buf, got), left -= (long)got;
     if (nseen < (int)(sizeof(seen) / sizeof(seen[0]))) seen[nseen++] = fh;
     for (int i = 0; i < p->nmade; i++)
-        if (p->made[i] == fh) { // its own build made this exact file
+        if (p->made[i] == fh) {
             fclose(f);
             return;
         }
@@ -602,7 +601,7 @@ static void scan_file(Plugin *p, const char *path, const char *rel, long size)
     if (strstr(nm, ".so.")) bin = 1;
     if (bin) flag(p, PF_BIN, rel, 0, "is a program, cant read it");
     if (!strcmp(nm, "build.rs")) flag(p, PF_BUILD, rel, 0, "runs while cargo builds");
-    if (!bin && !memchr(h, 0, n) && size <= (2 << 20)) { // pictures and huge stuff only get hashed
+    if (!bin && !memchr(h, 0, n) && size <= (2 << 20)) {
         int doc = !strcmp(rel, "plugin.txt") ? 2 : ends(nm, ".md") || ends(nm, ".txt") || ends(nm, ".rst") || (!strchr(nm, '.') && !(n >= 2 && h[0] == '#' && h[1] == '!'));
         rewind(f);
         scan_text(p, f, rel, doc);
@@ -625,7 +624,7 @@ static void scan_dir(Plugin *p, const char *dir, const char *rel, int depth, int
 #ifdef _WIN32
         if (stat(path, &st)) continue;
 #else
-        if (lstat(path, &st) || S_ISLNK(st.st_mode)) continue; // a link could point anywhere
+        if (lstat(path, &st) || S_ISLNK(st.st_mode)) continue;
 #endif
         if (S_ISDIR(st.st_mode)) {
             if (depth < 8) scan_dir(p, path, r, depth + 1, left);
@@ -655,7 +654,7 @@ static void plug_check_build(Plugin *p) // build lines in plugin.txt that run mo
     struct stat st;
     snprintf(mf, sizeof(mf), "%s/plugin.txt", p->dir);
     FILE *in = fopen(mf, "r");
-    while (in && fgets(ln, sizeof(ln), in)) { // build = and build.windows = and so on
+    while (in && fgets(ln, sizeof(ln), in)) {
         char *k = ln, *eq = strchr(ln, '=');
         while (*k == ' ') k++;
         if (strncmp(k, "build", 5) || (k[5] != ' ' && k[5] != '=' && k[5] != '.') || !eq) continue;
@@ -721,7 +720,7 @@ void plug_says(const Plugin *p, char *out, int n)
     int m = plug_flags(p), cnt = 0, done = 0;
     for (int k = 0; k < PF_N; k++) cnt += m >> k & 1;
     *out = 0;
-    for (int k = PF_N - 1; k >= 0; k--) { // scary stuff first
+    for (int k = PF_N - 1; k >= 0; k--) { // worst first
         if (!(m >> k & 1)) continue;
         size_t l = strlen(out);
         done++;
@@ -918,7 +917,7 @@ int plug_menu_list(int *pi, int *k, int max)
 {
     int n = 0;
     long last = -1;
-    while (n < max) { // smallest seq after the last one, theres only a handful
+    while (n < max) { // tiny list, no sort
         int bi = -1, bk = -1;
         for (int i = 0; i < nplugs; i++)
             for (int j = 0; plugs[i].alive && j < plugs[i].nmenu; j++) {
@@ -1253,7 +1252,7 @@ int plug_poll(long now)
                 snprintf(p->online, sizeof(p->online), "%s", at);
                 if (loud) fprintf(stderr, "plugin %s: went online, %s\n", p->name, at);
                 if (!p->net_ok) p->net_new = 1;
-                if (!p->net_ok && !*p->net_why) { // it never said it would, off till the user says ok again
+                if (!p->net_ok && !*p->net_why) { // undeclared
                     char k[80];
                     snprintf(k, sizeof(k), "plugin.%.31s:ok", p->name);
                     Saved *sv = saved_get(k, 0);

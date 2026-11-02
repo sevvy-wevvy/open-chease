@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# checks the plugin safety scan finds the right stuff in tests/plug-bad and nothing in the clean ones
+# the plugin safety scan should find the right stuff in tests/plug-bad and nothing in the clean ones
 # B=bin/open-chease tests/plugscan.sh [more clean plugin folders...]
 cd "$(dirname "$0")/.."
 B=${B:-bin/open-chease}
 bad=0 n=0
 want() { # folder, then the kinds it should find
-  local d=$1; shift
-  local got
+  local d=$1 got exp; shift
   got=$("$B" --check-plugin "$d" | grep -v '^ ' | tail -n +2 | sed 's/ [0-9]*$//' | sort | paste -sd, -)
-  local exp
   exp=$(printf '%s\n' "$@" | sort | paste -sd, -)
   n=$((n+1))
   if [ "$got" != "$exp" ]; then bad=$((bad+1)); echo "FAIL $d: got [$got] want [$exp]"; fi

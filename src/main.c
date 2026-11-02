@@ -6238,7 +6238,7 @@ int main(int argc, char **argv)
         if (settings_open && ov->pointer && wait > 100) wait = 100; // keeps an eye on the mouse for the tooltips
         if ((slide_i >= 0 || plug_sliding()) && wait > 16) wait = 16;
         if (plug_running() && wait > 50) wait = 50; // their pipes get read in between
-        if (ctl_fd >= 0 && wait > 150) wait = 150; // checks the --send fifo
+        if (ctl_fd >= 0 && wait > 150) wait = 150; // so a --send doesnt sit there
         int r = ov->wait_events(ov, wait, &cx, &cy);
         if (r < 0) break;
         ctl_poll();

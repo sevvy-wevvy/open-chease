@@ -1479,7 +1479,7 @@ int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), voi
 
 static int soft_colors;
 
-// 1 = px is the board color made lighter or a bit darker (shimmer, moving light, noise), 2 = blown out to white so cant tell, 0 = something else
+// 1 = px is just the board color lit up or a bit darker, 2 = blown out to white so cant tell, 0 = something else
 static int lit(const uint8_t *px, const uint8_t *bg)
 {
     int d[3], sum = 0, n = 0;

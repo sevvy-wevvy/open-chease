@@ -1,8 +1,6 @@
 #ifndef OC_PLUGUI_H
 #define OC_PLUGUI_H
 
-// the plugins tab, popups, board drawings and menu items. main.c only calls these
-
 #include "plugin.h"
 #include "ui.h"
 
@@ -14,24 +12,24 @@ enum {
 
 #define PLUG_MENU_MAX PL_MENU_ALL
 
-extern int plug_typing; // the add plugin box has the keyboard
+extern int plug_typing;
 
-void plug_boot(void); // scan the folder and start the ones that are on
-int plug_pump(void); // tell them whats new and read what they said, 1 = redraw
+void plug_boot(void);
+int plug_pump(void); // 1 = redraw
 void plug_rescan(void);
 void plug_import_poll(void);
 void plug_key(int ch);
-void plug_tabs(void); // adds the plugin tabs to all_tabs
+void plug_tabs(void);
 double plug_tab(Canvas *c, Rect m, double y, double pad, int t, int draw, int hit);
 void plug_folder_button(Canvas *c, Rect rs, int hit);
 void plug_popups(Canvas *c, Rect bl, Rect p, Rect outr, int hit);
-void plug_items(Canvas *c, Rect bl, int bottom, double tk); // what they draw on the board
+void plug_items(Canvas *c, Rect bl, int bottom, double tk);
 void plug_panels(Canvas *c, Rect bl, Rect outr, Rect info, int left);
-int plug_menu_rows(const char *label[], const char *tip[], int arg[]); // ... menu items, arg goes with ACT_PLUG_MENU
+int plug_menu_rows(const char *label[], const char *tip[], int arg[]); // arg goes back with ACT_PLUG_MENU
 void plug_reset_tab(int t);
 void plug_click_seen(int act); // any click, closes the popup and stops typing
 void plug_click(int act, int arg, Rect r, double x, int can_hold);
 int plug_sliding(void);
-int plug_drag(int held, double x); // 1 while the slider is held
+int plug_drag(int held, double x);
 
 #endif

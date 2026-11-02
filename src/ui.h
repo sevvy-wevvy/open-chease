@@ -1,8 +1,6 @@
 #ifndef OC_UI_H
 #define OC_UI_H
 
-// the parts of main.c that other ui files (plugui.c) draw with
-
 #include "app.h"
 
 enum { SCANNING, ASKING, TRACKING };
@@ -32,7 +30,7 @@ extern Tracker tracker;
 extern char data_dir[1024];
 extern int verbose, menu_open, settings_open, set_typing, dd_open, set_tab, ntabs;
 extern const char *tab_names[NTABS], *all_tabs[MAX_TABS];
-extern Rect set_box; // where the settings box is right now
+extern Rect set_box;
 
 const Theme *cur_theme(void);
 long now_ms(void);

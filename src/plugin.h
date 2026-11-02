@@ -11,9 +11,8 @@
 #define PL_ITEMS 160
 #define PL_LINES 10
 #define PL_CHOICES 10
-#define PL_MENU 4 // menu items per plugin
-#define PL_MENU_ALL 6 // and in the whole ... menu
-#define PL_PROTO 1
+#define PL_MENU 4
+#define PL_MENU_ALL 6 // for the whole ... menu
 #define PL_PROTO_S "1"
 
 #ifdef _WIN32
@@ -52,7 +51,7 @@ typedef struct {
 
 typedef struct {
     char key[32], label[24], tip[100];
-    long seq; // first come first shown
+    long seq;
 } PlugMenu;
 
 enum { PT_PYTHON, PT_NODE, PT_CC, PT_CXX, PT_RUST, PT_DOTNET, PT_N };
@@ -84,13 +83,13 @@ typedef struct {
     char blog[3][90]; // end of build.log when it failed
     uint64_t srchash;
     int nflag[PF_N];
-    char flag[PF_N][PL_WHY][80]; // file:line what, first few of each
-    char net_why[100], online[64]; // online = where it went, first time it got caught
+    char flag[PF_N][PL_WHY][80];
+    char net_why[100], online[64];
     int net_ok, net_new;
     long net_t;
     uint64_t hash; // every file plus the run line, an ok only counts for these exact files
     int okv, trusted;
-    uint64_t made[64]; // files its build made, skipped by the check
+    uint64_t made[64];
     int nmade;
 } Plugin;
 
@@ -115,30 +114,28 @@ void plug_cfg_line(const char *key, const char *val);
 void plug_cfg_save(FILE *f);
 int plug_square(const char *s); // "e4" -> 28, -1 if its not one
 void plug_launch(Plugin *p); // starts the program, plug_start does the checks first
-int plug_menu_list(int *pi, int *k, int max); // every plugin menu item in the order they came, returns how many
+int plug_menu_list(int *pi, int *k, int max);
 void plug_menu_click(int pi, int k);
 
-// plugrun.c: languages, versions, builds
 int plug_os_ok(const Plugin *p);
 int plug_lang(const Plugin *p); // PT_* it needs, -1 = nothing to check
 int plug_ready(Plugin *p, char *why, int n); // 1 good to go, 0 still checking, -1 cant (why says it)
-int plug_missing(const Plugin *p); // PT_* thats missing or too old, -1 if none
+int plug_missing(const Plugin *p);
 const char *plug_tool_name(int t);
 const char *plug_tool_url(int t);
-void plug_tools_recheck(void); // forget what was found and failed builds, start the ones that are on
-int plug_run_poll(long now); // 1 = a row changed
+void plug_tools_recheck(void);
+int plug_run_poll(long now);
 int plug_busy(void);
 void plug_run_stop(Plugin *p);
 
-// plugin.c: the safety check
 extern const char *plug_flag_name[PF_N], *plug_flag_says[PF_N];
-int plug_flags(const Plugin *p); // bit per PF_ it found
+int plug_flags(const Plugin *p);
 void plug_says(const Plugin *p, char *out, int n); // "uses the internet and runs programs"
 void plug_net_fine(Plugin *p, int ok); // going online is fine, remembered till its files change
-void plug_trust(Plugin *p); // the user read the warnings and said go
-void plug_recheck(Plugin *p); // scan again, stops it if the files changed under it
-int plug_cleared(Plugin *p); // scans again, 1 = clean or the user said ok to these exact files. call it right before a build
-void plug_built(Plugin *p); // after a build worked, whatever it made stops counting as the plugins own files
-int plug_check_dir(const char *dir, FILE *out); // --check-plugin, prints what the check finds
+void plug_trust(Plugin *p);
+void plug_recheck(Plugin *p); // stops it if the files changed under it
+int plug_cleared(Plugin *p); // call right before a build
+void plug_built(Plugin *p); // whatever the build made stops counting as the plugins own files
+int plug_check_dir(const char *dir, FILE *out); // --check-plugin
 
 #endif
