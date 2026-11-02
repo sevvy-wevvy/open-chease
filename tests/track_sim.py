@@ -1,6 +1,7 @@
-import argparse, ctypes, os, random, shutil, subprocess, sys, tempfile
+import argparse, ctypes, math, os, random, shutil, subprocess, sys, tempfile
 import chess
-from PIL import Image, ImageDraw, ImageFont
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 here = os.path.dirname(os.path.abspath(__file__))
 root = os.path.dirname(here)
@@ -77,6 +78,84 @@ def grad_square(cols, s):
     return _grad[k]
 
 
+# SIM_ANIM=shimmer,pulse,hue,scroll,hlpulse,sparkle,bob,scale,spin,frames,glow (or all), SIM_ANIM_STR=1 how hard.
+# t is the frame number, so the board keeps changing while nobody moves
+ANIM = set(os.environ.get("SIM_ANIM", "").replace("all", "shimmer,pulse,hue,scroll,hlpulse,sparkle,bob,scale,spin,frames,glow").split(",")) - {""}
+AS = float(os.environ.get("SIM_ANIM_STR", "1"))
+_noise = {}
+
+
+def noise_tile(s):
+    if s not in _noise:
+        r = np.random.default_rng(s)
+        n = Image.fromarray((r.random((s, s)) * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(max(1, s / 18)))
+        a = np.asarray(n).astype(np.float32)
+        a = (a - a.mean()) / max(1, a.std())
+        _noise[s] = np.tile(a, (2, 2))
+    return _noise[s]
+
+
+def anim_board(img, x, y, n, t):  # whole board area, under the pieces
+    a = np.asarray(img.crop((x, y, x + n, y + n))).astype(np.float32)
+    if "hue" in ANIM:  # swing the hue a bit, keeps light and dark apart
+        hsv = np.asarray(Image.fromarray(a.astype(np.uint8)).convert("HSV")).astype(np.float32)
+        hsv[..., 0] = (hsv[..., 0] + AS * 18 * math.sin(t * 0.7)) % 256
+        a = np.asarray(Image.fromarray(hsv.astype(np.uint8), "HSV").convert("RGB")).astype(np.float32)
+    if "pulse" in ANIM:
+        a *= 1 + AS * 0.1 * math.sin(t * 1.3)
+    if "scroll" in ANIM:  # moving cloudy texture
+        nt = noise_tile(max(16, n // 6))
+        k = nt.shape[0] // 2
+        o = int(t * 7) % k
+        sub = nt[o:o + k, (o * 2) % k:(o * 2) % k + k]
+        rep = np.tile(sub, (n // k + 1, n // k + 1))[:n, :n]
+        a += (AS * 9 * rep)[..., None]
+    if "shimmer" in ANIM:  # bright band sweeping across
+        yy, xx = np.mgrid[0:n, 0:n]
+        ph = ((t * 0.37) % 1.6 - 0.3) * 2 * n
+        band = np.clip(1 - np.abs(xx + yy - ph) / (n * 0.18), 0, 1)
+        a += (AS * 55 * band)[..., None]
+    img.paste(Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)), (x, y))
+
+
+def anim_piece(im, sq, s, t):  # sprite and where it goes, relative to the square
+    ph = sq * 0.9
+    dx = dy = 0
+    if "frames" in ANIM:
+        im = im.rotate(AS * 7 * (-1, 0, 1, 0)[(int(t) + sq) % 4], resample=Image.BICUBIC)
+    if "spin" in ANIM:  # 3d-ish set turning round
+        w = max(4, int(s * (1 - AS * 0.4 * abs(math.sin(t * 0.9 + ph)))))
+        im, dx = im.resize((w, s), Image.LANCZOS), (s - w) // 2
+    if "scale" in ANIM:
+        k = 1 + AS * 0.07 * math.sin(t * 1.3 + ph)
+        w, h = max(4, int(im.width * k)), max(4, int(s * k))
+        dx, dy = dx + (im.width - w) // 2, dy + (s - h) // 2
+        im = im.resize((w, h), Image.LANCZOS)
+    if "bob" in ANIM:
+        dy += int(round(AS * s * 0.06 * math.sin(t * 1.7 + ph)))
+    return im, dx, dy
+
+
+_glow = {}
+
+
+def glow_of(im, key):
+    if key not in _glow:
+        r = max(2, im.width // 14)
+        _glow[key] = im.getchannel("A").filter(ImageFilter.MaxFilter(2 * (r // 2) + 1)).filter(ImageFilter.GaussianBlur(r))
+    return _glow[key]
+
+
+def sparkles(img, x, y, n, s, t, seed):
+    r = random.Random(seed * 7919 + int(t))
+    d = ImageDraw.Draw(img, "RGBA")
+    for _ in range(int(AS * 26)):
+        cx, cy, z = x + r.random() * n, y + r.random() * n, max(2, r.random() * s * 0.09)
+        c = (255, 255, r.randint(150, 255), r.randint(160, 255))
+        d.line([cx - z, cy, cx + z, cy], fill=c, width=max(1, int(z / 3)))
+        d.line([cx, cy - z, cx, cy + z], fill=c, width=max(1, int(z / 3)))
+
+
 def pkey(p):
     return ("w" if p.color == chess.WHITE else "b") + p.symbol().upper()
 
@@ -108,8 +187,12 @@ class Scene:
         dc, dr = (7 - f, r) if self.flip else (f, 7 - r)
         return self.x + dc * self.sq, self.y + dr * self.sq
 
-    def render(self, board, last=None, extra=None):
+    def render(self, board, last=None, extra=None, t=0):
         light, dark, hll, hld = THEMES.get(self.theme, PINK)
+        if "hlpulse" in ANIM:  # last move squares fading in and out
+            k = min(1, AS) * (0.5 + 0.5 * math.sin(t * 1.1))
+            hll, hld = (tuple(int(light[c] + (hll[c] - light[c]) * (1 - 0.6 * k)) for c in range(3)),
+                        tuple(int(dark[c] + (hld[c] - dark[c]) * (1 - 0.6 * k)) for c in range(3)))
         rbx = self.theme == "roblox"
         img = Image.new("RGB", (self.W, self.H), (25, 37, 28) if rbx else (38, 36, 33))
         d = ImageDraw.Draw(img, "RGBA")
@@ -143,6 +226,8 @@ class Scene:
             rim = Image.new("L", (bw + 2 * m, bw + 2 * m), 255)
             ImageDraw.Draw(rim).rounded_rectangle([m, m, bw + m - 1, bw + m - 1], radius=rr, fill=0)
             img.paste((52, 55, 63), (self.x - m, self.y - m), rim)
+        if ANIM & {"hue", "pulse", "scroll", "shimmer"}:
+            anim_board(img, self.x, self.y, self.sq * 8, t)
         if board.is_check():
             k = board.king(board.turn)
             x0, y0 = self.xy(k)
@@ -158,6 +243,13 @@ class Scene:
             if extra.get("ghost") == sq:
                 im = im.copy()
                 im.putalpha(im.getchannel("A").point(lambda v: v * 3 // 10))
+            elif ANIM:
+                if "glow" in ANIM:
+                    g = glow_of(im, (self.pset, pkey(p), self.sq))
+                    ga = AS * (0.35 + 0.35 * math.sin(t * 1.5 + sq))
+                    img.paste((255, 214, 90) if p.color == chess.WHITE else (120, 200, 255), (x0, y0), g.point(lambda v: int(min(255, v * ga))))
+                im, dx, dy = anim_piece(im, sq, self.sq, t)
+                x0, y0 = x0 + dx, y0 + dy
             img.paste(im, (x0, y0), im)
         for sq in extra.get("dots", []):
             x0, y0 = self.xy(sq)
@@ -168,6 +260,8 @@ class Scene:
             else:
                 rr = self.sq * (0.16 if self.theme == "chesscom" else 0.13)
                 d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=(0, 0, 0, 36) if self.theme == "chesscom" else (20, 85, 30, 128))
+        if "sparkle" in ANIM:
+            sparkles(img, self.x, self.y, self.sq * 8, self.sq, t, self.sq)
         if "float" in extra:
             key, fx, fy = extra["float"]
             im = piece(self.pset, key, self.sq)
@@ -221,16 +315,23 @@ def sim_game(seed, out, binary, keep=False):
                 break
             board.push(pick_move(board, rnd))
     user = rnd.choice([chess.WHITE, chess.BLACK])
-    frames = []
+    frames = [0]
     checks = []
+    truth = set()
+    d = tempfile.mkdtemp(prefix="oc-sim-", dir=out)
 
-    def emit(img, n=1):
+    def emit(b, last, extra=None, n=1):  # animated frames all differ, so draw and save each one now
+        im = None
         for _ in range(n):
-            frames.append(img)
+            if im is None or ANIM:
+                im = sc.render(b, last, extra, frames[0])
+            im.save(os.path.join(d, "%06d.ppm" % frames[0]))
+            frames[0] += 1
 
     def settle(last, n):
-        emit(sc.render(board, last), n)
-        checks.append((len(frames) - 1, board.fen(), board.move_stack[-1].promotion if board.move_stack else None))
+        emit(board, last, None, n)
+        truth.add(" ".join(board.fen().split()[:2]))
+        checks.append((frames[0] - 1, board.fen(), board.move_stack[-1].promotion if board.move_stack else None))
 
     last = [board.move_stack[-1].from_square, board.move_stack[-1].to_square] if board.move_stack else None
     settle(last, 3)
@@ -247,22 +348,22 @@ def sim_game(seed, out, binary, keep=False):
         if mover == user:
             if rnd.random() < 0.3:
                 dots = [m.to_square for m in board.legal_moves if m.from_square == mv.from_square]
-                emit(sc.render(board, last, {"selected": mv.from_square, "dots": dots}), rnd.randint(1, 5))
+                emit(board, last, {"selected": mv.from_square, "dots": dots}, rnd.randint(1, 5))
                 stats["dots"] += 1
             if rnd.random() < 0.25:  # mid drag ghost
                 t = rnd.uniform(0.3, 0.8)
                 fx, fy = fx0 + (tx0 - fx0) * t + rnd.randint(-8, 8), fy0 + (ty0 - fy0) * t + rnd.randint(-8, 8)
-                emit(sc.render(board, last, {"ghost": mv.from_square, "float": (key, fx, fy)}), rnd.randint(1, 5))
+                emit(board, last, {"ghost": mv.from_square, "float": (key, fx, fy)}, rnd.randint(1, 5))
                 stats["drags"] += 1
             if mv.promotion:
                 b2 = board.copy()
                 b2.remove_piece_at(mv.from_square)
                 b2.set_piece_at(mv.to_square, chess.Piece(chess.PAWN, mover))
-                emit(sc.render(b2, last, {"promo": (mover, mv.to_square)}), rnd.randint(1, 9))
+                emit(b2, last, {"promo": (mover, mv.to_square)}, rnd.randint(1, 9))
                 stats["dialogs"] += 1
         elif rnd.random() < 0.6:
             t = rnd.uniform(0.3, 0.7)
-            emit(sc.render(board, last, {"hide": [mv.from_square], "float": (key, fx0 + (tx0 - fx0) * t, fy0 + (ty0 - fy0) * t)}))
+            emit(board, last, {"hide": [mv.from_square], "float": (key, fx0 + (tx0 - fx0) * t, fy0 + (ty0 - fy0) * t)})
         board.push(mv)
         plies += 1
         if mv.promotion:
@@ -275,10 +376,7 @@ def sim_game(seed, out, binary, keep=False):
             continue
         skipped = False
         settle(last, rnd.choice([2, 2, 3]))
-    d = tempfile.mkdtemp(prefix="oc-sim-", dir=out)
     try:
-        for i, im in enumerate(frames):
-            im.save(os.path.join(d, "%06d.ppm" % i))
         env = dict(os.environ, OPEN_CHEASE_DATA=os.path.join(d, "data"))
         res = subprocess.run([binary, "--replay", d, "--team", "white" if user == chess.WHITE else "black"],
                              capture_output=True, text=True, env=env)
@@ -310,10 +408,21 @@ def sim_game(seed, out, binary, keep=False):
                 promo_ok += 1
             else:
                 promo_bad += 1
+    # false moves: we showed a position the game never had. lost: dropped the board while it was still there
+    false = lost = 0
+    prev = None
+    for i in sorted(got):
+        st, gf = got[i]
+        pl = " ".join(gf.split()[:2])
+        if st == "T" and pl != prev and pl not in truth:
+            false += 1
+        if st != "T" and prev is not None and prev != "S":
+            lost += 1
+        prev = pl if st == "T" else "S"
     final_ok = checks and got.get(checks[-1][0], ("?", ""))[1].split()[:2] == checks[-1][1].split()[:2]
     desc = f"seed {seed}: {sc.theme}/{sc.pset}/{sc.sq}px/{'flip' if sc.flip else 'norm'}/{sc.promo_style}{'/midgame' if midgame else ''} user={'w' if user else 'b'}"
     return dict(ok=ok, bad=bad, promo_ok=promo_ok, promo_bad=promo_bad, final_ok=bool(final_ok), first_bad=first_bad,
-                desc=desc, frames=len(frames), stats=stats)
+                desc=desc, frames=frames[0], stats=stats, false=false, lost=lost)
 
 
 def main():
@@ -323,16 +432,16 @@ def main():
     ap.add_argument("--bin", default=os.path.join(root, "bin", "open-chease"))
     ap.add_argument("--keep", action="store_true")
     a = ap.parse_args()
-    tmp = tempfile.mkdtemp(prefix="oc-track-", dir="/tmp" if a.keep else None)
-    tot = dict(ok=0, bad=0, promo_ok=0, promo_bad=0, final=0)
+    tmp = tempfile.mkdtemp(prefix="oc-track-")
+    tot = dict(ok=0, bad=0, promo_ok=0, promo_bad=0, final=0, false=0, lost=0)
     try:
         for g in range(a.games):
             r = sim_game(a.seed + g, tmp, a.bin, a.keep)
-            for k in ("ok", "bad", "promo_ok", "promo_bad"):
+            for k in ("ok", "bad", "promo_ok", "promo_bad", "false", "lost"):
                 tot[k] += r[k]
             tot["final"] += r["final_ok"]
             flag = "ok " if not r["bad"] else "BAD"
-            print(f"{flag} {r['desc']}  moves {r['ok']}/{r['ok'] + r['bad']}  promos {r['promo_ok']}/{r['promo_ok'] + r['promo_bad']}  final {'ok' if r['final_ok'] else 'WRONG'}  {r['stats']}")
+            print(f"{flag} {r['desc']}  moves {r['ok']}/{r['ok'] + r['bad']}  promos {r['promo_ok']}/{r['promo_ok'] + r['promo_bad']}  final {'ok' if r['final_ok'] else 'WRONG'}  false {r['false']} lost {r['lost']}  {r['stats']}")
             if r["first_bad"]:
                 print(f"      first wrong at frame {r['first_bad'][0]}: want {r['first_bad'][1]}  got {r['first_bad'][2]}")
             sys.stdout.flush()
@@ -341,7 +450,7 @@ def main():
             shutil.rmtree(tmp, ignore_errors=True)
     n = tot["ok"] + tot["bad"]
     pn = tot["promo_ok"] + tot["promo_bad"]
-    print(f"\nmoves right {tot['ok']}/{n} ({100 * tot['ok'] / max(1, n):.1f}%)  promotions right {tot['promo_ok']}/{pn}  games ending right {tot['final']}/{a.games}")
+    print(f"\nmoves right {tot['ok']}/{n} ({100 * tot['ok'] / max(1, n):.1f}%)  promotions right {tot['promo_ok']}/{pn}  games ending right {tot['final']}/{a.games}  false moves {tot['false']}  board lost {tot['lost']}")
 
 
 if __name__ == "__main__":

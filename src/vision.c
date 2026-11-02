@@ -1261,6 +1261,58 @@ static void really_flat(const Frame *f, Board *out, const Rect *ignore, int nign
     if (off > out->s * 0.25) *out = pb, out->soft = 1;
 }
 
+// pulsing or hue cycling squares: what the two colors look like right now, against what they looked like when we got the board
+static struct {
+    double x, y, s;
+    uint8_t light[3], dark[3], ref[2][3], now[2][3];
+    int ok, use;
+} drift;
+
+static void live_colors(const Frame *f, const Board *b, int (*masked)(void *, int, int), void *mctx, uint8_t out[2][3])
+{
+    static const double pts[4][2] = {{0.1, 0.1}, {0.9, 0.1}, {0.1, 0.9}, {0.9, 0.9}};
+    uint8_t smp[2][32][3];
+    int n[2] = {0, 0};
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++) {
+            uint8_t cols[4][3];
+            int nv = 0, bi = 0, bn = -1;
+            for (int k = 0; k < 4; k++) {
+                double x = b->x + (c + pts[k][0]) * b->s, y = b->y + (r + pts[k][1]) * b->s;
+                if (!sample_ok(f, x, y) || (masked && masked(mctx, (int)x, (int)y))) continue;
+                rgb(f, (int)x, (int)y, cols[nv++]);
+            }
+            for (int a = 0; a < nv; a++) {
+                int m = 0;
+                for (int k = 0; k < nv; k++) m += cdiff(cols[a], cols[k]) < 30;
+                if (m > bn) bn = m, bi = a;
+            }
+            if (bn < 3) continue; // a piece or its glow reaches a corner, skip the square
+            int par = (r + c) & 1;
+            memcpy(smp[par][n[par]++], cols[bi], 3);
+        }
+    for (int par = 0; par < 2; par++)
+        for (int ch = 0; ch < 3; ch++) {
+            int h[256] = {0}, acc = 0, v = 0;
+            for (int i = 0; i < n[par]; i++) h[smp[par][i][ch]]++;
+            while (v < 255 && (acc += h[v]) <= n[par] / 2) v++;
+            out[par][ch] = n[par] >= 8 ? (uint8_t)v : (par ? b->dark[ch] : b->light[ch]);
+        }
+}
+
+static int drift_key(const Board *b)
+{
+    return drift.ok && drift.x == b->x && drift.y == b->y && drift.s == b->s && !memcmp(drift.light, b->light, 3) && !memcmp(drift.dark, b->dark, 3);
+}
+
+static void drift_start(const Frame *f, const Board *b, int (*masked)(void *, int, int), void *mctx) // colors as found, on the frame they came from
+{
+    live_colors(f, b, masked, mctx, drift.ref);
+    drift.x = b->x, drift.y = b->y, drift.s = b->s, drift.ok = 1, drift.use = 0;
+    memcpy(drift.light, b->light, 3);
+    memcpy(drift.dark, b->dark, 3);
+}
+
 int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignore, int (*masked)(void *, int, int),
                       void *mctx)
 {
@@ -1270,12 +1322,14 @@ int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
         out->soft = textured(f, out);
         misses = 0;
         if (out->score < 62) really_flat(f, out, ignore, nignore, masked, mctx);
+        if (!out->persp) drift_start(f, out, masked, mctx);
         return 1;
     }
     int sc = out->score, m = misses++;
     if (!vision_lite && m % 3 == 0 && find_board(f, out, ignore, nignore, masked, mctx, 1)) { // blurred pass is slow, only every 3rd miss
         misses = 0;
         really_flat(f, out, ignore, nignore, masked, mctx);
+        if (!out->persp) drift_start(f, out, masked, mctx);
         return 1;
     }
     if (sc > out->score) out->score = sc;
@@ -1334,6 +1388,7 @@ int vision_relocate(const Frame *f, Board *b, int full, int (*masked)(void *, in
     if (!hit && full) hit = find_near(f, b, &nb, 0, 0, f->w, f->h, masked, mctx);
     if (!hit || (fabs(nb.x - b->x) < 2 && fabs(nb.y - b->y) < 2 && fabs(nb.s - b->s) < 1)) return 0; // same spot, just covered
     *b = nb;
+    drift_start(f, b, masked, mctx);
     return 1;
 }
 
@@ -1350,6 +1405,28 @@ int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), voi
     }
     int pen = 0;
     double sc = score_board(f, b->x, b->y, b->s, b->light, b->dark, masked, mctx, &pen, b->soft) - pen; // squares past the edge = it slid by whole squares
+    uint8_t now[2][3];
+    if (!drift_key(b)) drift_start(f, b, masked, mctx);
+    live_colors(f, b, masked, mctx, now);
+    drift.use = 0;
+    if (cdiff(now[0], drift.ref[0]) >= 18 || cdiff(now[1], drift.ref[1]) >= 18) {
+        uint8_t l[3], d[3];
+        for (int k = 0; k < 3; k++) {
+            int a = b->light[k] + now[0][k] - drift.ref[0][k], e = b->dark[k] + now[1][k] - drift.ref[1][k];
+            l[k] = (uint8_t)(a < 0 ? 0 : a > 255 ? 255 : a);
+            d[k] = (uint8_t)(e < 0 ? 0 : e > 255 ? 255 : e);
+        }
+        int pen2 = 0;
+        double sc2 = score_board(f, b->x, b->y, b->s, l, d, masked, mctx, &pen2, b->soft) - pen2;
+        int sep = cdiff(b->light, b->dark), sep2 = cdiff(l, d);
+        // the whole board shifted, read it with the colors it has now. a popup veil flattens it instead, leave that alone
+        if (sc2 > sc && sep2 >= 45 && sep2 * 10 >= sep * 7 && sep2 * 10 <= sep * 14) {
+            sc = sc2;
+            drift.use = 1;
+            memcpy(drift.now[0], l, 3);
+            memcpy(drift.now[1], d, 3);
+        }
+    }
     b->score = (int)sc;
     if (sc >= 46) return 1;
     // square colors changed? still a board if the checker pattern holds
@@ -1401,6 +1478,24 @@ int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), voi
 }
 
 static int soft_colors;
+
+// 1 = px is the board color made lighter or a bit darker (shimmer, moving light, noise), 2 = blown out to white so cant tell, 0 = something else
+static int lit(const uint8_t *px, const uint8_t *bg)
+{
+    int d[3], sum = 0, n = 0;
+    for (int k = 0; k < 3; k++) {
+        d[k] = px[k] - bg[k];
+        if (px[k] < 250) sum += d[k], n++;
+    }
+    if (!n) return 2;
+    int m = sum / n, res = 0;
+    if (m > 70 || m < -50) return 0; // lights brighten, a half see-through piece being dragged darkens a lot
+    for (int k = 0; k < 3; k++) {
+        if (px[k] < 250) res += abs(d[k] - m);
+        else if (d[k] > m + 12) return 0;
+    }
+    return res < 12;
+}
 
 #define BG_ROWS 32
 
@@ -1630,6 +1725,13 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
         out->popup = (Rect){b->x + out->popup.x * k, b->y + out->popup.y * k, out->popup.w * k, out->popup.h * k};
         return;
     }
+    Board db;
+    if (!soft_colors && drift.use && drift_key(b)) {
+        db = *b;
+        memcpy(db.light, drift.now[0], 3);
+        memcpy(db.dark, drift.now[1], 3);
+        b = &db;
+    }
     memset(out, 0, sizeof(*out));
     double s = b->s;
     float lums[64];
@@ -1672,6 +1774,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
     }
     Memo *mm = &memo[soft_colors];
     int use = !vision_nomemo;
+    out->busy = use ? 0 : -1;
     if (use && !(mm->ok && mm->x == b->x && mm->y == b->y && mm->s == s && !memcmp(mm->light, b->light, 3) && !memcmp(mm->dark, b->dark, 3) &&
                  mm->soft == b->soft && mm->nz == board_nz && mm->w == f->w && mm->h == f->h && mm->bgr == f->bgr && mm->masked == !!masked)) {
         mm->x = b->x, mm->y = b->y, mm->s = s, mm->soft = b->soft, mm->nz = board_nz, mm->w = f->w, mm->h = f->h, mm->bgr = f->bgr;
@@ -1686,6 +1789,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             double x0 = b->x + c * s, y0 = b->y + r * s;
             SqMemo *me = &mm->sq[r * 8 + c];
             uint64_t hh = use ? sq_print(f, x0, y0, s, masked, mctx) | 1 : 0;
+            if (use && me->h != hh) out->busy++;
             if (use && me->h == hh) {
                 out->hidden[sq] = me->hidden, out->foreign[r * 8 + c] = me->foreign, out->highlighted[sq] = me->highlighted;
                 out->occ_frac[sq] = me->occ_frac, out->lum[sq] = me->lum;
@@ -1744,13 +1848,16 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                         int dl = cdiff(cc[k], b->light), dd = cdiff(cc[k], b->dark);
                         off[k] = (dl < dd ? dl : dd) > fmax(sep * 0.6, 110);
                     }
-                    // a straight edge cuts the square, something is on top of the board
-                    if ((off[0] && off[1] && !off[2] && !off[3] && SAME(0, 1)) || (off[2] && off[3] && !off[0] && !off[1] && SAME(2, 3)) ||
-                        (off[0] && off[2] && !off[1] && !off[3] && SAME(0, 2)) || (off[1] && off[3] && !off[0] && !off[2] && SAME(1, 3)))
+                    // a straight edge cuts the square, something is on top of the board. has to be a real jump, not a tinted square with noise on it
+                    if ((off[0] && off[1] && !off[2] && !off[3] && SAME(0, 1) && !SAME(0, 2) && !SAME(1, 3)) || (off[2] && off[3] && !off[0] && !off[1] && SAME(2, 3) && !SAME(0, 2) && !SAME(1, 3)) ||
+                        (off[0] && off[2] && !off[1] && !off[3] && SAME(0, 2) && !SAME(0, 1) && !SAME(2, 3)) || (off[1] && off[3] && !off[0] && !off[2] && SAME(1, 3) && !SAME(0, 1) && !SAME(2, 3)))
                         hid = 1;
                 } else {
-                    if (SAME(0, 1) && SAME(2, 3) && DIFF(0, 2)) hid = 1;
-                    if (SAME(0, 2) && SAME(1, 3) && DIFF(0, 1)) hid = 1;
+                    // the cover has to look like something else than the board, a noisy board texture makes corners differ too
+                    int off[4];
+                    for (int k = 0; k < 4; k++) off[k] = valid[k] && cdiff(cc[k], b->light) > 50 && cdiff(cc[k], b->dark) > 50;
+                    if (SAME(0, 1) && SAME(2, 3) && DIFF(0, 2) && (off[0] || off[2])) hid = 1;
+                    if (SAME(0, 2) && SAME(1, 3) && DIFF(0, 1) && (off[0] || off[1])) hid = 1;
                 }
                 if (SAME(0, 1) && SAME(0, 2) && SAME(0, 3) && cdiff(cc[0], base) > (b->soft ? fmax(170, cdiff(b->light, b->dark) * 0.75) : 170)) hid = 1; // promotion picker
 #undef SAME
@@ -1797,7 +1904,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                 sthr = (int)fmax(40, nz * 1.6);
             }
             out->highlighted[sq] = cdiff(bg, base) > (b->soft ? 70 : 45); // tracker guesses whose turn it is from these
-            int fg = 0, valid = 0, covered = 0;
+            int fg = 0, valid = 0, covered = 0, ntint = 0, nwash = 0;
             uint8_t cell_lum[FEAT_N * FEAT_N];
             for (int gy = 0; gy < FEAT_N; gy++)
                 for (int gx = 0; gx < FEAT_N; gx++) {
@@ -1814,6 +1921,9 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                         if (cdiff(px, row_bg(rows, bg, y0, s, y)) > fthr && cdiff(px, b->light) > sthr && cdiff(px, b->dark) > sthr) {
                             fg++;
                             v = 1;
+                            int t = lit(px, row_bg(rows, bg, y0, s, y));
+                            if (!t) t = lit(px, base); // a tinted last move square under it
+                            ntint += t == 1, nwash += t == 2;
                             cell_lum[gy * FEAT_N + gx] = (uint8_t)lum(px);
                         }
                     } else {
@@ -1824,6 +1934,11 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                     if ((c == 0 && lft && top) || (c == 7 && rgt && top) || (r == 7 && bot && (lft || rgt))) v = 0.5f; // coordinate letters live here
                     out->mask[sq][gy * FEAT_N + gx] = v;
                 }
+            if (fg && (fg - ntint - nwash) * 8 <= fg && ntint * 2 >= fg) { // just the board lit up or shaded, nothing with an outline on it
+                fg = 0;
+                for (int i = 0; i < FEAT_N * FEAT_N; i++)
+                    if (out->mask[sq][i] == 1) out->mask[sq][i] = 0;
+            }
             out->occ_frac[sq] = valid ? (float)fg / valid : 0;
             if (covered * 4 > FEAT_N * FEAT_N) out->hidden[sq] = 1;
             int hist[256] = {0}, nh = 0;
