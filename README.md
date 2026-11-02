@@ -256,7 +256,9 @@ If your piece set keeps getting misread (rooks as knights, that kind of thing) y
 4. come back to Gear > Vision and hit <b>Teach these pieces</b>. It learns the shapes from the board as it is right now and remembers them for that board<br>
 <b>Forget learned pieces</b> throws that away and goes back to the built in shapes<br> <br>
 <b>Themes</b><br>
-Every theme as a little preview card, click one to use it. Under that you can make up to 3 of your own: pick a slot and a part (box, text, buttons, grid, menus...), then click a color. It changes live. <b>Copy current theme</b> starts you off from whatever theme youre on. Your themes save with the rest of the settings
+Every theme as a little preview card, click one to use it. Under that you can make up to 3 of your own: pick a slot and a part (box, text, buttons, grid, menus...), then click a color. It changes live. <b>Copy current theme</b> starts you off from whatever theme youre on. Your themes save with the rest of the settings<br> <br>
+<b>Plugins</b><br>
+Every plugin you installed, with an on/off switch, a button to open its folder and its own settings under it. Plugins are little programs anyone can make that draw on the overlay, add settings and react to moves, <a href="PLUGINS.md">PLUGINS.md</a> says how
 </p>
 </details>
 

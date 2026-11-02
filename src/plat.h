@@ -28,6 +28,10 @@ int proc_start(const char *path, int quiet, proc_t *p, int *to_fd, int *from_fd)
 void proc_kill(proc_t p);
 void proc_reap(proc_t p);
 int fd_wait(int fd, int ms); // >0 readable (or eof), 0 timed out, <0 broken
+int proc_cmd(const char *cmd, const char *dir, int quiet, proc_t *p, int *to_fd, int *from_fd); // a whole command line, run inside dir, both pipes never block
+int fd_read_some(int fd, char *buf, int n); // >0 bytes, 0 nothing yet, -1 closed
+int fd_write_some(int fd, const char *buf, int n); // bytes it took, 0 = pipe full, -1 broken
+void fd_close(int fd);
 void no_sigpipe(void);
 int cpu_count(void);
 

@@ -13,6 +13,7 @@
 
 #include "app.h"
 #include "plat.h"
+#include "plugin.h"
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -30,7 +31,7 @@ enum {
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
     ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE, ACT_HIDE, ACT_KEYROW, ACT_SHEET, ACT_SEARCH, ACT_EXPORT,
-    ACT_IMPORT, ACT_EYES, ACT_UPGRADE, ACT_COMPACT
+    ACT_IMPORT, ACT_EYES, ACT_UPGRADE, ACT_COMPACT, ACT_PLUG_ON, ACT_PLUG_DIR, ACT_PLUG_SET, ACT_PLUG_SLIDE
 };
 
 typedef struct {
@@ -554,6 +555,10 @@ static void load_cfg(void)
             hk_line(sp + 1);
             continue;
         }
+        if (!strncmp(k, "plugin.", 7)) {
+            plug_cfg_line(k, sp + 1);
+            continue;
+        }
         if (!strcmp(k, "squares")) old_squares = !!v;
         if (!strcmp(k, "enginepath")) {
             snprintf(saved_engine, sizeof(saved_engine), "%s", sp + 1);
@@ -622,6 +627,7 @@ static void save_cfg(void)
         fputc('\n', f);
     }
     hk_save(f);
+    plug_cfg_save(f);
     if (fclose(f) == 0) replace_file(tmp, cfg_path);
 }
 static char note[128];
@@ -1746,6 +1752,141 @@ static double themes_tab(Canvas *c, Rect m, double y, double pad, int draw, int 
     return side ? y + fmax(NPARTS * 24, ph + 24) + 4 : py + ph + 28;
 }
 
+#define TAB_PLUG NTABS
+#define MAX_TABS (NTABS + 5)
+static const char *all_tabs[MAX_TABS];
+static int ntabs = NTABS + 1, pslide = -1, pslide_v0;
+static Rect pslide_r;
+
+static int own_tab(const Plugin *p) // the tab it asked for, or -1 if it lives in Plugins
+{
+    if (!p->alive || !*p->tab) return -1;
+    for (int k = TAB_PLUG + 1; k < ntabs; k++)
+        if (!strcmp(all_tabs[k], p->tab)) return k;
+    return -1;
+}
+
+static void plug_tabs(void)
+{
+    for (int k = 0; k < NTABS; k++) all_tabs[k] = tab_names[k];
+    all_tabs[TAB_PLUG] = "Plugins";
+    ntabs = TAB_PLUG + 1;
+    for (int i = 0; i < nplugs; i++) {
+        Plugin *p = &plugs[i];
+        if (!p->alive || !*p->tab || !p->nset || own_tab(p) >= 0 || ntabs == MAX_TABS) continue;
+        all_tabs[ntabs++] = p->tab;
+    }
+    if (set_tab >= ntabs) set_tab = TAB_PLUG;
+}
+
+static int plug_slider_v(const PlugSet *s, Rect r, double x)
+{
+    double f = fmin(1, fmax(0, (x - (r.x + 8)) / (r.w - 16)));
+    return s->lo + (int)lround(f * (s->hi - s->lo));
+}
+
+static void plug_row(Canvas *c, Rect row, int pi, int k, int hit)
+{
+    PlugSet *s = &plugs[pi].set[k];
+    int arg = pi * 64 + k;
+    draw_round_rect(c, row, 7, TH->item);
+    double right = row.x + row.w;
+    Rect tr = {0};
+    if (s->kind == PS_BOOL) {
+        Rect sw = {row.x + row.w - 46, row.y + 3.5, 38, 18};
+        double d = 14, v = s->v ? 1 : 0;
+        draw_round_rect(c, sw, 9, mix(TH->btn, TH->title, v));
+        draw_round_rect(c, (Rect){sw.x + 2 + (sw.w - d - 4) * v, sw.y + 2, d, d}, d / 2, mix(0xFFE8E8E8, 0xFF181818, v));
+        right = sw.x;
+    } else if (s->kind == PS_SLIDER) {
+        char vt[16], a[16], b[16];
+        snprintf(vt, sizeof(vt), "%d", s->v), snprintf(a, sizeof(a), "%d", s->lo), snprintf(b, sizeof(b), "%d", s->hi);
+        double vw = fmax(text_lw(c, a, 0), text_lw(c, b, 0));
+        double end = row.x + row.w - 22 - vw, x0 = fmax(row.x + 24 + fmin(text_lw(c, s->label, 0), row.w * 0.45), end - 90);
+        tr = (Rect){x0, row.y + row.h / 2 - 3, fmax(30, end - x0), 6};
+        double f = (double)(s->v - s->lo) / (s->hi - s->lo), d = 14;
+        draw_round_rect(c, tr, 3, TH->btn);
+        draw_round_rect(c, (Rect){tr.x, tr.y, fmax(6, tr.w * f), tr.h}, 3, TH->title);
+        draw_round_rect(c, (Rect){tr.x + tr.w * f - d / 2, tr.y + 3 - d / 2, d, d}, d / 2, 0xFFE8E8E8);
+        draw_text(c, row.x + row.w - 8 - text_lw(c, vt, 0), row.y + 4, vt, 0, TH->item_fg);
+        right = tr.x;
+    } else {
+        int btn = s->kind == PS_BUTTON;
+        Rect box = {row.x + row.w - (btn ? 36 : 126), row.y + 3, btn ? 30 : 120, row.h - 6};
+        draw_round_rect(c, box, 5, TH->btn);
+        if (!btn) draw_text(c, box.x + 8, box.y + 1, fit_text(c, s->ch[s->v], box.w - 26), 0, TH->btn_fg);
+        draw_text(c, box.x + box.w - (btn ? 18 : 14), box.y + 1, ">", 0, TH->btn_fg);
+        right = box.x;
+    }
+    draw_text(c, row.x + 10, row.y + 4, fit_text(c, s->label, right - row.x - 16), 0, TH->item_fg);
+    if (hit) add_hit_arg(row, ACT_PLUG_SET, arg);
+    if (hit && s->kind == PS_SLIDER) add_hit_arg((Rect){tr.x - 8, row.y, tr.w + 16, row.h}, ACT_PLUG_SLIDE, arg);
+    tip_spot(row, *s->tip ? s->tip : NULL);
+}
+
+static double plug_grid(Canvas *c, Rect m, double y, double pad, int pi, int draw, int hit)
+{
+    int ncol = m.w >= 272 * 2 + pad * 3 ? 2 : 1, n = plugs[pi].nset;
+    double cw = (m.w - pad * (ncol + 1)) / ncol, rh = 28;
+    int per = (n + ncol - 1) / ncol;
+    for (int k = 0; draw && k < n; k++) // down then across, same as the other tabs
+        plug_row(c, (Rect){m.x + pad + (k / per) * (cw + pad), y + (k % per) * rh, cw, rh - 3}, pi, k, hit);
+    return y + per * rh;
+}
+
+static double plug_tab(Canvas *c, Rect m, double y, double pad, int t, int draw, int hit)
+{
+    double w = m.w - 2 * pad;
+    if (t != TAB_PLUG) {
+        for (int i = 0; i < nplugs; i++) {
+            if (own_tab(&plugs[i]) != t) continue;
+            if (draw) draw_text(c, m.x + pad + 2, y, fit_text(c, plugs[i].title, w), 0, TH->title);
+            y = plug_grid(c, m, y + 22, pad, i, draw, hit) + 6;
+        }
+        return y + 30;
+    }
+    if (!nplugs) {
+        char ln[4][100];
+        int n = wrap_text(c, "no plugins yet. each one goes in its own folder inside the plugins folder, PLUGINS.md on github says how to make one", w - 16, ln, 4);
+        Rect hb = {m.x + pad, y, w, n * 18 + 10};
+        if (draw) {
+            draw_round_rect(c, hb, 7, TH->item);
+            for (int k = 0; k < n; k++) draw_text(c, hb.x + 8, hb.y + 5 + k * 18, ln[k], 0, TH->item_fg);
+        }
+        return hb.y + hb.h + 10 + 30;
+    }
+    for (int i = 0; i < nplugs; i++) {
+        Plugin *p = &plugs[i];
+        Rect row = {m.x + pad, y, w, 25};
+        if (draw) {
+            draw_round_rect(c, row, 7, TH->item);
+            Rect sw = {row.x + row.w - 46, row.y + 3.5, 38, 18}, fb = {sw.x - 84, row.y + 3, 76, row.h - 6};
+            double d = 14, v = p->on ? 1 : 0;
+            draw_round_rect(c, sw, 9, mix(TH->btn, TH->title, v));
+            draw_round_rect(c, (Rect){sw.x + 2 + (sw.w - d - 4) * v, sw.y + 2, d, d}, d / 2, mix(0xFFE8E8E8, 0xFF181818, v));
+            draw_button(c, fb, "Folder", TH->btn, TH->btn_fg);
+            char t[80];
+            snprintf(t, sizeof(t), "%s%s%s", p->title, *p->ver ? "  v" : "", p->ver);
+            draw_text(c, row.x + 10, row.y + 4, fit_text(c, t, fb.x - row.x - 18), 0, TH->title);
+            if (hit) add_hit(row, ACT_BLOCK), add_hit_arg(sw, ACT_PLUG_ON, i), add_hit_arg(fb, ACT_PLUG_DIR, i);
+            tip_spot(sw, "turns this plugin on or off. plugins are programs, only run ones you trust");
+            tip_spot(fb, "opens the folder this plugin lives in");
+        }
+        y += 28;
+        char info[300];
+        int ot = own_tab(p);
+        if (p->alive && *p->said) snprintf(info, sizeof(info), "%s", p->said);
+        else if (p->alive && ot >= 0) snprintf(info, sizeof(info), "%s%ssettings are in the %s tab", p->desc, *p->desc ? ", " : "", all_tabs[ot]);
+        else if (p->alive || !p->on) snprintf(info, sizeof(info), "%s", *p->desc ? p->desc : p->on ? "running" : "off");
+        else snprintf(info, sizeof(info), "%s", p->status);
+        if (draw) draw_text(c, m.x + pad + 10, y, fit_text(c, info, w - 20), 0, p->on && !p->alive ? 0xFFFF7A5A : TH->sub);
+        y += 22;
+        if (p->alive && ot < 0 && p->nset) y = plug_grid(c, m, y, pad, i, draw, hit) + 2;
+        y += 6;
+    }
+    return y + 30;
+}
+
 static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
 {
     Canvas *c = dst;
@@ -1758,10 +1899,11 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             if (n < ncol * 10) idx[n++] = i;
             nfound++;
         }
+    plug_tabs();
     double tabh = 26, tg = 4, tx = pad, ty = 46;
-    Rect tabr[NTABS];
-    for (int k = 0; k < NTABS; k++) {
-        double tw = text_lw(c, tab_names[k], 0) + 16;
+    Rect tabr[MAX_TABS];
+    for (int k = 0; k < ntabs; k++) {
+        double tw = text_lw(c, all_tabs[k], 0) + 16;
         if (tx + tw > mw - pad) tx = pad, ty += tabh + tg;
         tabr[k] = (Rect){tx, ty, tw, tabh};
         tx += tw + tg;
@@ -1781,6 +1923,8 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         body = keys_tab(c, m, top, pad, 0, 0) - top;
     else if (vt == TAB_STATS)
         body = stats_tab(c, m, top, pad, 0) - top;
+    else if (vt >= TAB_PLUG)
+        body = plug_tab(c, m, top, pad, vt, 0, 0) - top;
     else if (searching)
         body = per * rh + (n < nfound || !n ? 26 : 4);
     else
@@ -1820,9 +1964,9 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     if (hit) add_hit(sb, ACT_SEARCH);
     draw_line(c, m.x + pad, m.y + 40, m.x + m.w - pad, m.y + 40, 1, TH->btn);
     double tq = ease(tab_t, 200);
-    Rect a0 = tabr[tab_prev < NTABS ? tab_prev : set_tab], a1 = tabr[set_tab];
+    Rect a0 = tabr[tab_prev < ntabs ? tab_prev : set_tab], a1 = tabr[set_tab];
     Rect pill = {m.x + a0.x + (a1.x - a0.x) * tq, m.y + a0.y + (a1.y - a0.y) * tq, a0.w + (a1.w - a0.w) * tq, tabh};
-    for (int k = 0; k < NTABS; k++) {
+    for (int k = 0; k < ntabs; k++) {
         Rect r = tabr[k];
         r.x += m.x, r.y += m.y;
         draw_round_rect(c, r, 13, TH->item);
@@ -1830,12 +1974,12 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     }
     if (!searching) draw_round_rect(c, pill, 13, TH->title);
     // labels go on after the pill, dark text only where the pill is under it mid slide
-    for (int k = 0; k < NTABS; k++) {
+    for (int k = 0; k < ntabs; k++) {
         Rect r = tabr[k];
         r.x += m.x, r.y += m.y;
-        double tw = text_lw(c, tab_names[k], 0), cx = r.x + r.w / 2;
+        double tw = text_lw(c, all_tabs[k], 0), cx = r.x + r.w / 2;
         int under = !searching && cx > pill.x && cx < pill.x + pill.w && fabs(r.y - pill.y) < 4;
-        draw_text(c, r.x + (r.w - tw) / 2, r.y + 4, tab_names[k], 0, under ? 0xFF181818 : TH->item_fg);
+        draw_text(c, r.x + (r.w - tw) / 2, r.y + 4, all_tabs[k], 0, under ? 0xFF181818 : TH->item_fg);
     }
     Canvas *panel = c;
     Rect area = {m.x, m.y + top - 6, m.w, m.h - top + 6};
@@ -1845,7 +1989,8 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     if (vt == TAB_THEMES) themes_tab(c, m, m.y + top, pad, 1, hit);
     if (vt == TAB_KEYS) keys_tab(c, m, m.y + top, pad, 1, hit);
     if (vt == TAB_STATS) stats_tab(c, m, m.y + top, pad, 1);
-    for (int j = 0; vt != TAB_THEMES && j < n; j++) {
+    if (vt >= TAB_PLUG) plug_tab(c, m, m.y + top, pad, vt, 1, hit);
+    for (int j = 0; vt != TAB_THEMES && vt < TAB_PLUG && j < n; j++) {
         int i = idx[j];
         const Setting *st = &sets[i];
         int col = j / per;
@@ -1922,6 +2067,12 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         Rect tt = {rs.x + rs.w + 8, rs.y, fmax(140, text_lw(c, "More themes >", 0) + 20), 26};
         draw_button(c, tt, "More themes >", TH->btn, TH->btn_fg);
         if (hit) add_hit_arg(tt, ACT_TAB, TAB_THEMES);
+    }
+    if (vt == TAB_PLUG) {
+        Rect pf = {rs.x + rs.w + 8, rs.y, 170, 26};
+        draw_button(c, pf, "Open plugins folder", TH->btn, TH->btn_fg);
+        if (hit) add_hit_arg(pf, ACT_PLUG_DIR, -1);
+        tip_spot(pf, "each plugin goes in its own folder in here, then turn it on above. restart open-chease after adding one");
     }
     if (c != panel) canvas_blit(panel, c, tq, 30 * (1 - tq) * tab_dir, 0, -1);
     canvas_blit(dst, panel, closing ? 1 - an : an, 0, closing ? -6 * an : -12 * (1 - an), -1);
@@ -3019,6 +3170,166 @@ static void box_buttons(Canvas *c, Rect er, Rect hb, Rect gb, Rect mb, Rect bx, 
     }
 }
 
+static void plug_items(Canvas *c, Rect bl, int bottom)
+{
+    if (hushed()) return;
+    for (int i = 0; i < nplugs; i++) {
+        Plugin *p = &plugs[i];
+        for (int k = 0; p->alive && k < p->nitem; k++) {
+            PlugItem *it = &p->item[k];
+            double x = bl.x + it->x, y = bl.y + it->y;
+            if (it->sq >= 0 && it->kind < PD_ARROW) {
+                Rect q = sq_rect(bl, it->sq, bottom);
+                x = q.x + it->x + (it->kind <= PD_BIG ? 4 : 0), y = q.y + it->y + (it->kind <= PD_BIG ? 2 : 0);
+            }
+            if (it->kind == PD_TEXT || it->kind == PD_BIG) draw_text(c, x, y, it->text, it->kind == PD_BIG, it->col);
+            else if (it->kind == PD_RECT) draw_rect(c, (Rect){x, y, it->w, it->h}, it->col);
+            else if (it->kind == PD_BOX) draw_frame(c, (Rect){x, y, it->w, it->h}, 2, it->col);
+            else if (it->kind == PD_ARROW && it->sq != it->sq2)
+                draw_move(c, bl, MK_MOVE(it->sq, it->sq2, 0, 0), bottom, it->col, 1, arrow_tk(cfg.thick), 0, 0, NULL);
+            else if (it->kind == PD_SQUARE)
+                mark_square(c, sq_rect(bl, it->sq, bottom), 1, it->col);
+        }
+    }
+}
+
+static int overlaps(Rect a, Rect b) { return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h; }
+
+static void plug_panels(Canvas *c, Rect bl, Rect outr, Rect info) // stacked down the side of the board the info box isnt on
+{
+    double y = bl.y, gap = 8;
+    for (int i = 0; i < nplugs; i++) {
+        PlugPanel *pn = &plugs[i].panel;
+        if (!plugs[i].alive || (!*pn->title && !pn->nline)) continue;
+        double w = text_lw(c, pn->title, 0);
+        for (int k = 0; k < pn->nline; k++) w = fmax(w, text_lw(c, pn->line[k], 0));
+        w = fmin(320, fmax(150, w + 24));
+        double h = 12 + (*pn->title ? 21 : 0) + pn->nline * 19;
+        int left = cfg.spot == 3;
+        Rect r = {left ? bl.x - gap - w : bl.x + bl.w + gap, y, w, h};
+        if (r.x < outr.x + 4 || r.x + w > outr.x + outr.w - 4) r.x = left ? bl.x + bl.w + gap : bl.x - gap - w;
+        if (r.x < outr.x + 4) r.x = outr.x + 4;
+        if (r.x + w > outr.x + outr.w - 4) r.x = outr.x + outr.w - 4 - w;
+        if (info.w > 0 && overlaps(r, info)) r.y = info.y + info.h + gap;
+        panel_bg(c, r, 10, faded(TH->panel));
+        double ty = r.y + 6;
+        if (*pn->title) draw_text(c, r.x + 12, ty, fit_text(c, pn->title, w - 24), 0, TH->title), ty += 21;
+        for (int k = 0; k < pn->nline; k++, ty += 19)
+            draw_text(c, r.x + 12, ty, fit_text(c, pn->line[k], w - 24), 0, pn->col[k] ? pn->col[k] : TH->title_off);
+        y = r.y + h + gap;
+    }
+}
+
+static void plug_note_cb(const Plugin *p, const char *msg) { set_note(msg); }
+
+static int plug_grab_cb(double x, double y, double w, double h, const char *path, int *pw, int *ph)
+{
+    if (state != TRACKING || board.out >= cap->nout) return 0;
+    Output *o = &cap->out[board.out];
+    if (!o->have_frame) return 0;
+    Rect bl = board_logical(&board);
+    double k = kx(board.out);
+    int x0 = (int)floor((bl.x + x - o->logical.x) / k), y0 = (int)floor((bl.y + y - o->logical.y) / k);
+    int x1 = (int)ceil((bl.x + x + w - o->logical.x) / k), y1 = (int)ceil((bl.y + y + h - o->logical.y) / k);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > o->frame.w) x1 = o->frame.w;
+    if (y1 > o->frame.h) y1 = o->frame.h;
+    if (x1 - x0 > 2048) x1 = x0 + 2048;
+    if (y1 - y0 > 2048) y1 = y0 + 2048;
+    if (x1 <= x0 || y1 <= y0) return 0;
+    char tmp[1200];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    FILE *f = fopen(tmp, "wb");
+    if (!f) return 0;
+    int fw = x1 - x0, ok = 1;
+    fprintf(f, "P6\n%d %d\n255\n", fw, y1 - y0);
+    uint8_t *row = malloc((size_t)fw * 3);
+    if (!row) ok = 0;
+    for (int yy = y0; ok && yy < y1; yy++) {
+        const uint8_t *s = o->frame.px + (size_t)yy * o->frame.stride + (size_t)x0 * 4;
+        for (int xx = 0; xx < fw; xx++, s += 4) {
+            row[xx * 3] = o->frame.bgr ? s[2] : s[0];
+            row[xx * 3 + 1] = s[1];
+            row[xx * 3 + 2] = o->frame.bgr ? s[0] : s[2];
+        }
+        ok = fwrite(row, 3, fw, f) == (size_t)fw;
+    }
+    free(row);
+    if (fclose(f) || !ok || replace_file(tmp, path)) {
+        remove(tmp);
+        return 0;
+    }
+    *pw = fw, *ph = y1 - y0;
+    return 1;
+}
+
+static void plug_events(void) // tells them whatever changed since last time
+{
+    static int was = -1, was_bottom, was_team;
+    static Rect was_bl;
+    static u64 was_key;
+    static Move was_best;
+    static int was_depth;
+    static Pos was_pos;
+    int fresh = 0;
+    for (int i = 0; i < nplugs; i++)
+        if (plugs[i].fresh) fresh = 1, plugs[i].fresh = 0;
+    if (!plug_running()) return;
+    if (state != TRACKING) {
+        if (was == TRACKING || fresh) plug_send_all("board none");
+        was = state;
+        return;
+    }
+    Rect bl = board_logical(&board);
+    if (fresh || was != TRACKING || fabs(bl.x - was_bl.x) > 0.5 || fabs(bl.y - was_bl.y) > 0.5 || fabs(bl.w - was_bl.w) > 0.5 ||
+        tracker.white_bottom != was_bottom || tracker.user_color != was_team) {
+        plug_send_all("board %.0f %.0f %.0f %s", bl.x, bl.y, bl.w, tracker.white_bottom ? "white" : "black");
+        plug_send_all("team %s", tracker.user_color == WHITE ? "white" : "black");
+        if (fresh || was != TRACKING) was_key = 0;
+        was_bl = bl, was_bottom = tracker.white_bottom, was_team = tracker.user_color;
+    }
+    was = TRACKING;
+    Move ms[256];
+    if (tracker.pos.key != was_key) {
+        char fen[128], u[8], san[16] = "";
+        pos_to_fen(&tracker.pos, fen);
+        plug_send_all("position %s", fen);
+        if (was_key && tracker.last_move) {
+            Pos t = was_pos;
+            int nm = pos_gen_legal(&t, ms), ok = 0;
+            for (int q = 0; q < nm; q++) ok |= ms[q] == tracker.last_move;
+            Undo un;
+            t = was_pos;
+            if (ok && pos_make(&t, tracker.last_move, &un) && t.key == tracker.pos.key) t = was_pos, move_to_san(&t, tracker.last_move, san);
+            move_to_uci(tracker.last_move, u);
+            plug_send_all("move %s%s%s", u, *san ? " " : "", san);
+        }
+        Pos t = tracker.pos;
+        if (!pos_gen_legal(&t, ms)) {
+            int mate = pos_in_check(&tracker.pos, tracker.pos.side);
+            plug_send_all("gameover %s %s", mate ? "checkmate" : "stalemate", !mate ? "draw" : tracker.pos.side == tracker.user_color ? "loss" : "win");
+        }
+        was_key = tracker.pos.key, was_pos = tracker.pos, was_best = 0, was_depth = 0;
+    }
+    Analysis an;
+    if (analyzer_get(&an) && an.key == tracker.pos.key && an.best && (an.best != was_best || an.depth != was_depth)) {
+        char u[8], san[16];
+        Pos t = tracker.pos;
+        move_to_san(&t, an.best, san);
+        move_to_uci(an.best, u);
+        plug_send_all("best %s %s %s %d %d", u, san, an.mate ? "mate" : "cp", an.mate ? an.mate : an.score, an.depth);
+        was_best = an.best, was_depth = an.depth;
+    }
+}
+
+static int plug_pump(void) // 1 = redraw
+{
+    if (!nplugs) return 0;
+    plug_events();
+    return plug_poll(now_ms());
+}
+
 static void redraw(void)
 {
     set_font(cfg.font);
@@ -3272,6 +3583,7 @@ static void redraw(void)
             }
             if (!nlegal && !drawn && cfg.confetti && pos_in_check(&tracker.pos, tracker.pos.side) && !my_turn) draw_confetti(c, bl);
             if (cfg.sqnames) draw_sqnames(c, bl, bottom);
+            plug_items(c, bl, bottom);
             if (now_ms() < badge_until && rate_move && !hushed()) {
                 int r, col;
                 double s8 = bl.w / 8;
@@ -3481,6 +3793,7 @@ static void redraw(void)
                 if (i == lead) add_hit(ub, ACT_UPGRADE);
             }
             if (ck < 0.5) draw_wgraph(c, p, bl, outr); // the pill is just the move
+            plug_panels(c, bl, outr, p);
             draw_extras(c, bl, p, outr, i == lead);
         }
         if (state == TRACKING && cfg.eyes && (eyes_big || now_ms() - eyes_t < 340)) // big or growing, goes over everything
@@ -4488,6 +4801,7 @@ static void relaunch(void)
     redraw();
     analyzer_stop();
     second_quit();
+    plug_quit();
     job_kill(dl_pid);
     job_kill(lib_pid);
     usleep(150000); // let the overlay clear and the engines die before we exec
@@ -5461,9 +5775,34 @@ static void end_slide(void)
     pick_setting(st, k);
 }
 
+static void end_pslide(void)
+{
+    Plugin *p = &plugs[pslide / 64];
+    int k = pslide % 64;
+    pslide = -1;
+    if (!p->alive || k >= p->nset || p->set[k].v == pslide_v0) return;
+    int v = p->set[k].v;
+    p->set[k].v = pslide_v0;
+    plug_change(p, k, v);
+    save_cfg();
+}
+
 // 1 while a slider is being dragged
 static int drag_slide(void)
 {
+    if (pslide >= 0) {
+        double x, y;
+        Plugin *p = &plugs[pslide / 64];
+        int k = pslide % 64;
+        if (!settings_open || !p->alive || k >= p->nset || !ov->held || !ov->held(ov, &x, &y)) {
+            end_pslide();
+            redraw();
+            return 0;
+        }
+        int v = plug_slider_v(&p->set[k], pslide_r, x);
+        if (v != p->set[k].v) p->set[k].v = v, redraw();
+        return 1;
+    }
     if (slide_i < 0) return 0;
     double x, y;
     if (!settings_open || !ov->held || !ov->held(ov, &x, &y)) {
@@ -5599,8 +5938,14 @@ static void handle_click(double x, double y)
         }
         case ACT_RESET:
             if (set_tab == TAB_KEYS) key_click(ACT_RESET, 0);
+            for (int pi = 0; set_tab >= TAB_PLUG && pi < nplugs; pi++) {
+                Plugin *p = &plugs[pi];
+                if (!p->alive || (set_tab == TAB_PLUG ? own_tab(p) >= 0 : own_tab(p) != set_tab)) continue;
+                for (int k = 0; k < p->nset; k++)
+                    if (p->set[k].kind != PS_BUTTON && p->set[k].v != p->set[k].def) plug_change(p, k, p->set[k].def);
+            }
             for (int k = 0; k < NSET; k++) {
-                if (tab_of(k) != set_tab || (is_button(sets[k].v) && sets[k].v != &cfg.second)) continue;
+                if (set_tab >= TAB_PLUG || tab_of(k) != set_tab || (is_button(sets[k].v) && sets[k].v != &cfg.second)) continue;
                 *sets[k].v = *(int *)((char *)&cfg_default + ((char *)sets[k].v - (char *)&cfg)); // same field in the defaults copy
             }
             debug_on = cfg.debug;
@@ -5774,6 +6119,45 @@ static void handle_click(double x, double y)
         case ACT_SEARCH:
             set_typing = 1, dd_open = -1;
             break;
+        case ACT_PLUG_ON: {
+            Plugin *p = &plugs[hits[i].arg];
+            char k[80];
+            p->on = !p->on;
+            snprintf(k, sizeof(k), "plugin.%s", p->name);
+            plug_cfg_line(k, p->on ? "1" : "0");
+            if (p->on) plug_start(p);
+            else plug_stop(p, "off");
+            plug_poll(now_ms());
+            save_cfg();
+            break;
+        }
+        case ACT_PLUG_DIR: {
+            char dir[1100];
+            if (hits[i].arg >= 0) snprintf(dir, sizeof(dir), "%s", plugs[hits[i].arg].dir);
+            else snprintf(dir, sizeof(dir), "%s/plugins", data_dir), make_dir(dir);
+            if (open_folder(dir)) set_note("couldnt open the folder");
+            break;
+        }
+        case ACT_PLUG_SET: {
+            Plugin *p = &plugs[hits[i].arg / 64];
+            int k = hits[i].arg % 64;
+            if (!p->alive || k >= p->nset) break;
+            PlugSet *ps = &p->set[k];
+            if (ps->kind == PS_SLIDER) break; // the bar takes it
+            plug_change(p, k, ps->kind == PS_BOOL ? !ps->v : ps->kind == PS_CHOICE ? (ps->v + 1) % ps->nch : 0);
+            if (ps->kind != PS_BUTTON) save_cfg();
+            break;
+        }
+        case ACT_PLUG_SLIDE: {
+            Plugin *p = &plugs[hits[i].arg / 64];
+            int k = hits[i].arg % 64;
+            if (!p->alive || k >= p->nset) break;
+            pslide_v0 = p->set[k].v;
+            p->set[k].v = plug_slider_v(&p->set[k], r, x);
+            pslide = hits[i].arg, pslide_r = r;
+            if (!ov->held) end_pslide();
+            break;
+        }
         case ACT_EXPORT:
             export_cfg();
             break;
@@ -6028,6 +6412,11 @@ int main(int argc, char **argv)
     srand((unsigned)time(NULL));
     templates_builtin(&tpl);
     if (templates_load(&tpl, tpl_path) && verbose) fprintf(stderr, "loaded learned piece set\n");
+    no_sigpipe();
+    plug_note = plug_note_cb, plug_grab = plug_grab_cb;
+    plug_scan(data_dir, verbose);
+    for (int i = 0; i < nplugs; i++)
+        if (plugs[i].on) plug_start(&plugs[i]);
 
     if (replay_dir) {
         cap = backend_replay(replay_dir);
@@ -6053,7 +6442,11 @@ int main(int argc, char **argv)
             anim_force = v;
         }
         const char *st = getenv("OPEN_CHEASE_SETTINGS_TAB");
-        if (st && *st >= '0' && *st < '0' + NTABS) set_tab = *st - '0';
+        if (st && *st >= '0' && *st <= '9') {
+            int v = 0;
+            while (*st >= '0' && *st <= '9' && v < 100) v = v * 10 + *st++ - '0';
+            if (v < MAX_TABS) set_tab = v;
+        }
         if (so) {
             open_a = open_b = 0;
             while (*so >= '0' && *so <= '9') open_a = open_a * 10 + *so++ - '0';
@@ -6064,6 +6457,8 @@ int main(int argc, char **argv)
             if (open_a >= 0) settings_open = replay_frame() >= open_a && replay_frame() <= open_b;
             tick();
             if (slow) usleep(400000); // so the shots have a move in them
+            plug_pump();
+            for (int k = 0; slow && k < 40 && plug_running(); k++) usleep(10000), plug_pump(); // their answer lands in the shot
             hover_moved();
             redraw();
             double cx, cy;
@@ -6081,6 +6476,7 @@ int main(int argc, char **argv)
             replay_ticks++;
         }
         second_quit();
+        plug_quit();
         fflush(stdout);
         fflush(stderr);
         _exit(0); // plain exit locks every FILE and the engine reader is stuck in fgets on one
@@ -6121,11 +6517,13 @@ int main(int argc, char **argv)
         if (rainbow && wait > 80) wait = 80; // rainbow fades instead of jumping
         if (busy && wait > 15) wait = 15; // ~60fps while something slides
         if (settings_open && ov->pointer && wait > 100) wait = 100; // keeps an eye on the mouse for the tooltips
-        if (slide_i >= 0 && wait > 16) wait = 16;
+        if ((slide_i >= 0 || pslide >= 0) && wait > 16) wait = 16;
+        if (plug_running() && wait > 50) wait = 50; // their pipes get read in between
         if (ctl_fd >= 0 && wait > 150) wait = 150; // checks the --send fifo
         int r = ov->wait_events(ov, wait, &cx, &cy);
         if (r < 0) break;
         ctl_poll();
+        if (plug_pump() && r != 1) redraw();
         int tipr = settings_open && hover_moved();
         if (drag_slide()) continue;
         if (r == 1) handle_click(cx, cy);
@@ -6139,6 +6537,7 @@ int main(int argc, char **argv)
     redraw();
     analyzer_stop();
     second_quit();
+    plug_quit();
     job_kill(dl_pid);
     job_kill(lib_pid);
     usleep(100000);
