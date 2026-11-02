@@ -140,44 +140,57 @@ static int is_flip(const uint8_t *a, const uint8_t *b, const Board *bd)
     return (cdiff(a, bd->light) < 40 && cdiff(b, bd->dark) < 40) || (cdiff(a, bd->dark) < 40 && cdiff(b, bd->light) < 40);
 }
 
-static double edge_strength_v(const Frame *f, const Board *bd, int x, int y0, int y1)
+// 2 per clean edge pixel, 1 for a blurry one. dir 0 = vertical line at x=pos, 1 = horizontal at y=pos, from a0 to a1
+static int edge_count(const Frame *f, const Board *bd, int o, int dir, int pos, int a0, int a1)
 {
-    int o = (int)(bd->s * 0.03); // zoomed boards smear the edge a few px
-    if (x - 1 - o < 0 || x + o >= f->w) return 0;
-    if (y0 < 0) y0 = 0;
-    if (y1 > f->h) y1 = f->h;
-    double sum = 0;
-    for (int y = y0; y < y1; y++) {
+    int n = 0;
+    if (dir == 0) {
+        if (pos - 1 - o < 0 || pos + o >= f->w) return 0;
+        if (a0 < 0) a0 = 0;
+        if (a1 > f->h) a1 = f->h;
+        for (int y = a0; y < a1; y++) {
+            uint8_t a[3], b[3], a2[3];
+            rgb(f, pos - 1 - o, y, a);
+            rgb(f, pos + o, y, b);
+            if (is_flip(a, b, bd)) n += 2;
+            else if (pos - 2 - o >= 0) {
+                rgb(f, pos - 2 - o, y, a2);
+                if (is_flip(a2, b, bd)) n++; // blurry edge, one more px out
+            }
+        }
+        return n;
+    }
+    if (pos - 1 - o < 0 || pos + o >= f->h) return 0;
+    if (a0 < 0) a0 = 0;
+    if (a1 > f->w) a1 = f->w;
+    for (int x = a0; x < a1; x++) {
         uint8_t a[3], b[3], a2[3];
-        rgb(f, x - 1 - o, y, a);
-        rgb(f, x + o, y, b);
-        if (is_flip(a, b, bd)) sum += 1;
-        else if (x - 2 - o >= 0) {
-            rgb(f, x - 2 - o, y, a2);
-            if (is_flip(a2, b, bd)) sum += 0.5; // blurry edge, one more px out
+        rgb(f, x, pos - 1 - o, a);
+        rgb(f, x, pos + o, b);
+        if (is_flip(a, b, bd)) n += 2;
+        else if (pos - 2 - o >= 0) {
+            rgb(f, x, pos - 2 - o, a2);
+            if (is_flip(a2, b, bd)) n++;
         }
     }
-    return sum;
+    return n;
 }
 
-static double edge_strength_h(const Frame *f, const Board *bd, int y, int x0, int x1)
+static int gpu_checked[2]; // first gpu answer of each kind gets checked against ours
+
+static void edge_counts(const Frame *f, const Board *bd, const int *jobs, int n, int *out)
 {
-    int o = (int)(bd->s * 0.03);
-    if (y - 1 - o < 0 || y + o >= f->h) return 0;
-    if (x0 < 0) x0 = 0;
-    if (x1 > f->w) x1 = f->w;
-    double sum = 0;
-    for (int x = x0; x < x1; x++) {
-        uint8_t a[3], b[3], a2[3];
-        rgb(f, x, y - 1 - o, a);
-        rgb(f, x, y + o, b);
-        if (is_flip(a, b, bd)) sum += 1;
-        else if (y - 2 - o >= 0) {
-            rgb(f, x, y - 2 - o, a2);
-            if (is_flip(a2, b, bd)) sum += 0.5;
-        }
+    int o = (int)(bd->s * 0.03); // zoomed boards smear the edge a few px
+    if (gpu_edges(f, jobs, n, o, bd->light, bd->dark, out)) {
+        if (gpu_checked[0]) return;
+        gpu_checked[0] = 1;
+        for (int i = 0; i < n; i++)
+            if (out[i] != edge_count(f, bd, o, jobs[i * 4], jobs[i * 4 + 1], jobs[i * 4 + 2], jobs[i * 4 + 3])) {
+                gpu_broken("edges");
+                break;
+            }
     }
-    return sum;
+    for (int i = 0; i < n; i++) out[i] = edge_count(f, bd, o, jobs[i * 4], jobs[i * 4 + 1], jobs[i * 4 + 2], jobs[i * 4 + 3]);
 }
 
 static int line_fit(const double *ks, const double *vs, const double *str, double s, double *slope, double *icpt)
@@ -216,16 +229,30 @@ static void refine(const Frame *f, Board *b)
     double s = b->s;
     int win = (int)(s * 0.45) + 2; // the first guess can be 20+ px off on big boards
     if (win > 500) win = 500;
+    int nd = 2 * win + 1, nj = 7 * 2 * nd;
+    int *jobs = malloc(sizeof(int) * 4 * nj), *cnt = malloc(sizeof(int) * nj);
+    for (int k = 1; k <= 7; k++) {
+        double ex = b->x + k * s, ey = b->y + k * s;
+        for (int d = -win; d <= win; d++) {
+            int *jv = jobs + ((k - 1) * 2 * nd + d + win) * 4, *jh = jv + nd * 4;
+            jv[0] = 0, jv[1] = (int)(ex + d), jv[2] = (int)b->y, jv[3] = (int)(b->y + 8 * s);
+            jh[0] = 1, jh[1] = (int)(ey + d), jh[2] = (int)b->x, jh[3] = (int)(b->x + 8 * s);
+        }
+    }
+    edge_counts(f, b, jobs, nj, cnt);
     double es[1001];
     double ks[7], xs[7], ys[7], sx_[7], sy_[7];
     for (int k = 1; k <= 7; k++) {
         double ex = b->x + k * s, ey = b->y + k * s, best, besty;
-        for (int d = -win; d <= win; d++) es[d + win] = edge_strength_v(f, b, (int)(ex + d), (int)b->y, (int)(b->y + 8 * s));
+        const int *c = cnt + (k - 1) * 2 * nd;
+        for (int i = 0; i < nd; i++) es[i] = c[i] / 2.0;
         double bx = ex + plateau_mid(es, win, &best);
-        for (int d = -win; d <= win; d++) es[d + win] = edge_strength_h(f, b, (int)(ey + d), (int)b->x, (int)(b->x + 8 * s));
+        for (int i = 0; i < nd; i++) es[i] = c[nd + i] / 2.0;
         double by = ey + plateau_mid(es, win, &besty);
         ks[k - 1] = k, xs[k - 1] = bx, ys[k - 1] = by, sx_[k - 1] = best, sy_[k - 1] = besty;
     }
+    free(jobs);
+    free(cnt);
     double slope_x, icpt_x, slope_y, icpt_y;
     int okx = line_fit(ks, xs, sx_, s, &slope_x, &icpt_x), oky = line_fit(ks, ys, sy_, s, &slope_y, &icpt_y);
     if (!okx && !oky) return;
@@ -308,31 +335,58 @@ static int find_chains(const Frame *f, Chain *chains, int maxc, const Rect *igno
     return nchains;
 }
 
+// one blurred row and how hard it changes at every x
+static void soft_row(const Frame *f, int y, int *pre, int *sm, int *ed)
+{
+    int W = f->w;
+    for (int k = 0; k < 3; k++) pre[k] = 0;
+    for (int x = 0; x < W; x++) {
+        int acc[3] = {0, 0, 0};
+        for (int dy = -2; dy <= 2; dy++) { // 5 rows blurred so wood grain doesnt split a square
+            uint8_t px[3];
+            rgb(f, x, y + dy, px);
+            for (int k = 0; k < 3; k++) acc[k] += px[k];
+        }
+        for (int k = 0; k < 3; k++) pre[(x + 1) * 3 + k] = pre[x * 3 + k] + acc[k];
+    }
+    for (int x = 0; x < W; x++) {
+        int a = x - 2 < 0 ? 0 : x - 2, b = x + 3 > W ? W : x + 3;
+        for (int k = 0; k < 3; k++) sm[x * 3 + k] = (pre[b * 3 + k] - pre[a * 3 + k]) / (5 * (b - a));
+    }
+    for (int x = 0; x < W; x++) {
+        int a = x - 3 < 0 ? 0 : x - 3, b = x + 3 >= W ? W - 1 : x + 3;
+        ed[x] = abs(sm[b * 3] - sm[a * 3]) + abs(sm[b * 3 + 1] - sm[a * 3 + 1]) + abs(sm[b * 3 + 2] - sm[a * 3 + 2]);
+    }
+}
+
 static int find_chains_soft(const Frame *f, Chain *chains, int maxc, const Rect *ignore, int nignore)
 {
     int nchains = 0, W = f->w, step = f->h > 1500 ? 6 : 4;
     int *pre = malloc(sizeof(int) * 3 * (W + 1)), *sm = malloc(sizeof(int) * 3 * W), *ed = malloc(sizeof(int) * W);
     int *cut = malloc(sizeof(int) * (W + 2));
     Run *runs = malloc(sizeof(Run) * (W + 1));
-    for (int y = 2; y < f->h - 2 && nchains < maxc; y += step) {
-        for (int k = 0; k < 3; k++) pre[k] = 0;
-        for (int x = 0; x < W; x++) {
-            int acc[3] = {0, 0, 0};
-            for (int dy = -2; dy <= 2; dy++) { // 5 rows blurred so wood grain doesnt split a square
-                uint8_t px[3];
-                rgb(f, x, y + dy, px);
-                for (int k = 0; k < 3; k++) acc[k] += px[k];
-            }
-            for (int k = 0; k < 3; k++) pre[(x + 1) * 3 + k] = pre[x * 3 + k] + acc[k];
+    int nrows = f->h > 4 ? (f->h - 5) / step + 1 : 0;
+    uint8_t *gsm = nrows ? malloc((size_t)nrows * W * 4) : NULL;
+    uint16_t *ged = nrows ? malloc((size_t)nrows * W * 2) : NULL;
+    int gpu = gsm && ged && gpu_blur_rows(f, 2, step, nrows, gsm, ged);
+    if (gpu && !gpu_checked[1]) {
+        gpu_checked[1] = 1;
+        for (int i = 0; i < nrows && gpu; i++) {
+            soft_row(f, 2 + i * step, pre, sm, ed);
+            for (int x = 0; x < W && gpu; x++)
+                if (ed[x] != ged[(size_t)i * W + x] || sm[x * 3] != gsm[((size_t)i * W + x) * 4] || sm[x * 3 + 1] != gsm[((size_t)i * W + x) * 4 + 1] ||
+                    sm[x * 3 + 2] != gsm[((size_t)i * W + x) * 4 + 2])
+                    gpu = 0;
         }
-        for (int x = 0; x < W; x++) {
-            int a = x - 2 < 0 ? 0 : x - 2, b = x + 3 > W ? W : x + 3;
-            for (int k = 0; k < 3; k++) sm[x * 3 + k] = (pre[b * 3 + k] - pre[a * 3 + k]) / (5 * (b - a));
-        }
-        for (int x = 0; x < W; x++) {
-            int a = x - 3 < 0 ? 0 : x - 3, b = x + 3 >= W ? W - 1 : x + 3;
-            ed[x] = abs(sm[b * 3] - sm[a * 3]) + abs(sm[b * 3 + 1] - sm[a * 3 + 1]) + abs(sm[b * 3 + 2] - sm[a * 3 + 2]);
-        }
+        if (!gpu) gpu_broken("blur");
+    }
+    for (int y = 2, row = 0; y < f->h - 2 && nchains < maxc; y += step, row++) {
+        if (gpu) {
+            const uint8_t *g = gsm + (size_t)row * W * 4;
+            const uint16_t *e = ged + (size_t)row * W;
+            for (int x = 0; x < W; x++) sm[x * 3] = g[x * 4], sm[x * 3 + 1] = g[x * 4 + 1], sm[x * 3 + 2] = g[x * 4 + 2], ed[x] = e[x];
+        } else
+            soft_row(f, y, pre, sm, ed);
         int nc = 0;
         cut[nc++] = 0;
         for (int x = 3; x < W - 3; x++) {
@@ -389,6 +443,8 @@ static int find_chains_soft(const Frame *f, Chain *chains, int maxc, const Rect 
     free(pre);
     free(sm);
     free(ed);
+    free(gsm);
+    free(ged);
     free(cut);
     free(runs);
     return nchains;
@@ -518,6 +574,7 @@ int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
                       void *mctx)
 {
     static int misses;
+    gpu_frame();
     if (find_board(f, out, ignore, nignore, masked, mctx, 0)) {
         out->soft = textured(f, out);
         misses = 0;
@@ -532,9 +589,60 @@ int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
     return 0;
 }
 
+typedef struct {
+    int (*fn)(void *, int, int);
+    void *ctx;
+    int ox, oy;
+} Shift;
+
+static int shifted(void *p, int x, int y)
+{
+    Shift *s = p;
+    return s->fn(s->ctx, x + s->ox, y + s->oy);
+}
+
+static int find_near(const Frame *f, const Board *old, Board *out, int x0, int y0, int x1, int y1, int (*masked)(void *, int, int),
+                     void *mctx)
+{
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > f->w) x1 = f->w;
+    if (y1 > f->h) y1 = f->h;
+    if (x1 - x0 < 150 || y1 - y0 < 150) return 0;
+    Frame c = *f;
+    c.px = (uint8_t *)pix(f, x0, y0);
+    c.w = x1 - x0, c.h = y1 - y0;
+    Shift sh = {masked, mctx, x0, y0};
+    Board b = {0};
+    int hit = find_board(&c, &b, NULL, 0, masked ? shifted : NULL, &sh, 0);
+    if (!hit && old->soft && !vision_lite) hit = find_board(&c, &b, NULL, 0, masked ? shifted : NULL, &sh, 1);
+    if (!hit) return 0;
+    b.x += x0, b.y += y0;
+    if (cdiff(b.light, old->light) >= 40 || cdiff(b.dark, old->dark) >= 40) return 0; // some other board
+    if (b.s < old->s * 0.6 || b.s > old->s * 1.6) return 0;
+    if (!b.soft) b.soft = textured(f, &b);
+    b.out = old->out;
+    *out = b;
+    return 1;
+}
+
+// board moved or got zoomed, look around the old spot first then the whole frame
+int vision_relocate(const Frame *f, Board *b, int full, int (*masked)(void *, int, int), void *mctx)
+{
+    Board nb;
+    gpu_frame();
+    int m = (int)(b->s * 4), x = (int)b->x, y = (int)b->y, w = (int)(b->s * 8);
+    int hit = find_near(f, b, &nb, x - m, y - m, x + w + m, y + w + m, masked, mctx);
+    if (!hit && full) hit = find_near(f, b, &nb, 0, 0, f->w, f->h, masked, mctx);
+    if (!hit || (fabs(nb.x - b->x) < 2 && fabs(nb.y - b->y) < 2 && fabs(nb.s - b->s) < 1)) return 0; // same spot, just covered
+    *b = nb;
+    return 1;
+}
+
 int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), void *mctx)
 {
-    double sc = score_board(f, b->x, b->y, b->s, b->light, b->dark, masked, mctx, NULL, b->soft);
+    int pen = 0;
+    double sc = score_board(f, b->x, b->y, b->s, b->light, b->dark, masked, mctx, &pen, b->soft) - pen; // squares past the edge = it slid by whole squares
     b->score = (int)sc;
     if (sc >= 46) return 1;
     // square colors changed? still a board if the checker pattern holds
@@ -718,6 +826,43 @@ void vision_fill_holes(float *m)
         }
 }
 
+// last read of every square, a square whose pixels didnt change gets its old result back
+typedef struct {
+    uint64_t h;
+    uint8_t hidden, foreign, highlighted, occ;
+    float occ_frac, lum, mask[FEAT_N * FEAT_N];
+} SqMemo;
+
+typedef struct {
+    double x, y, s;
+    uint8_t light[3], dark[3];
+    int soft, nz, w, h, bgr, masked, ok;
+    SqMemo sq[64];
+} Memo;
+
+static Memo memo[2]; // [soft_colors]
+
+int vision_nomemo;
+
+static uint64_t sq_print(const Frame *f, double x0, double y0, double s, int (*masked)(void *, int, int), void *mctx)
+{
+    uint64_t h = 1469598103934665603ULL;
+    int a = (int)x0, b = (int)y0, e = (int)(x0 + s) + 1, g = (int)(y0 + s) + 1;
+    if (a < 0) a = 0;
+    if (b < 0) b = 0;
+    if (e > f->w) e = f->w;
+    if (g > f->h) g = f->h;
+    for (int y = b; y < g; y += 3) {
+        const uint8_t *p = pix(f, a, y);
+        for (int x = a; x < e; x += 3, p += 12) {
+            uint64_t v = p[0] | (uint64_t)p[1] << 8 | (uint64_t)p[2] << 16;
+            if (masked && masked(mctx, x, y)) v |= 1ULL << 24;
+            h = (h ^ v) * 1099511628211ULL;
+        }
+    }
+    return h;
+}
+
 void vision_read(const Frame *f, const Board *b, int white_bottom, float color_thr, BoardRead *out,
                  int (*masked)(void *, int, int), void *mctx)
 {
@@ -761,10 +906,30 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             }
         if (np) board_nz = per[np / 2];
     }
+    Memo *mm = &memo[soft_colors];
+    int use = !vision_nomemo;
+    if (use && !(mm->ok && mm->x == b->x && mm->y == b->y && mm->s == s && !memcmp(mm->light, b->light, 3) && !memcmp(mm->dark, b->dark, 3) &&
+                 mm->soft == b->soft && mm->nz == board_nz && mm->w == f->w && mm->h == f->h && mm->bgr == f->bgr && mm->masked == !!masked)) {
+        mm->x = b->x, mm->y = b->y, mm->s = s, mm->soft = b->soft, mm->nz = board_nz, mm->w = f->w, mm->h = f->h, mm->bgr = f->bgr;
+        mm->masked = !!masked, mm->ok = 1;
+        memcpy(mm->light, b->light, 3);
+        memcpy(mm->dark, b->dark, 3);
+        for (int i = 0; i < 64; i++) mm->sq[i].h = 0;
+    }
     for (int r = 0; r < 8; r++)
         for (int c = 0; c < 8; c++) {
             int sq = display_to_sq(r, c, white_bottom);
             double x0 = b->x + c * s, y0 = b->y + r * s;
+            SqMemo *me = &mm->sq[r * 8 + c];
+            uint64_t hh = use ? sq_print(f, x0, y0, s, masked, mctx) | 1 : 0;
+            if (use && me->h == hh) {
+                out->hidden[sq] = me->hidden, out->foreign[r * 8 + c] = me->foreign, out->highlighted[sq] = me->highlighted;
+                out->occ_frac[sq] = me->occ_frac, out->lum[sq] = me->lum;
+                memcpy(out->mask[sq], me->mask, sizeof(me->mask));
+                occ[sq] = me->occ;
+                lums[sq] = me->lum;
+                continue;
+            }
             uint8_t ring[64][3];
             int nring = 0;
             for (int k = 0; k < 16 && nring < 64; k++) {
@@ -932,6 +1097,11 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             }
             if (occ[sq]) vision_fill_holes(out->mask[sq]);
             lums[sq] = out->lum[sq];
+            if (use) {
+                me->h = hh, me->hidden = out->hidden[sq], me->foreign = out->foreign[r * 8 + c], me->highlighted = out->highlighted[sq];
+                me->occ_frac = out->occ_frac[sq], me->lum = out->lum[sq], me->occ = (uint8_t)occ[sq];
+                memcpy(me->mask, out->mask[sq], sizeof(me->mask));
+            }
         }
     double vals[64];
     int n = 0;

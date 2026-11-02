@@ -182,7 +182,14 @@ int canvas_alpha_at(Canvas *c, double lx, double ly);
 int vision_find_board(const Frame *f, Board *b, const Rect *ignore, int nignore,
                       int (*masked)(void *, int, int), void *mctx);
 int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), void *mctx);
+int vision_relocate(const Frame *f, Board *b, int full, int (*masked)(void *, int, int), void *mctx); // 1 = found it somewhere else, b updated
 extern int vision_strict, vision_lite; // 0-4 how picky the board finder is, lite skips the slow blurred pass
+extern int vision_nomemo; // 1 = read every square from scratch, no reuse
+extern int gpu_mode, gpu_verbose; // gpu.c, optional opencl for the heavy scan passes, quietly cpu if theres none
+void gpu_frame(void);
+int gpu_blur_rows(const Frame *f, int y0, int step, int nrows, uint8_t *sm, uint16_t *ed);
+int gpu_edges(const Frame *f, const int *jobs, int n, int o, const uint8_t *light, const uint8_t *dark, int *out);
+void gpu_broken(const char *what);
 void vision_fill_holes(float *m); // fills enclosed piece outlines in a FEAT_N grid
 void vision_read(const Frame *f, const Board *b, int white_bottom, float color_thr, BoardRead *r,
                  int (*masked)(void *, int, int), void *mctx);
