@@ -17,7 +17,7 @@
   A starting point for making your own plugin for <a href="https://github.com/sevvy-wevvy/open-chease">open-chease</a>.<br>
   It draws the best move with an arrow, writes the score under the board, tints the last move, reads the screen to show the boards average color, has its own settings tab with every kind of setting, and puts a little box next to the board with whats going on.<br>
   None of that is very useful on its own, its there so you can see how each part works and rip out what you dont need. Theres notes all through <code>template.py</code> saying why things are the way they are.<br> <br>
-  Dont want python? Theres the same small plugin in <b>C</b>, <b>C++</b>, <b>C#</b>, <b>Rust</b>, <b>JavaScript</b> and <b>TypeScript</b> too, each in its own folder. They all do the exact same thing (best move arrow, a bool and a choice setting, a menu item, a box next to the board) so you can put them side by side. No packages or downloads in any of them, just the language itself.<br> <br>
+  Dont want python? A smaller version is in C, C++, C#, Rust, JavaScript and TypeScript too, each in its own folder. They all do the exact same thing so you can put them side by side: best move arrow, two settings (a bool and a choice), a menu item and a box next to the board. No packages or downloads in any of them.<br> <br>
   The full list of messages and commands is in <a href="https://github.com/sevvy-wevvy/open-chease/blob/dev/docs/PLUGINS.md">docs/PLUGINS.md</a> on the main repo.<br> <br>
   Made something cool with it? Let me know!
   <a href="https://sevvy-wevvy.com/discord">Discord</a>
@@ -32,7 +32,7 @@ Copy the <code>template</code> folder (or one of the language folders, just that
 <b>Windows</b> <code>%LOCALAPPDATA%\open-chease\plugins</code><br>
 <b>Mac</b> <code>~/Library/Application Support/open-chease/plugins</code><br> <br>
 Easiest way there is Gear > Plugins > <b>Open plugins folder</b>, it makes the folder if its not there yet.<br>
-Then restart open-chease and turn it on in the Plugins tab, plugins always start off. Its settings show up in a new <b>Template</b> tab (the language examples put theirs in the Plugins tab).<br> <br>
+Then restart open-chease and turn it on in the Plugins tab, plugins always start off. Its settings show up in a new Template tab (the language examples put theirs in the Plugins tab).<br> <br>
 You need python 3 installed, nothing else. On windows it runs with <code>py</code> (or <code>python</code>), so get it from python.org and tick the launcher box. On mac <code>python3</code> comes with the Xcode command line tools.
 </p>
 
@@ -51,9 +51,9 @@ cp -r oc-template/template ~/.local/share/open-chease/plugins/myplugin
 <summary align="center"><b>✏️ Renaming It ✏️</b></summary>
 
 <p align="center">
-The <b>folder name</b> is your plugins id. Its what gets saved in the settings file, so pick it once and dont change it later or your settings reset. Letters, numbers, <code>-</code> <code>_</code> <code>.</code> only, 31 chars max.<br> <br>
-In <code>plugin.txt</code> change <b>name</b>, <b>description</b>, <b>version</b>, <b>author</b> and <b>url</b> to yours. If its on github set <b>update</b> to your own repo so people get an Update button.<br>
-If you rename <code>template.py</code>, change <b>run</b> to match.<br>
+The folder name is your plugins id. Its what gets saved in the settings file, so pick it once and dont change it later or your settings reset. Letters, numbers, <code>-</code> <code>_</code> <code>.</code> only, 31 chars max.<br> <br>
+In <code>plugin.txt</code> put your own <code>name</code>, <code>description</code>, <code>version</code>, <code>author</code> and <code>url</code>. If its on github point <code>update</code> at your repo and people get an Update button.<br>
+Renamed <code>template.py</code>? Change <code>run</code> to match.<br>
 In <code>template.py</code> change <code>TAB</code> to your own tab name, or delete the tab line so your settings go in the Plugins tab.
 </p>
 </details>
@@ -62,10 +62,10 @@ In <code>template.py</code> change <code>TAB</code> to your own tab name, or del
 <summary align="center"><b>🔧 What To Change First 🔧</b></summary>
 
 <p align="center">
-<b>SETTINGS</b> at the top - delete the ones you dont want, add yours. Each one needs a key, a label and a tip<br>
+<b>SETTINGS</b> at the top - delete the ones you dont want, add yours. Each one needs a key and a label, plus a tip after the <code>|</code><br>
 <b>the on_ functions</b> - one per message open-chease sends. Delete the ones you dont care about from <code>HANDLERS</code> and the function<br>
 <b>redraw()</b> - builds everything you see on the board every time, swap it for your own drawing<br>
-<b>look()</b> and the ppm stuff - only needed if you read the screen, delete it and the <code>every</code>, <code>peek</code> settings if you dont<br> <br>
+<b>look()</b> and the ppm stuff - only needed if you read the screen. If you dont, delete it along with the <code>every</code> and <code>peek</code> settings<br> <br>
 Run open-chease with <code>-v</code> while you work on it. Your <code>log</code> lines and anything you print to stderr show up there, and the Plugins tab says why if your plugin quit.
 </p>
 </details>
@@ -109,7 +109,7 @@ Run open-chease with <code>-v</code> while you work on it. Your <code>log</code>
 <b>Know another language better?</b> Grab that folder. Theyre short on purpose, about 150 lines, with notes on every part.<br> <br>
 They all speak the same thing: open-chease writes lines to your stdin, you print lines to stdout, words split by spaces. Thats it, no library, no sdk. So any language that can read and print lines works, these are just the ones with an example.<br> <br>
 <b>Compiled ones</b> (C, C++, Rust, C#) ship just the source. open-chease runs the <code>build</code> line from plugin.txt once inside the folder and again when the source changes, what it prints goes in <code>build.log</code> there. Then it starts <code>run</code>. If it fails the Plugins tab shows the last lines of the log.<br>
-If the language isnt installed the plugin doesnt load, its row says whats missing with a <b>Get</b> link and a <b>Check again</b> button.
+If the language isnt installed the plugin doesnt load, its row says whats missing, with a Get link and a Check again button.
 </p>
 </details>
 
@@ -118,7 +118,7 @@ If the language isnt installed the plugin doesnt load, its row says whats missin
 
 <p align="center">
 <b>Folder</b> <code>template</code>, the big one with everything in it<br>
-<b>Install</b> python 3.7 or newer from <a href="https://www.python.org/downloads/">python.org</a>. Windows: tick the <b>py launcher</b> box. Mac: <code>xcode-select --install</code> gives you <code>python3</code>. Linux: you already have it<br>
+<b>Install</b> python 3.7 or newer from <a href="https://www.python.org/downloads/">python.org</a>. Windows: tick the py launcher box. Mac: <code>xcode-select --install</code> gives you <code>python3</code>. Linux: you already have it<br>
 <b>Build</b> none, <code>run = template.py</code> and open-chease picks python3 or py for you<br>
 <b>Check it</b> <code>python3 -m py_compile template.py</code> catches typos before you restart anything
 </p>
@@ -150,7 +150,7 @@ If the language isnt installed the plugin doesnt load, its row says whats missin
 <summary align="center"><b>🦀 Rust 🦀</b></summary>
 
 <p align="center">
-<b>Folder</b> <code>rust</code>, one file <code>main.rs</code>, only std, no cargo and no crates<br>
+<b>Folder</b> <code>rust</code>, one file <code>main.rs</code>, only std (no cargo, no crates)<br>
 <b>Install</b> <a href="https://rustup.rs/">rustup.rs</a> on any OS (it comes with cargo too, we just dont use it), or <code>sudo apt install rustc</code><br>
 <b>Build</b> <code>rustc -O -o myplugin main.rs</code>, plain rustc so theres nothing to download. Windows: <code>-o myplugin.exe</code><br>
 <b>Watch out</b> stdout is buffered here too, lock it, write, <code>flush()</code>. Dont <code>unwrap()</code> on stuff from open-chease, a panic quits the plugin and it gets turned off
@@ -162,7 +162,7 @@ If the language isnt installed the plugin doesnt load, its row says whats missin
 
 <p align="center">
 <b>Folder</b> <code>csharp</code>, <code>Program.cs</code> and a tiny <code>myplugin.csproj</code>, no nuget packages<br>
-<b>Install</b> the <b>.NET SDK</b> 8 or newer from <a href="https://dotnet.microsoft.com/download">dotnet.microsoft.com</a> (the runtime alone cant build). Linux: <code>sudo apt install dotnet-sdk-8.0</code> or whatever version your distro has<br>
+<b>Install</b> the .NET SDK, 8 or newer, from <a href="https://dotnet.microsoft.com/download">dotnet.microsoft.com</a> (the runtime alone cant build). Linux: <code>sudo apt install dotnet-sdk-8.0</code> or whatever version your distro has<br>
 <b>Build</b> <code>dotnet build -c Release -o out</code> builds the csproj into <code>out/</code>, then <code>run = dotnet out/myplugin.dll</code>. Same line on every OS. The very first build on a machine is slow, dotnet sets itself up<br>
 <b>Watch out</b> the example makes its own stdout writer with no BOM and <code>\n</code> line ends, and flushes it. Rename the csproj and the dll name changes with it, so fix <code>run</code> too
 </p>

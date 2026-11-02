@@ -1,6 +1,6 @@
 # plugin.txt, the only file open-chease looks for in your folder
 # lines starting with # get skipped, everything else is key = value
-# only run is needed, the rest is for the Plugins tab. keys it doesnt know get skipped,
+# only run is needed, the rest is optional. keys it doesnt know get skipped,
 # so a plugin.txt made for a newer open-chease still loads on an older one
 
 # the title in the Plugins tab (39 chars max), the folder name is used if you leave it out

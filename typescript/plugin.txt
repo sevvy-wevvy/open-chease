@@ -1,5 +1,4 @@
-# plugin.txt, lines starting with # get skipped, everything else is key = value.
-# unknown keys get skipped too. full list of keys with notes is in template/plugin.txt
+# key = value, # lines and keys it doesnt know get skipped. every key is explained in template/plugin.txt
 
 name = TypeScript example
 description = best move arrow, a menu item and a box, in typescript

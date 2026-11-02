@@ -1,18 +1,18 @@
 // open-chease plugin example in typescript
 //
-// how it works: open-chease starts this program and talks to it like a uci engine.
-// it writes lines to our stdin, we write lines to stdout. one thing per line,
-// words split by spaces. full list of lines is in docs/PLUGINS.md on the main repo.
+// same idea as the javascript one: open-chease starts this, sends lines to our stdin
+// like it would to a uci engine and reads what we print. one thing per line, words split
+// by spaces, the whole list is in docs/PLUGINS.md on the main repo
 //
-// what it does: draws the best move as an arrow, has a bool and a choice setting,
-// a "Say hi" item in the ... menu and a little box next to the board.
+// best move arrow, a bool and a choice setting, "Say hi" in the ... menu and a box next to the board
 //
-// no tsc, no npm. node 22.18 and newer run .ts files by just cutting the types out.
-// that means only types that can be erased: no enum, no namespace, no
-// "constructor(private x)" stuff. type, interface and annotations are all fine.
-// it doesnt type check either, run "npx tsc --noEmit --strict main.ts" for that if you want.
-// heads up: the node from ubuntu and debian apt is built without this and says
-// "Unknown file extension .ts". get node from nodejs.org (or nvm) instead,
+// no tsc and no npm. node 22.18+ runs .ts by cutting the types out, so only types that can
+// just be erased work. enum, namespace and "constructor(private x)" dont, type, interface
+// and annotations are fine. nothing gets type checked either,
+// "npx tsc --noEmit --strict main.ts" does that if you want it
+//
+// heads up, node from ubuntu/debian apt is built without this and says
+// "Unknown file extension .ts". get it from nodejs.org (or nvm),
 // node -p process.features.typescript has to say true
 
 import * as readline from "node:readline";
@@ -26,27 +26,25 @@ interface Best {
   uci: string;
   san: string;
   kind: "cp" | "mate" | string;
-  score: number; // cp is hundredths of a pawn, mate is moves till mate
+  score: number; // cp = hundredths of a pawn, mate = moves till mate
   depth: number;
 }
 
-const opts: Record<string, number> = { arrow: 1, color: 0 }; // settings, filled by set lines
+const opts: Record<string, number> = { arrow: 1, color: 0 }; // the settings
 let haveBoard = false;
 let team = "white";
 let toMove = "w"; // from the fen, the best score is for whoever moves
 let last = "";
 let best: Best | null = null;
 
-// everything goes through here, one write per batch.
-// node has no flush to call: a write to a pipe goes out on its own (right away
-// on linux and mac, a moment later on windows). debug prints go to console.error,
-// stderr only shows when open-chease runs with -v
+// no flush needed, node sends pipe writes by itself (a moment later on windows).
+// debug prints go in console.error, you see them with open-chease -v
 function send(...lines: string[]): void {
   process.stdout.write(lines.join("\n") + "\n");
 }
 
 function scoreText(b: Best): string {
-  // score is for the side to move, flip it so + always means good for white
+  // flip to whites side, the engine scores for whoever moves
   const s = toMove === "b" ? -b.score : b.score;
   if (b.kind === "mate") return (s > 0 ? "+M" : "-M") + Math.abs(s);
   return (s >= 0 ? "+" : "") + (s / 100).toFixed(2);
@@ -57,18 +55,15 @@ function redraw(): void {
   const c = COLORS[opts.color] ?? COLORS[0];
   const out: string[] = [];
 
-  // draw lines pile up and nothing changes on screen till "show",
-  // then it swaps in all of it at once. so build the whole picture every time
+  // "show" replaces the last picture completely, so this sends all of it every time
   if (best && opts.arrow) {
-    // squares are names like e2, they follow the board when black is at the bottom.
-    // uci is from+to (e2e4), a promotion has a 5th letter (e7e8q) we dont need
+    // e2 is still e2 when black is at the bottom. promotions (e7e8q) have a 5th letter we skip
     const from = best.uci.slice(0, 2), to = best.uci.slice(2, 4);
     out.push(`draw arrow ${from} ${to} #c0${c}`);
     out.push(`draw text ${to} #ffffff ${best.san}`);
   }
 
-  // the box next to the board. panel starts it, each line is a row, max 10 rows.
-  // a line can start with a color, without one it gets the normal text color
+  // up to 10 rows in the box, the color on a line is optional
   out.push("panel TypeScript example");
   out.push(`line you play ${team}`);
   if (last) out.push(`line last move ${last}`);
@@ -77,17 +72,16 @@ function redraw(): void {
   send(...out);
 }
 
-// one function per message, w is the line split into words, w[0] the message name
 const handlers: Record<string, (w: Words) => void> = {
   hello() {
-    // "hello 1 myplugin": protocol version, then our folder name.
-    // settings: open-chease draws them in Gear > Plugins, saves them and sends
-    // "set <key> <value>" right after each one with the saved value, and again on every change.
+    // "hello 1 myplugin" (protocol version, folder name)
+    // settings land in Gear > Plugins. open-chease saves them and sends "set <key> <value>"
+    // with the saved value right after each line, and again on every change
     //   setting bool <key> <default 0/1> <label> | <tip>
     //   setting choice <key> <default index> <options split by commas, _ is a space> <label> | <tip>
-    // menu <key> <label> | <tip>: an item in the ... menu, label 23 chars max, 4 per plugin.
-    // clicking it sends "click <key>". same key again changes it, "menu hi" alone removes it.
-    // older open-chease versions dont know menu and just skip the line
+    // menu <key> <label> | <tip> goes in the ... menu, 23 char label, 4 per plugin, clicks send
+    // "click <key>". resend the key to change it, "menu hi" alone removes it.
+    // old open-chease versions skip menu lines
     send(
       "setting bool arrow 1 Best move arrow | draws an arrow for the engines move",
       "setting choice color 0 Cyan,Green,Pink,Yellow Color | arrow and text color",
@@ -96,18 +90,17 @@ const handlers: Record<string, (w: Words) => void> = {
     );
   },
   set(w) {
-    // "set color 2", values are always whole numbers
+    // whole numbers only
     if (w.length < 3) return;
     opts[w[1]] = parseInt(w[2], 10) || 0;
     redraw();
   },
   click(w) {
-    // "click hi", from the menu item (or a setting button if we had one)
     if (w[1] === "hi") send("note hi from the TypeScript example");
   },
   board(w) {
-    // "board 220 140 576 white" = x y on screen, size in px, side at the bottom
-    // "board none" = lost it. clear works right away, no show needed
+    // "board 220 140 576 white" = x y on screen, size in px, side at the bottom, or "board none".
+    // clear works without a show
     haveBoard = w[1] !== "none";
     if (!haveBoard) send("clear");
     redraw();
@@ -117,36 +110,34 @@ const handlers: Record<string, (w: Words) => void> = {
     redraw();
   },
   position(w) {
-    // "position <fen>" after every move. the old best move is for the old position
+    // new position after every move, the old best is stale
     toMove = w[2] ?? "w";
     best = null;
     redraw();
   },
   move(w) {
-    // "move e7e5 e5" = uci then san. san can be missing
+    // "move e7e5 e5", san might be missing
     last = w[2] ?? w[1] ?? "";
     redraw();
   },
   best(w) {
-    // "best g1f3 Nf3 cp 36 11" = uci, san, cp or mate, score, depth.
-    // comes again each time the engine gets deeper, so keep this quick
+    // "best g1f3 Nf3 cp 36 11" = uci, san, cp or mate, score, depth. comes a lot, keep it quick
     if (w.length < 6 || w[1].length < 4) return;
     best = { uci: w[1], san: w[2], kind: w[3], score: parseInt(w[4], 10) || 0, depth: parseInt(w[5], 10) || 0 };
     redraw();
   },
 };
 
-// readline hands us one line at a time with the \n (and windows \r\n) cut off.
-// when stdin closes (open-chease quit or turned us off) node runs out of things to do and exits
+// line endings (\r\n too) are already cut. node exits by itself once stdin closes
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line: string) => {
   const w = line.trim().split(/\s+/);
-  // anything we dont know gets skipped, newer open-chease versions might send more
+  // unknown stuff gets skipped, hasOwn so "toString" cant sneak through
   if (!Object.hasOwn(handlers, w[0])) return;
   try {
     handlers[w[0]](w);
   } catch (e) {
-    // if we crash open-chease turns us off, so log it and keep going
+    // crashing = turned off
     send(`log oops: ${e instanceof Error ? e.message : String(e)}`);
     console.error(e);
   }

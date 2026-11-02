@@ -2,24 +2,24 @@
 # open-chease plugin template. copy this folder into your plugins folder,
 # rename it, then rip out whatever you dont need.
 #
-# how it works: open-chease starts this program and talks to it like a uci engine.
+# open-chease starts this program and talks to it like a uci engine.
 # it writes lines to our stdin, we print lines to stdout, one thing per line,
-# words split by spaces. full list is in docs/PLUGINS.md on github.
+# words split by spaces. full list is in docs/PLUGINS.md on github
 #
-# stdlib only so it runs on linux, windows and mac with any python3.
+# stdlib only, any python3 on any OS
 
 import sys
 import traceback
 
 
 # settings
-# these get sent on hello. open-chease draws them in the settings, saves them,
-# and sends "set <key> <value>" right after each one (with the saved value)
-# and again whenever the user changes it. so never trust the default here,
-# always use whatever came in through set.
+# these get sent on hello. open-chease draws them in the settings and saves them,
+# then sends "set <key> <value>" right after each one (with the saved value)
+# and again whenever the user changes it. the default here only counts till theres
+# a saved value, always go by what came in through set
 #
 # keys: letters, numbers, - _ . and 31 chars max. label and tip split by |
-# 24 settings max per plugin. values are always whole numbers.
+# 24 settings max per plugin, values are always whole numbers
 
 TAB = "Template"  # own tab in the settings, 23 chars max. drop the tab line and they go in the Plugins tab
 
@@ -38,16 +38,16 @@ SETTINGS = [
     "setting button wipe Wipe it | clears the drawings till the next move",
 ]
 
-opts = {}  # key -> value, filled by "set" lines
+opts = {}
 
 
 # menu
 # items in the ... menu. "menu <key> <label> | <tip>", label 23 chars max, 4 items per plugin
 # (and 6 from all plugins together, first come first served, so dont hog them).
-# clicking one sends "click <key>", same as a settings button, so one key can be both.
+# clicking one sends "click <key>", same as a settings button, one key can be both.
 # send the same key again to change the label, "menu <key>" with nothing after removes it.
-# they go away by themselves when the plugin stops. older open-chease versions
-# dont know menu and skip the line, so its safe to send anyway
+# they go away by themselves when the plugin stops.
+# older open-chease versions dont know menu and just skip the line, no harm
 
 def menu():
     send("menu hi Say hi | same as the Say hi button in the settings",
@@ -60,7 +60,7 @@ COLORS = ["1fe0e0", "40e070", "ff5fb0", "ffd23f"]
 
 board = None     # (x, y, size, bottom) once its found, None when theres no board
 team = "white"   # side the user plays
-fen = None       # last position
+fen = None
 last = None      # (uci, san) of the last move played
 best = None      # (uci, san, kind, score, depth) from the engine
 over = None      # "checkmate win" etc when the game ended
@@ -70,12 +70,10 @@ wiped = False
 paused = False   # the Pause drawing menu item
 
 
-# talking
-
 def send(*lines):
     # flush or open-chease never sees it, a pipe holds on to output otherwise.
-    # a line it cant read gets skipped without a word, not even with -v,
-    # so if something doesnt show up check the spelling and the number of words first
+    # a line it cant read gets skipped without a word, not even with -v.
+    # if something doesnt show up check the spelling and the number of words first
     for ln in lines:
         print(ln)
     sys.stdout.flush()
@@ -87,8 +85,7 @@ def say(*bits):
 
 
 # events
-# one small function per message. every one gets w, the line split into words.
-# w[0] is the message name.
+# one small function per message. each gets w, the line split into words (w[0] is the message name)
 
 def on_hello(w):
     # "hello 1 template": 1 is the protocol version, then our folder name
@@ -271,7 +268,7 @@ def average(w, h, px):
 
 # drawing
 # draw/panel/line lines pile up and nothing changes on screen till "show",
-# then it swaps in everything at once. so build the whole picture every time.
+# then it swaps in everything at once. means you build the whole picture every time
 #
 # positions: a square name (e4) or "x y" in px from the top left of the board.
 # square names follow the board when black is at the bottom, x y dont, theyre plain px.
@@ -312,7 +309,7 @@ def redraw():
         out.append(f"draw arrow {uci[:2]} {uci[2:4]} {col('c0')}")
         # small text on a square lands in its top left corner
         out.append(f"draw text {uci[2:4]} #ffffff {san}")
-        # small text at x y, here under the right end of the board
+        # or at x y
         out.append(f"draw text {size - 70:.0f} {size + 8:.0f} #c0ffffff depth {best[4]}")
 
     big = opts.get("big", 0)
@@ -343,8 +340,8 @@ def redraw():
 
 
 # main loop
-# stdin closing means open-chease quit or turned us off, so the loop just ends.
-# lines we dont know get skipped, newer versions of open-chease might send more.
+# stdin closing means open-chease quit or turned us off, the loop just ends.
+# lines we dont know get skipped, newer versions of open-chease might send more
 
 def main():
     # open-chease talks utf-8. windows python picks some other encoding for pipes,
@@ -361,7 +358,7 @@ def main():
         try:
             fn(w)
         except Exception as e:
-            # if we crash open-chease turns us off, so catch it and keep going
+            # a crash gets us turned off, better to log it and keep going
             send(f"log oops: {type(e).__name__} {e}")
             traceback.print_exc()
 
