@@ -60,14 +60,14 @@ Positions on the board are either a square (<code>e4</code>) or <code>x y</code>
 <code>board none</code> - lost the board<br>
 <code>team white</code> - which side the user plays<br>
 <code>position rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2</code> - the FEN, after every move and when the board is found<br>
-<code>move e7e5 e5</code> - the move that was just played, uci then SAN<br>
+<code>move e7e5 e5</code> - the move that was just played, uci then SAN. SAN can be missing if it couldnt check the move<br>
 <code>best g1f3 Nf3 cp 36 11</code> - engine best move, uci, SAN, <code>cp</code> or <code>mate</code>, the score (for the side to move) and the depth. Comes again every time it gets deeper<br>
 <code>gameover checkmate win</code> - checkmate or stalemate, then win, loss or draw for the user<br>
 <code>set onboard 1</code> - a setting value. You get one for every setting right after you declare it (with whatever was saved) and again when the user changes it<br>
 <code>click test</code> - the user hit one of your buttons<br>
 <code>tick 12345</code> - only if you asked for ticks, the number is a clock in ms<br>
 <code>frame 576 576 /path/to/plugins/avgcolor/frame.ppm</code> - the screen bit you asked for is ready (see below)<br>
-<code>frame none busy</code> - you didnt get one, the rest says why
+<code>frame none busy</code> - you didnt get one, the rest says why (<code>busy</code>, <code>no board</code>, <code>too small</code> or <code>bad numbers</code>)
 </p>
 </details>
 
@@ -80,14 +80,14 @@ Positions on the board are either a square (<code>e4</code>) or <code>x y</code>
 <code>setting slider every 2 1 10 Every (sec) | how often it looks again</code> - default, min, max<br>
 <code>setting choice style 0 Short,In_words Move as | Nf3 or knight to f3</code> - default, then the options split by commas (<code>_</code> becomes a space)<br>
 <code>setting button test Say hi | pops a note</code> - you get <code>click test</code> when its pressed<br>
-<code>tab My stuff</code> - puts your settings in their own tab instead of the Plugins one<br> <br>
+<code>tab My stuff</code> - puts your settings in their own tab instead of the Plugins one. Only shows up if you have at least one setting, 23 chars max<br> <br>
 <b>Drawing</b> (nothing shows until you send <code>show</code>, then it replaces everything you drew before):<br>
 <code>draw text e4 #ffffff Nf3</code> - small text, on a square or at x y<br>
 <code>draw big 10 -40 #ff0 hello</code> - same but bigger<br>
 <code>draw rect -34 0 26 26 #80ff0000</code> - filled box: where, width, height, color<br>
 <code>draw box -34 0 26 26 #fff</code> - just the outline<br>
 <code>draw arrow g1 f3 #1fe0e0</code> - arrow from one square to another<br>
-<code>draw square e4 #801fe0e0</code> - colors a square<br>
+<code>draw square e4 #1fe0e0</code> - thick outline around a square, see-through is ignored here. For a tint use <code>draw rect e4 72 72 #801fe0e0</code><br>
 <code>panel Last move</code> - a little box next to the board with this title<br>
 <code>line #1fe0e0 Nf3</code> - a line in that box, the color is optional<br>
 <code>show</code> - shows all of the above<br>
@@ -117,13 +117,13 @@ for line in sys.stdin:
     if not w:
         continue
     if w[0] == "hello":
-        print("setting bool on 1 Show it | green square on the best moves target", flush=True)
+        print("setting bool on 1 Show it | green outline on the best moves target", flush=True)
     elif w[0] == "set" and w[1] == "on":
         on = int(w[2])
         if not on:
             print("clear", flush=True)
     elif w[0] == "best" and on:
-        print(f"draw square {w[1][2:4]} #8000ff00", flush=True)
+        print(f"draw square {w[1][2:4]} #00ff00", flush=True)
         print("show", flush=True)
 ```
 

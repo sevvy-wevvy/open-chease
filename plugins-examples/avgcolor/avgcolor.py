@@ -29,9 +29,9 @@ def ask():
 def read_ppm(path):
     with open(path, "rb") as f:
         data = f.read()
-    parts = data.split(maxsplit=4)
+    parts = data.split(maxsplit=3)  # parts[3] is 255, one space byte, then the pixels
     w, h = int(parts[1]), int(parts[2])
-    px = parts[4][: w * h * 3]
+    px = parts[3][4 : 4 + w * h * 3]
     return w, h, px
 
 
