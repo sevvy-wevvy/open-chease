@@ -65,6 +65,7 @@ typedef struct {
     uint8_t foreign[64]; // hidden by something thats not ours, screen order (row * 8 + col)
     int has_popup;
     Rect popup; // frame px, whole squares
+    int busy; // squares whose pixels changed since the last read, -1 = cant tell
 
     float mask[64][FEAT_N * FEAT_N]; // 1 piece, 0 board, 0.5 cant tell
 } BoardRead;
@@ -247,6 +248,7 @@ typedef struct {
     signed char lockpc[64];
     int lock_side;
     GameLine line, prev_line[3];
+    int anim, anim_run; // board keeps changing with nothing moving (glow, sparkles), > 0 = believe only squares that hold still
 } Tracker;
 
 void tracker_start(Tracker *t, int user_color);

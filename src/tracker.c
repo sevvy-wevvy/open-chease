@@ -787,8 +787,43 @@ static int back_to_start(Pos *p, int d) // knights going home in a reversible li
     return 0;
 }
 
+// animated board: squares that just flickered dont count, a move has to sit still on its own squares
+static int steady_move(Tracker *t, const BoardRead *r, Templates *tpl, const uint8_t *exp, const uint8_t *was)
+{
+    int shaky = 0;
+    for (int i = 0; i < 64; i++) shaky += r->obs[i] != was[i] && r->obs[i] != exp[i];
+    if (shaky > 4) return 0;
+    BoardRead *s = malloc(sizeof(BoardRead));
+    if (!s) return 0;
+    *s = *r;
+    for (int i = 0; i < 64; i++)
+        if (r->obs[i] != was[i] && r->obs[i] != exp[i]) s->obs[i] = OBS_UNKNOWN;
+    int od, cd, nw = 0, nb = 0, ok = 0;
+    diff2(exp, s->obs, &od, &cd);
+    for (int i = 0; i < 64; i++) nw += s->obs[i] == OBS_WHITE, nb += s->obs[i] == OBS_BLACK;
+    Match m;
+    if (od == 0 && cd <= 1) ok = 1; // just flicker
+    else if (nw <= __builtin_popcountll(t->pos.occ[WHITE]) && nb <= __builtin_popcountll(t->pos.occ[BLACK]) && find_line(&t->pos, s, 2, &m)) {
+        ok = 1;
+        for (int i = 0; i < m.n; i++)
+            if (s->obs[M_FROM(m.seq[i])] == OBS_UNKNOWN || s->obs[M_TO(m.seq[i])] == OBS_UNKNOWN) ok = 0;
+        if (ok) {
+            GameLine gl = t->line;
+            play_line(t, t->pos, t->sure, &m, s, tpl, &gl);
+        }
+    }
+    free(s);
+    return ok;
+}
+
 void tracker_update(Tracker *t, const BoardRead *r, Templates *tpl)
 {
+    if (r->busy >= 12) { // most of the board repainted, three reads running = animated, not a move
+        if (++t->anim_run >= 3) t->anim = 40;
+    } else {
+        t->anim_run = 0;
+        if (t->anim) t->anim--;
+    }
     uint8_t exp[64];
     expected_obs(&t->pos, exp);
     int od, cd;
@@ -824,10 +859,17 @@ void tracker_update(Tracker *t, const BoardRead *r, Templates *tpl)
     int implausible = nw > pw + 1 || nb > pb + 1 || (nw > pw && nb > pb); // pieces dont appear out of nowhere, its mid animation or a drag
     // has to hold still for one read first
     if (memcmp(t->pending, r->obs, 64)) {
+        uint8_t was[64];
+        memcpy(was, t->pending, 64);
         memcpy(t->pending, r->obs, 64);
         t->pending_count = 1;
         t->mismatch_ticks++;
         snprintf(t->status, sizeof(t->status), "board changing");
+        if (t->anim && steady_move(t, r, tpl, exp, was)) {
+            t->mismatch_ticks = 0;
+            t->implausible_ticks = 0;
+            snprintf(t->status, sizeof(t->status), "in sync");
+        }
         return;
     }
     t->pending_count++;

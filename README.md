@@ -324,7 +324,8 @@ Still broken? Open an <a href="https://github.com/sevvy-wevvy/open-chease/issues
 <code>tests/perft.sh</code> checks the move generator against known numbers<br>
 <code>tests/fetch_pieces.sh cburnett merida alpha staunty maestro</code> grabs piece sets for the vision test<br>
 <code>python3 tests/run_vision.py 1 60</code> runs 60 random boards through the vision code. Add <code>TEXTURES=wood,marble,gradient,noise</code>, <code>THEMES=purple,night,wood,red</code> or <code>TINTS="wFFB0B0,b3050C0"</code> to throw custom looking boards and recolored pieces at it<br>
-<code>python3 tests/track_sim.py --games 60</code> plays 60 whole fake games through the tracker with all the annoying stuff sites do (dragging, move dots, promotion popups, check glow, missed moves) and tells you how many moves it got right. Needs <code>pip install chess</code><br> <br>
+<code>python3 tests/track_sim.py --games 60</code> plays 60 whole fake games through the tracker with all the annoying stuff sites do (dragging, move dots, promotion popups, check glow, missed moves) and tells you how many moves it got right. Needs <code>pip install chess</code><br>
+Add <code>SIM_ANIM=shimmer,bob</code> (or <code>all</code>, kinds are shimmer pulse hue scroll hlpulse sparkle bob scale spin frames glow) to make the board and pieces keep moving like an animated theme does, <code>SIM_ANIM_STR=0.5</code> for less. <code>python3 tests/run_anim.py 1 40</code> does the same on still frames<br> <br>
 tests/page/index.html is a board that plays a game by itself (add <code>?flip=1</code>, <code>?fen=...</code> or <code>?ms=2500</code>). Its really handy for watching the overlay. Serve it with <code>python3 -m http.server</code> from tests/page.
 </p>
 </details>
