@@ -5,6 +5,7 @@
 #include "app.h"
 
 static inline const uint8_t *pix(const Frame *f, int x, int y) { return f->px + (size_t)y * f->stride + (size_t)x * 4; }
+static inline double len2(double x, double y) { return sqrt(x * x + y * y); } // hypot wants a newer glibc
 
 static inline void rgb(const Frame *f, int x, int y, uint8_t out[3])
 {
@@ -570,6 +571,670 @@ static int textured(const Frame *f, const Board *b)
     return v > 10; // median off by more than 10 = wood/marble, read it soft
 }
 
+void hm_map(const double *h, double x, double y, double *ox, double *oy)
+{
+    double w = h[6] * x + h[7] * y + h[8];
+    if (fabs(w) < 1e-12) w = 1e-12;
+    *ox = (h[0] * x + h[1] * y + h[2]) / w;
+    *oy = (h[3] * x + h[4] * y + h[5]) / w;
+}
+
+void hm_mul(const double *a, const double *b, double *out)
+{
+    double t[9];
+    for (int r = 0; r < 3; r++)
+        for (int c = 0; c < 3; c++) t[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
+    memcpy(out, t, sizeof(t));
+}
+
+int hm_inv(const double *m, double *out)
+{
+    double t[9] = {m[4] * m[8] - m[5] * m[7], m[2] * m[7] - m[1] * m[8], m[1] * m[5] - m[2] * m[4],
+                   m[5] * m[6] - m[3] * m[8], m[0] * m[8] - m[2] * m[6], m[2] * m[3] - m[0] * m[5],
+                   m[3] * m[7] - m[4] * m[6], m[1] * m[6] - m[0] * m[7], m[0] * m[4] - m[1] * m[3]};
+    double det = m[0] * t[0] + m[1] * t[3] + m[2] * t[6];
+    if (fabs(det) < 1e-15) return 0;
+    for (int i = 0; i < 9; i++) out[i] = t[i] / det;
+    return 1;
+}
+
+static int solve(double *a, double *b, int n) // gaussian elimination, answer ends up in b
+{
+    for (int c = 0; c < n; c++) {
+        int p = c;
+        for (int r = c + 1; r < n; r++)
+            if (fabs(a[r * n + c]) > fabs(a[p * n + c])) p = r;
+        if (fabs(a[p * n + c]) < 1e-12) return 0;
+        if (p != c) {
+            for (int k = 0; k < n; k++) {
+                double t = a[c * n + k];
+                a[c * n + k] = a[p * n + k];
+                a[p * n + k] = t;
+            }
+            double t = b[c];
+            b[c] = b[p];
+            b[p] = t;
+        }
+        for (int r = 0; r < n; r++) {
+            if (r == c) continue;
+            double q = a[r * n + c] / a[c * n + c];
+            if (q == 0) continue;
+            for (int k = c; k < n; k++) a[r * n + k] -= q * a[c * n + k];
+            b[r] -= q * b[c];
+        }
+    }
+    for (int c = 0; c < n; c++) b[c] /= a[c * n + c];
+    return 1;
+}
+
+// least squares homography from grid spots (gx gy) to image points (px py)
+static int fit_h(const double *g, const double *p, int n, int full, double *h)
+{
+    double mx = 0, my = 0, sc = 0;
+    for (int i = 0; i < n; i++) mx += p[i * 2], my += p[i * 2 + 1];
+    mx /= n, my /= n;
+    for (int i = 0; i < n; i++) sc += len2(p[i * 2] - mx, p[i * 2 + 1] - my);
+    sc = sc > 0 ? sc / n : 1;
+    int k = full ? 8 : 6;
+    double a[64] = {0}, b[8] = {0};
+    for (int i = 0; i < n; i++) {
+        double u = g[i * 2], v = g[i * 2 + 1], x = (p[i * 2] - mx) / sc, y = (p[i * 2 + 1] - my) / sc;
+        double rx[8] = {u, v, 1, 0, 0, 0, -u * x, -v * x}, ry[8] = {0, 0, 0, u, v, 1, -u * y, -v * y};
+        for (int r = 0; r < k; r++) {
+            for (int c = 0; c < k; c++) a[r * k + c] += rx[r] * rx[c] + ry[r] * ry[c];
+            b[r] += rx[r] * x + ry[r] * y;
+        }
+    }
+    if (!solve(a, b, k)) return 0;
+    double hn[9] = {b[0], b[1], b[2], b[3], b[4], b[5], full ? b[6] : 0, full ? b[7] : 0, 1};
+    double t[9] = {sc, 0, mx, 0, sc, my, 0, 0, 1};
+    hm_mul(t, hn, h);
+    return 1;
+}
+
+typedef struct {
+    float x, y, r;
+} Xc;
+
+static int xc_cmp(const void *a, const void *b)
+{
+    float d = ((const Xc *)b)->r - ((const Xc *)a)->r;
+    return d > 0 ? 1 : d < 0 ? -1 : 0;
+}
+
+// saddle points where 4 squares meet, ring of 16 samples like the chess corner detector
+static int find_xcorners(const uint8_t *g, int w, int h, Xc *out, int maxn)
+{
+    enum { R = 4 };
+    int off[16];
+    for (int k = 0; k < 16; k++) off[k] = (int)lround(R * sin(k * M_PI / 8)) * w + (int)lround(R * cos(k * M_PI / 8));
+    float *resp = calloc((size_t)w * h, sizeof(float));
+    for (int y = R; y < h - R; y++)
+        for (int x = R; x < w - R; x++) {
+            const uint8_t *p = g + (size_t)y * w + x;
+            int I[16], sr = 0, dr = 0, sum = 0;
+            for (int k = 0; k < 16; k++) I[k] = p[off[k]], sum += I[k];
+            for (int n = 0; n < 4; n++) sr += abs(I[n] + I[n + 8] - I[n + 4] - I[n + 12]);
+            if (sr < 90) continue;
+            for (int n = 0; n < 8; n++) dr += abs(I[n] - I[n + 8]);
+            int loc = p[0] + p[-1] + p[1] + p[-w] + p[w];
+            int r = sr - dr - abs(sum * 5 - loc * 16) / 5;
+            if (r > 90) resp[(size_t)y * w + x] = (float)r;
+        }
+    int n = 0, cap = maxn * 4;
+    Xc *all = malloc(sizeof(Xc) * cap);
+    for (int y = R + 2; y < h - R - 2 && n < cap; y++)
+        for (int x = R + 2; x < w - R - 2 && n < cap; x++) {
+            float v = resp[(size_t)y * w + x];
+            if (v <= 0) continue;
+            int peak = 1;
+            for (int dy = -2; dy <= 2 && peak; dy++)
+                for (int dx = -2; dx <= 2; dx++) {
+                    float q = resp[(size_t)(y + dy) * w + x + dx];
+                    if ((dy || dx) && (q > v || (q == v && (dy < 0 || (dy == 0 && dx < 0))))) {
+                        peak = 0;
+                        break;
+                    }
+                }
+            if (!peak) continue;
+            const float *c = resp + (size_t)y * w + x;
+            double ax = c[-1] - 2 * v + c[1], ay = c[-w] - 2 * v + c[w]; // parabola through the peak
+            double ox = ax < 0 ? 0.5 * (c[-1] - c[1]) / ax : 0, oy = ay < 0 ? 0.5 * (c[-w] - c[w]) / ay : 0;
+            if (fabs(ox) > 1) ox = 0;
+            if (fabs(oy) > 1) oy = 0;
+            all[n++] = (Xc){(float)(x + ox), (float)(y + oy), v};
+        }
+    free(resp);
+    qsort(all, n, sizeof(Xc), xc_cmp);
+    if (n > maxn) n = maxn;
+    memcpy(out, all, sizeof(Xc) * n);
+    free(all);
+    return n;
+}
+
+typedef struct {
+    const Xc *pt;
+    int n, cell, cw, ch;
+    int *head, *next, *stamp, cur;
+} XcIndex;
+
+static int xc_near(const XcIndex *ix, double x, double y, double rad)
+{
+    int c0 = (int)((x - rad) / ix->cell), c1 = (int)((x + rad) / ix->cell), r0 = (int)((y - rad) / ix->cell), r1 = (int)((y + rad) / ix->cell);
+    if (c0 < 0) c0 = 0;
+    if (r0 < 0) r0 = 0;
+    if (c1 >= ix->cw) c1 = ix->cw - 1;
+    if (r1 >= ix->ch) r1 = ix->ch - 1;
+    int best = -1;
+    double bd = rad * rad;
+    for (int r = r0; r <= r1; r++)
+        for (int c = c0; c <= c1; c++)
+            for (int i = ix->head[r * ix->cw + c]; i >= 0; i = ix->next[i]) {
+                if (ix->stamp[i] == ix->cur) continue;
+                double dx = ix->pt[i].x - x, dy = ix->pt[i].y - y, d = dx * dx + dy * dy;
+                if (d < bd) bd = d, best = i;
+            }
+    return best;
+}
+
+#define GS 17 // grid spots -8..8 round the seed
+
+typedef struct {
+    int at[GS][GS];
+    int n, i0, i1, j0, j1;
+    double h[9];
+} XGrid;
+
+static int grid_fit(const XcIndex *ix, XGrid *gr)
+{
+    double g[2 * GS * GS], p[2 * GS * GS];
+    int n = 0, ci[GS] = {0}, cj[GS] = {0}, ni = 0, nj = 0;
+    for (int i = 0; i < GS; i++)
+        for (int j = 0; j < GS; j++) {
+            int k = gr->at[i][j];
+            if (k < 0) continue;
+            g[n * 2] = i - 8, g[n * 2 + 1] = j - 8, p[n * 2] = ix->pt[k].x, p[n * 2 + 1] = ix->pt[k].y;
+            n++;
+            ci[i] = cj[j] = 1;
+        }
+    for (int i = 0; i < GS; i++) ni += ci[i], nj += cj[i];
+    return n >= 3 && fit_h(g, p, n, n >= 8 && ni >= 3 && nj >= 3, gr->h);
+}
+
+static void grid_span(XGrid *gr)
+{
+    gr->n = 0, gr->i0 = gr->j0 = GS, gr->i1 = gr->j1 = -1;
+    for (int i = 0; i < GS; i++)
+        for (int j = 0; j < GS; j++)
+            if (gr->at[i][j] >= 0) {
+                gr->n++;
+                if (i < gr->i0) gr->i0 = i;
+                if (i > gr->i1) gr->i1 = i;
+                if (j < gr->j0) gr->j0 = j;
+                if (j > gr->j1) gr->j1 = j;
+            }
+}
+
+static double grid_step(const double *h, int i, int j)
+{
+    double x, y, a, b, c, d;
+    hm_map(h, i - 8, j - 8, &x, &y);
+    hm_map(h, i - 7, j - 8, &a, &b);
+    hm_map(h, i - 8, j - 7, &c, &d);
+    return fmin(len2(a - x, b - y), len2(c - x, d - y));
+}
+
+static int grow(XcIndex *ix, int s, int u, int v, XGrid *gr)
+{
+    for (int i = 0; i < GS; i++)
+        for (int j = 0; j < GS; j++) gr->at[i][j] = -1;
+    ix->cur++;
+    const Xc *P = ix->pt;
+    gr->at[8][8] = s, gr->at[9][8] = u, gr->at[8][9] = v;
+    ix->stamp[s] = ix->stamp[u] = ix->stamp[v] = ix->cur;
+    for (int it = 0; it < 24; it++) {
+        if (!grid_fit(ix, gr)) return 0;
+        grid_span(gr);
+        int added = 0;
+        for (int i = 0; i < GS; i++)
+            for (int j = 0; j < GS; j++) {
+                if (gr->at[i][j] >= 0) continue;
+                if (!((i > 0 && gr->at[i - 1][j] >= 0) || (i < GS - 1 && gr->at[i + 1][j] >= 0) || (j > 0 && gr->at[i][j - 1] >= 0) ||
+                      (j < GS - 1 && gr->at[i][j + 1] >= 0)))
+                    continue;
+                if ((i < gr->i0 ? gr->i1 - i : i - gr->i0) > 8 || (j < gr->j0 ? gr->j1 - j : j - gr->j0) > 8) continue; // 9 lines tops
+                double x, y, st = grid_step(gr->h, i, j);
+                if (st < 4) continue;
+                hm_map(gr->h, i - 8, j - 8, &x, &y);
+                int k = xc_near(ix, x, y, fmax(1.5, st * 0.22));
+                if (k < 0) continue;
+                gr->at[i][j] = k;
+                ix->stamp[k] = ix->cur;
+                added++;
+            }
+        if (!added) break;
+    }
+    // piece corners sneak in near the right spot, throw out the worst one till the fit is tight
+    for (int it = 0; it < 20; it++) {
+        if (!grid_fit(ix, gr)) return 0;
+        int wi = -1, wj = -1;
+        double worst = 0.07;
+        for (int i = 0; i < GS; i++)
+            for (int j = 0; j < GS; j++) {
+                int k = gr->at[i][j];
+                if (k < 0) continue;
+                double x, y;
+                hm_map(gr->h, i - 8, j - 8, &x, &y);
+                double e = len2(x - P[k].x, y - P[k].y) / grid_step(gr->h, i, j);
+                if (e > worst) worst = e, wi = i, wj = j;
+            }
+        if (wi < 0) break;
+        gr->at[wi][wj] = -1;
+    }
+    grid_span(gr);
+    if (gr->n < 8) return 0;
+    return gr->n >= 12 && gr->i1 - gr->i0 >= 3 && gr->j1 - gr->j0 >= 3;
+}
+
+static float gain_at(const float *g, double u, double v)
+{
+    double a = (u - 4) / 4, b = (v - 4) / 4;
+    return (float)(g[0] + g[1] * a + g[2] * b + g[3] * a * b);
+}
+
+static void med3(uint8_t (*c)[3], int n, uint8_t *out)
+{
+    for (int k = 0; k < 3; k++) {
+        int h[256] = {0}, acc = 0, v = 0;
+        for (int i = 0; i < n; i++) h[c[i][k]]++;
+        while (v < 255 && (acc += h[v]) <= n / 2) v++;
+        out[k] = (uint8_t)v;
+    }
+}
+
+static void unlit(const uint8_t *px, float g, uint8_t *out)
+{
+    for (int k = 0; k < 3; k++) {
+        double v = px[k] / g;
+        out[k] = (uint8_t)(v > 255 ? 255 : v < 0 ? 0 : v);
+    }
+}
+
+static double local_sq(const double *hm, double u, double v)
+{
+    double x, y, a, b, c, d;
+    hm_map(hm, u, v, &x, &y);
+    hm_map(hm, u + 1, v, &a, &b);
+    hm_map(hm, u, v + 1, &c, &d);
+    return fmin(len2(a - x, b - y), len2(c - x, d - y));
+}
+
+// checker score through the homography, works out the colors and the lighting on the way
+static double score_persp(const Frame *f, const double *hm, uint8_t *light, uint8_t *dark, float *gain, int (*masked)(void *, int, int),
+                          void *mctx)
+{
+    static const double pts[5][2] = {{0.17, 0.17}, {0.83, 0.17}, {0.17, 0.83}, {0.83, 0.83}, {0.5, 0.15}};
+    uint8_t smp[64][5][3], sq[64][3];
+    int sv[64][5], have[64], outside = 0;
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++) {
+            int i = r * 8 + c, nv = 0;
+            uint8_t cols[5][3];
+            int pr = (int)fmax(1, local_sq(hm, c, r) * 0.03);
+            for (int k = 0; k < 5; k++) {
+                double x, y;
+                hm_map(hm, c + pts[k][0], r + pts[k][1], &x, &y);
+                sv[i][k] = 0;
+                if (!sample_ok(f, x, y)) {
+                    outside++;
+                    continue;
+                }
+                if (masked && masked(mctx, (int)x, (int)y)) continue;
+                patch(f, x, y, pr, smp[i][k]);
+                sv[i][k] = 1;
+                memcpy(cols[nv++], smp[i][k], 3);
+            }
+            have[i] = nv >= 3;
+            if (have[i]) med3(cols, nv, sq[i]);
+        }
+    if (outside > 16) return 0;
+    float g[4] = {1, 0, 0, 0};
+    uint8_t lt[3] = {0}, dk[3] = {0};
+    for (int pass = 0; pass < 3; pass++) {
+        uint8_t grp[2][64][3];
+        int ng[2] = {0, 0};
+        for (int i = 0; i < 64; i++)
+            if (have[i]) {
+                int par = ((i >> 3) + (i & 7)) & 1;
+                unlit(sq[i], gain_at(g, (i & 7) + 0.5, (i >> 3) + 0.5), grp[par][ng[par]++]);
+            }
+        if (ng[0] < 16 || ng[1] < 16) return 0;
+        med3(grp[0], ng[0], lt);
+        med3(grp[1], ng[1], dk);
+        if (pass == 2) break;
+        // lighting as a smooth ramp over the board, highlights and pieces fall out as outliers
+        double ll[2] = {lum(lt) + 1, lum(dk) + 1};
+        for (int rej = 0; rej < 2; rej++) {
+            double a[16] = {0}, b[4] = {0};
+            int n = 0;
+            for (int i = 0; i < 64; i++) {
+                if (!have[i]) continue;
+                double u = (i & 7) + 0.5, v = (i >> 3) + 0.5, ratio = (lum(sq[i]) + 1) / ll[((i >> 3) + (i & 7)) & 1];
+                if (rej && fabs(ratio - gain_at(g, u, v)) > 0.12) continue;
+                double x[4] = {1, (u - 4) / 4, (v - 4) / 4, (u - 4) * (v - 4) / 16};
+                for (int p = 0; p < 4; p++) {
+                    for (int q = 0; q < 4; q++) a[p * 4 + q] += x[p] * x[q];
+                    b[p] += x[p] * ratio;
+                }
+                n++;
+            }
+            if (n < 20 || !solve(a, b, 4)) return 0;
+            for (int p = 0; p < 4; p++) g[p] = (float)b[p];
+        }
+        for (int k = 0; k < 4; k++) {
+            float c = gain_at(g, k & 1 ? 8 : 0, k & 2 ? 8 : 0);
+            if (c < 0.35f || c > 2.5f) return 0;
+        }
+    }
+    if (lum(lt) < lum(dk)) return 0; // top left is always a light square
+    int sep = cdiff(lt, dk);
+    if (sep < 45) return 0;
+    int ok = 0;
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++) {
+            int i = r * 8 + c, good = 0, bad = 0, valid = 0;
+            const uint8_t *want = ((r + c) & 1) ? dk : lt, *other = ((r + c) & 1) ? lt : dk;
+            for (int k = 0; k < 5; k++) {
+                if (!sv[i][k]) continue;
+                valid++;
+                uint8_t px[3];
+                unlit(smp[i][k], gain_at(g, c + pts[k][0], r + pts[k][1]), px);
+                int dw = cdiff(px, want), dot = cdiff(px, other);
+                if (dw < dot && dw < sep * 0.6) good++;
+                else if (dot < dw && dot < sep * 0.6) bad++;
+            }
+            if (!valid) ok += 1;
+            else if (good >= 2 && good > bad) ok++;
+        }
+    int pen = 0;
+    for (int side = 0; side < 4; side++) {
+        int hits = 0;
+        for (int i = 0; i < 8; i++) {
+            int r, c;
+            if (side == 0) r = -1, c = i;
+            else if (side == 1) r = 8, c = i;
+            else if (side == 2) r = i, c = -1;
+            else r = i, c = 8;
+            const uint8_t *want = ((r + c) & 1) ? dk : lt, *other = ((r + c) & 1) ? lt : dk;
+            int good = 0, pr = (int)fmax(1, local_sq(hm, c, r) * 0.03);
+            for (int k = 0; k < 4; k++) {
+                double x, y;
+                hm_map(hm, c + pts[k][0], r + pts[k][1], &x, &y);
+                if (!sample_ok(f, x, y)) continue;
+                uint8_t px[3], raw[3];
+                patch(f, x, y, pr, raw);
+                float gg = gain_at(g, c + pts[k][0], r + pts[k][1]);
+                unlit(raw, gg < 0.35f ? 0.35f : gg, px);
+                if (cdiff(px, want) < cdiff(px, other) * 0.6 && cdiff(px, want) < sep * 0.4) good++;
+            }
+            if (good >= 3) hits++;
+        }
+        if (hits >= 5) pen += hits;
+    }
+    memcpy(light, lt, 3);
+    memcpy(dark, dk, 3);
+    memcpy(gain, g, sizeof(g));
+    return ok - pen;
+}
+
+static int convex_ok(const double *q) // 4 corners in order, all turning the same way
+{
+    int sgn = 0;
+    for (int k = 0; k < 4; k++) {
+        const double *a = q + k * 2, *b = q + ((k + 1) & 3) * 2, *c = q + ((k + 2) & 3) * 2;
+        double z = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+        int s = z > 0 ? 1 : z < 0 ? -1 : 0;
+        if (!s || (sgn && s != sgn)) return 0;
+        sgn = s;
+    }
+    return 1;
+}
+
+static double try_grid(const Frame *f, const XGrid *gr, int d, Board *out, int (*masked)(void *, int, int), void *mctx)
+{
+    // full res: downsampled px x covers d*x .. d*x+d
+    double D[9] = {d, 0, (d - 1) * 0.5, 0, d, (d - 1) * 0.5, 0, 0, 1}, hg[9];
+    hm_mul(D, gr->h, hg);
+    double ci = (gr->i0 + gr->i1) / 2.0 - 8, cj = (gr->j0 + gr->j1) / 2.0 - 8, x0, y0, xi, yi, xj, yj;
+    hm_map(hg, ci, cj, &x0, &y0);
+    hm_map(hg, ci + 1, cj, &xi, &yi);
+    hm_map(hg, ci, cj + 1, &xj, &yj);
+    double di[2] = {xi - x0, yi - y0}, dj[2] = {xj - x0, yj - y0};
+    int swap = fabs(dj[0]) > fabs(di[0]); // which grid axis runs across the screen
+    int su = (swap ? dj[0] : di[0]) > 0 ? 1 : -1, sv = (swap ? di[1] : dj[1]) > 0 ? 1 : -1;
+    double best = 0;
+    for (int ei = gr->i1 - 8; ei <= gr->i0; ei++)
+        for (int ej = gr->j1 - 8; ej <= gr->j0; ej++) {
+            // board u v to grid spots, grid i is u or v and may run backwards
+            double a = ei - 8, b = ej - 8, S[9] = {0, 0, 0, 0, 0, 0, 0, 0, 1};
+            int iu = !swap, ju = swap; // grid i fed by u?
+            double si = iu ? su : sv, sj = ju ? su : sv;
+            S[iu ? 0 : 1] = si, S[2] = si > 0 ? a : a + 8;
+            S[3 + (ju ? 0 : 1)] = sj, S[5] = sj > 0 ? b : b + 8;
+            double hm[9];
+            hm_mul(hg, S, hm);
+            double q[8];
+            hm_map(hm, 0, 0, &q[0], &q[1]);
+            hm_map(hm, 8, 0, &q[2], &q[3]);
+            hm_map(hm, 8, 8, &q[4], &q[5]);
+            hm_map(hm, 0, 8, &q[6], &q[7]);
+            if (!convex_ok(q)) continue;
+            double bx0 = q[0], bx1 = q[0], by0 = q[1], by1 = q[1];
+            for (int k = 1; k < 4; k++) {
+                bx0 = fmin(bx0, q[k * 2]), bx1 = fmax(bx1, q[k * 2]);
+                by0 = fmin(by0, q[k * 2 + 1]), by1 = fmax(by1, q[k * 2 + 1]);
+            }
+            double ms = 1e9;
+            for (int k = 0; k < 4; k++) ms = fmin(ms, local_sq(hm, k & 1 ? 7 : 0, k & 2 ? 7 : 0));
+            if (bx1 - bx0 < 150 || by1 - by0 < 60 || ms < 8) continue;
+            if (bx0 < -ms || by0 < -ms || bx1 > f->w + ms || by1 > f->h + ms) continue;
+            uint8_t lt[3] = {0}, dk[3] = {0};
+            float g[4] = {1, 0, 0, 0};
+            double sc = score_persp(f, hm, lt, dk, g, masked, mctx);
+            if (sc <= best) continue;
+            best = sc;
+            memset(out, 0, sizeof(*out));
+            memcpy(out->hm, hm, sizeof(hm));
+            memcpy(out->light, lt, 3);
+            memcpy(out->dark, dk, 3);
+            memcpy(out->gain, g, sizeof(g));
+            out->persp = 1;
+            out->s = fmax(bx1 - bx0, by1 - by0) / 8;
+            out->x = (bx0 + bx1) / 2 - out->s * 4;
+            out->y = (by0 + by1) / 2 - out->s * 4;
+            out->score = (int)sc;
+        }
+    return best;
+}
+
+static int find_persp(const Frame *f, Board *out, const Rect *ignore, int nignore, int (*masked)(void *, int, int), void *mctx)
+{
+    int d = (f->w + 1999) / 2000, gw = f->w / d, gh = f->h / d;
+    if (gw < 64 || gh < 64) return 0;
+    uint8_t *g = malloc((size_t)gw * gh);
+    for (int y = 0; y < gh; y++)
+        for (int x = 0; x < gw; x++) {
+            int acc = 0;
+            for (int dy = 0; dy < d; dy++)
+                for (int dx = 0; dx < d; dx++) {
+                    uint8_t px[3];
+                    rgb(f, x * d + dx, y * d + dy, px);
+                    acc += lum(px);
+                }
+            g[(size_t)y * gw + x] = (uint8_t)(acc / (d * d));
+        }
+    enum { MAXP = 6000 };
+    Xc *pt = malloc(sizeof(Xc) * MAXP);
+    int n = find_xcorners(g, gw, gh, pt, MAXP);
+    free(g);
+    int m = 0;
+    for (int i = 0; i < n; i++)
+        if (!in_ignore(ignore, nignore, pt[i].x * d, pt[i].y * d)) pt[m++] = pt[i];
+    n = m;
+    XcIndex ix = {pt, n, 16, gw / 16 + 1, gh / 16 + 1, NULL, NULL, NULL, 0};
+    ix.head = malloc(sizeof(int) * ix.cw * ix.ch);
+    ix.next = malloc(sizeof(int) * (n + 1));
+    ix.stamp = calloc(n + 1, sizeof(int));
+    int *tried = calloc(n + 1, sizeof(int));
+    for (int i = 0; i < ix.cw * ix.ch; i++) ix.head[i] = -1;
+    for (int i = n - 1; i >= 0; i--) {
+        int c = (int)(pt[i].y / 16) * ix.cw + (int)(pt[i].x / 16);
+        ix.next[i] = ix.head[c], ix.head[c] = i;
+    }
+    Board best = {0};
+    double best_sc = 0;
+    XGrid gr;
+    int seeds = 0;
+    for (int s = 0; s < n && seeds < 80 && best_sc < 60; s++) {
+        if (tried[s]) continue;
+        seeds++;
+        int nb[8], nn = 0;
+        double nd[8], maxd = gh / 6.0;
+        ix.cur++;
+        ix.stamp[s] = ix.cur;
+        for (int k = 0; k < 8; k++) { // 8 nearest
+            int q = xc_near(&ix, pt[s].x, pt[s].y, maxd);
+            if (q < 0) break;
+            ix.stamp[q] = ix.cur;
+            double dd = len2(pt[q].x - pt[s].x, pt[q].y - pt[s].y);
+            if (dd < 5) {
+                k--;
+                continue;
+            }
+            nb[nn] = q, nd[nn++] = dd;
+        }
+        for (int a = 1; a < nn; a++)
+            for (int b = a; b > 0 && nd[b - 1] > nd[b]; b--) {
+                double t = nd[b];
+                nd[b] = nd[b - 1], nd[b - 1] = t;
+                int ti = nb[b];
+                nb[b] = nb[b - 1], nb[b - 1] = ti;
+            }
+        for (int a = 0; a < nn && a < 4 && best_sc < 60; a++) {
+            double ux = pt[nb[a]].x - pt[s].x, uy = pt[nb[a]].y - pt[s].y;
+            int v = -1;
+            for (int b = 0; b < nn && v < 0; b++) {
+                if (b == a) continue;
+                double vx = pt[nb[b]].x - pt[s].x, vy = pt[nb[b]].y - pt[s].y;
+                double cs = (ux * vx + uy * vy) / (nd[a] * nd[b]), ratio = nd[b] / nd[a];
+                if (fabs(cs) < 0.6 && ratio > 0.5 && ratio < 2) v = nb[b];
+            }
+            if (v < 0 || !grow(&ix, s, nb[a], v, &gr)) continue;
+            for (int i = 0; i < GS; i++)
+                for (int j = 0; j < GS; j++)
+                    if (gr.at[i][j] >= 0) tried[gr.at[i][j]] = 1;
+            Board cand;
+            double sc = try_grid(f, &gr, d, &cand, masked, mctx);
+            if (sc > best_sc) best_sc = sc, best = cand;
+        }
+    }
+    free(pt);
+    free(ix.head);
+    free(ix.next);
+    free(ix.stamp);
+    free(tried);
+    if (best_sc >= 44 + vision_strict * 4) {
+        best.found = 1;
+        *out = best;
+        return 1;
+    }
+    if (best_sc > out->score) out->score = (int)best_sc;
+    return 0;
+}
+
+// the tilted board drawn flat, so the normal reader can have it
+static uint8_t *flat_px;
+static size_t flat_cap;
+
+typedef struct {
+    int (*masked)(void *, int, int);
+    void *mctx;
+    const Board *b;
+    int ws;
+} FlatMask;
+
+static int flat_masked(void *ctx, int x, int y)
+{
+    FlatMask *m = ctx;
+    double fx, fy;
+    hm_map(m->b->hm, (x + 0.5) / m->ws, (y + 0.5) / m->ws, &fx, &fy);
+    return m->masked(m->mctx, (int)fx, (int)fy);
+}
+
+static int flat_size(const Board *b)
+{
+    double q[8], a = 0;
+    hm_map(b->hm, 0, 0, &q[0], &q[1]);
+    hm_map(b->hm, 8, 0, &q[2], &q[3]);
+    hm_map(b->hm, 8, 8, &q[4], &q[5]);
+    hm_map(b->hm, 0, 8, &q[6], &q[7]);
+    for (int k = 0; k < 4; k++) a += q[k * 2] * q[((k + 1) & 3) * 2 + 1] - q[((k + 1) & 3) * 2] * q[k * 2 + 1];
+    int ws = (int)lround(sqrt(fabs(a) / 2) / 8);
+    return ws < 32 ? 32 : ws > 80 ? 80 : ws;
+}
+
+static void flatten(const Frame *f, const Board *b, Frame *wf, Board *fb)
+{
+    int ws = flat_size(b), n = ws * 8;
+    if (flat_cap < (size_t)n * n * 4) {
+        free(flat_px);
+        flat_cap = (size_t)n * n * 4;
+        flat_px = malloc(flat_cap);
+    }
+    for (int Y = 0; Y < n; Y++)
+        for (int X = 0; X < n; X++) {
+            double u = (X + 0.5) / ws, v = (Y + 0.5) / ws, fx, fy;
+            hm_map(b->hm, u, v, &fx, &fy);
+            fx -= 0.5, fy -= 0.5;
+            if (fx < 0) fx = 0;
+            if (fy < 0) fy = 0;
+            if (fx > f->w - 1.001) fx = f->w - 1.001;
+            if (fy > f->h - 1.001) fy = f->h - 1.001;
+            int ix = (int)fx, iy = (int)fy;
+            double ax = fx - ix, ay = fy - iy;
+            uint8_t p00[3], p10[3], p01[3], p11[3];
+            rgb(f, ix, iy, p00);
+            rgb(f, ix + 1 < f->w ? ix + 1 : ix, iy, p10);
+            rgb(f, ix, iy + 1 < f->h ? iy + 1 : iy, p01);
+            rgb(f, ix + 1 < f->w ? ix + 1 : ix, iy + 1 < f->h ? iy + 1 : iy, p11);
+            float g = gain_at(b->gain, u, v);
+            if (g < 0.35f) g = 0.35f;
+            uint8_t *o = flat_px + ((size_t)Y * n + X) * 4;
+            for (int k = 0; k < 3; k++) {
+                double c = ((p00[k] * (1 - ax) + p10[k] * ax) * (1 - ay) + (p01[k] * (1 - ax) + p11[k] * ax) * ay) / g;
+                o[k] = (uint8_t)(c > 255 ? 255 : c + 0.5);
+            }
+            o[3] = 255;
+        }
+    *wf = (Frame){flat_px, n, n, n * 4, 0};
+    *fb = *b;
+    fb->persp = 0, fb->x = fb->y = 0, fb->s = ws;
+}
+
+// a weak flat hit can be a tilted board the flat finder squeezed into a square
+static void really_flat(const Frame *f, Board *out, const Rect *ignore, int nignore, int (*masked)(void *, int, int), void *mctx)
+{
+    Board pb = {0};
+    if (!find_persp(f, &pb, ignore, nignore, masked, mctx)) return;
+    double off = 0;
+    for (int k = 0; k < 4; k++) {
+        double x, y, u = k & 1 ? 8 : 0, v = k & 2 ? 8 : 0;
+        hm_map(pb.hm, u, v, &x, &y);
+        off = fmax(off, len2(x - (out->x + u * out->s), y - (out->y + v * out->s)));
+    }
+    if (off > out->s * 0.25) *out = pb, out->soft = 1;
+}
+
 int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignore, int (*masked)(void *, int, int),
                       void *mctx)
 {
@@ -578,14 +1243,21 @@ int vision_find_board(const Frame *f, Board *out, const Rect *ignore, int nignor
     if (find_board(f, out, ignore, nignore, masked, mctx, 0)) {
         out->soft = textured(f, out);
         misses = 0;
+        if (out->score < 62) really_flat(f, out, ignore, nignore, masked, mctx);
         return 1;
     }
-    int sc = out->score;
-    if (!vision_lite && misses++ % 3 == 0 && find_board(f, out, ignore, nignore, masked, mctx, 1)) { // blurred pass is slow, only every 3rd miss
+    int sc = out->score, m = misses++;
+    if (!vision_lite && m % 3 == 0 && find_board(f, out, ignore, nignore, masked, mctx, 1)) { // blurred pass is slow, only every 3rd miss
         misses = 0;
+        really_flat(f, out, ignore, nignore, masked, mctx);
         return 1;
     }
     if (sc > out->score) out->score = sc;
+    if (m % 3 == 1 && find_persp(f, out, ignore, nignore, masked, mctx)) { // tilted, like a 3d game looking at it from the side
+        out->soft = 1; // resampled and never quite pixel exact, read it like a textured board
+        misses = 0;
+        return 1;
+    }
     return 0;
 }
 
@@ -641,6 +1313,15 @@ int vision_relocate(const Frame *f, Board *b, int full, int (*masked)(void *, in
 
 int vision_verify(const Frame *f, Board *b, int (*masked)(void *, int, int), void *mctx)
 {
+    if (b->persp) {
+        Frame wf;
+        Board fb;
+        flatten(f, b, &wf, &fb);
+        FlatMask fm = {masked, mctx, b, (int)fb.s};
+        int ok = vision_verify(&wf, &fb, masked ? flat_masked : NULL, &fm);
+        b->score = fb.score;
+        return ok;
+    }
     int pen = 0;
     double sc = score_board(f, b->x, b->y, b->s, b->light, b->dark, masked, mctx, &pen, b->soft) - pen; // squares past the edge = it slid by whole squares
     b->score = (int)sc;
@@ -866,6 +1547,16 @@ static uint64_t sq_print(const Frame *f, double x0, double y0, double s, int (*m
 void vision_read(const Frame *f, const Board *b, int white_bottom, float color_thr, BoardRead *out,
                  int (*masked)(void *, int, int), void *mctx)
 {
+    if (b->persp) {
+        Frame wf;
+        Board fb;
+        flatten(f, b, &wf, &fb);
+        FlatMask fm = {masked, mctx, b, (int)fb.s};
+        vision_read(&wf, &fb, white_bottom, color_thr, out, masked ? flat_masked : NULL, &fm);
+        double k = b->s / fb.s; // popup back into the square round the board, thats what main draws in
+        out->popup = (Rect){b->x + out->popup.x * k, b->y + out->popup.y * k, out->popup.w * k, out->popup.h * k};
+        return;
+    }
     memset(out, 0, sizeof(*out));
     double s = b->s;
     float lums[64];

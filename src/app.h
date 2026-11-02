@@ -47,6 +47,9 @@ typedef struct {
     uint8_t light[3], dark[3];
     int score; // vision_verify wants 46+
     int soft;
+    int persp; // tilted board, x y s is then just a square round it and hm says where the squares really are
+    double hm[9]; // board units (0-8 across, row 0 at the top) to frame px
+    float gain[4]; // lighting across the board, the warp divides it out
 } Board;
 
 enum { OBS_EMPTY = 0, OBS_WHITE = 1, OBS_BLACK = 2, OBS_UNKNOWN = 3 }; // unknown = covered, dont guess
@@ -166,6 +169,7 @@ int replay_frame(void);
 void canvas_clear(Canvas *c);
 int canvas_damage(const Canvas *c, int *x0, int *y0, int *x1, int *y1);
 void canvas_blit(Canvas *dst, const Canvas *src, double alpha, double dx, double dy, double clip_h); // clip_h < 0 = no clip
+void canvas_warp(Canvas *dst, const Canvas *src, const double *m); // m takes src logical to dst logical
 // logical coords from here, the canvas scales them
 void draw_rect(Canvas *c, Rect r, uint32_t argb);
 void canvas_erase(Canvas *c, Rect r);
@@ -196,6 +200,9 @@ void gpu_broken(const char *what);
 void vision_fill_holes(float *m); // fills enclosed piece outlines in a FEAT_N grid
 void vision_read(const Frame *f, const Board *b, int white_bottom, float color_thr, BoardRead *r,
                  int (*masked)(void *, int, int), void *mctx);
+void hm_map(const double *h, double x, double y, double *ox, double *oy);
+void hm_mul(const double *a, const double *b, double *out);
+int hm_inv(const double *m, double *out);
 
 typedef struct {
     int have;
