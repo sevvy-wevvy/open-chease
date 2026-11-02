@@ -27,7 +27,13 @@ jobs:
           if echo "$files" | grep -q '^bin/'; then
             why="$why It changes files in bin/, those get rebuilt before shipping so PRs cant touch them."
           fi
-          if echo "$files" | grep -qE '^src/plug|^PLUGINS\.md$|^plugins-examples/|^tests/plug'; then
+          # plugin files, or any changed line anywhere that mentions plug (the calls left in main.c)
+          lines=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].patch // empty' | grep -E '^[+-]')
+          # github leaves the patch out on huge files, cant check those so they dont get in
+          if gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[] | select(.patch == null and .changes > 0 and (.filename | test("^bin/") | not)) | .filename' | grep -q .; then
+            why="$why A file in it is too big for me to check, split it into smaller PRs."
+          fi
+          if echo "$files" | grep -qE '^src/plug|^PLUGINS\.md$|^plugins-examples/|^tests/plug' || echo "$lines" | grep -qi 'plug'; then
             why="$why It changes plugin code or docs, plugins run other peoples programs so only I change that part. Open an issue instead."
           fi
           if [ -n "$why" ]; then

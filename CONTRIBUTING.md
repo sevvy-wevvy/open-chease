@@ -33,7 +33,7 @@ Changes to the engine lists (the <code>engines</code> folder) or where anything 
 <p align="center">
 Everything lands on <b>dev</b> first. Once its been around for a bit it moves to <b>beta</b>, then <b>main</b>. I do the moving, you only ever PR into dev.<br> <br>
 Dont touch <code>bin/</code> in your PR. Those are the prebuilt binaries people download, they get rebuilt before shipping.<br> <br>
-Plugin stuff is off limits too: <code>src/plugin*</code>, <code>PLUGINS.md</code>, <code>plugins-examples/</code>, the plugin tests and the plugin parts of <code>main.c</code>. Plugins run other peoples programs on your computer, so only I change that code. Found a bug in it or want something new? <a href="https://github.com/sevvy-wevvy/open-chease/issues">Open an issue</a>.<br> <br>
+Plugin stuff is off limits too: <code>src/plug*</code>, <code>PLUGINS.md</code>, <code>plugins-examples/</code>, the plugin tests, and any line anywhere that has <code>plug</code> in it. Plugins run other peoples programs on your computer, so only I change that code. Found a bug in it or want something new? <a href="https://github.com/sevvy-wevvy/open-chease/issues">Open an issue</a>.<br> <br>
 PRs against any branch besides dev, or that change anything in <code>bin/</code> or the plugin files, get closed automatically.
 </p>
 </details>
