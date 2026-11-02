@@ -50,6 +50,31 @@ THEMES = {
     "blue": ((222, 227, 230), (140, 162, 173), (195, 216, 135), (150, 183, 99)),
 }
 PINK = ((245, 241, 242), (235, 148, 164), (236, 208, 188), (226, 156, 140))
+# roblox board: every square is lighter on top, darker on the bottom, soft step in the middle
+RBX = (((160, 170, 208), (153, 163, 199), (137, 145, 178), (133, 141, 173)),
+       ((86, 98, 150), (82, 94, 144), (74, 84, 128), (71, 81, 125)),
+       ((164, 158, 232), (161, 154,227), (153, 146, 217), (151, 144, 214)),
+       ((127, 122, 203), (125, 120, 200), (121, 115, 192), (120, 114, 190)))
+_grad = {}
+
+
+def grad_square(cols, s):
+    k = (cols, s)
+    if k not in _grad:
+        im = Image.new("RGB", (s, s))
+        d = ImageDraw.Draw(im)
+        for j in range(s):
+            t = (j + 0.5) / s
+            if t < 0.45:
+                a, b, u = cols[0], cols[1], t / 0.45
+            elif t < 0.55:
+                u = (t - 0.45) / 0.1
+                a, b, u = cols[1], cols[2], u * u * (3 - 2 * u)
+            else:
+                a, b, u = cols[2], cols[3], (t - 0.55) / 0.45
+            d.line([0, j, s, j], fill=tuple(int(round(a[c] + (b[c] - a[c]) * u)) for c in range(3)))
+        _grad[k] = im
+    return _grad[k]
 
 
 def pkey(p):
@@ -62,12 +87,19 @@ class Scene:
         self.pset = rnd.choice(["cburnett"] * 3 + ["staunty", "alpha", "maestro"])
         if os.environ.get("SIM_PSET"):  # pin one look, for chasing a bug on a single theme
             self.theme, self.pset = os.environ.get("SIM_THEME", self.theme), os.environ["SIM_PSET"]
+        if os.environ.get("SIM_THEME") == "roblox":
+            self.theme, self.pset = "roblox", os.environ.get("SIM_PSET", "roblox")
         self.sq = rnd.choice([44, 52, 60, 64, 72, 80])
         self.W, self.H = 1000, 760
+        self.skip = float(os.environ.get("SIM_SKIP", "0.08"))
+        if self.theme == "roblox":
+            self.sq = rnd.choice([56, 72, 90, 110, 140])
+            self.W, self.H = self.sq * 8 + 420, self.sq * 8 + 120
+            self.skip = float(os.environ.get("SIM_SKIP", "0.4"))  # pebble answers before the next frame a lot
         self.x = rnd.randint(10, self.W - self.sq * 8 - 220)
         self.y = rnd.randint(70, self.H - self.sq * 8 - 10)
         self.flip = rnd.random() < 0.45
-        self.coords = rnd.random() < 0.6
+        self.coords = rnd.random() < 0.6 and self.theme != "roblox"
         self.promo_style = rnd.choice(["chesscom", "lichess"])
         self.font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", max(9, self.sq // 6))
 
@@ -78,7 +110,8 @@ class Scene:
 
     def render(self, board, last=None, extra=None):
         light, dark, hll, hld = THEMES.get(self.theme, PINK)
-        img = Image.new("RGB", (self.W, self.H), (38, 36, 33))
+        rbx = self.theme == "roblox"
+        img = Image.new("RGB", (self.W, self.H), (25, 37, 28) if rbx else (38, 36, 33))
         d = ImageDraw.Draw(img, "RGBA")
         d.rectangle([0, 0, self.W, 50], fill=(25, 25, 25))
         d.text((16, 16), "play  puzzles  learn  watch", fill=(190, 190, 190))
@@ -93,7 +126,11 @@ class Scene:
                 col = hll if is_light else hld
             if extra.get("selected") == sq:
                 col = hll if is_light else hld
-            d.rectangle([x0, y0, x0 + self.sq - 1, y0 + self.sq - 1], fill=col)
+            if rbx:
+                hl = bool(last and sq in last) or extra.get("selected") == sq
+                img.paste(grad_square(RBX[(0 if is_light else 1) + (2 if hl else 0)], self.sq), (x0, y0))
+            else:
+                d.rectangle([x0, y0, x0 + self.sq - 1, y0 + self.sq - 1], fill=col)
             if self.coords:
                 oc = dark if is_light else light
                 f, r = chess.square_file(sq), chess.square_rank(sq)
@@ -101,6 +138,11 @@ class Scene:
                     d.text((x0 + 3, y0 + 2), str(r + 1), fill=oc, font=self.font)
                 if (y0 - self.y) == self.sq * 7:
                     d.text((x0 + self.sq - self.sq // 6, y0 + self.sq - self.sq // 4), "abcdefgh"[f], fill=oc, font=self.font)
+        if rbx:  # rounded rim round the board
+            m, rr, bw = max(2, self.sq // 30), self.sq // 8, self.sq * 8
+            rim = Image.new("L", (bw + 2 * m, bw + 2 * m), 255)
+            ImageDraw.Draw(rim).rounded_rectangle([m, m, bw + m - 1, bw + m - 1], radius=rr, fill=0)
+            img.paste((52, 55, 63), (self.x - m, self.y - m), rim)
         if board.is_check():
             k = board.king(board.turn)
             x0, y0 = self.xy(k)
@@ -193,6 +235,7 @@ def sim_game(seed, out, binary, keep=False):
     last = [board.move_stack[-1].from_square, board.move_stack[-1].to_square] if board.move_stack else None
     settle(last, 3)
     plies = 0
+    skipped = False
     stats = {"promos": 0, "dialogs": 0, "drags": 0, "dots": 0, "skips": 0}
     while not board.is_game_over() and plies < 140:
         mv = pick_move(board, rnd)
@@ -225,10 +268,12 @@ def sim_game(seed, out, binary, keep=False):
         if mv.promotion:
             stats["promos"] += 1
         last = [mv.from_square, mv.to_square]
-        # two moves in one frame
-        if mover != user and rnd.random() < 0.08 and not board.is_game_over():
+        # two moves in one frame, roblox: your move and the bot answer land together, never three
+        if (not skipped if sc.theme == "roblox" else mover != user) and rnd.random() < sc.skip and not board.is_game_over():
             stats["skips"] += 1
+            skipped = True
             continue
+        skipped = False
         settle(last, rnd.choice([2, 2, 3]))
     d = tempfile.mkdtemp(prefix="oc-sim-", dir=out)
     try:
