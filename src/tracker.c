@@ -655,15 +655,16 @@ static void verify_promo(Tracker *t, const BoardRead *r, const Templates *tpl)
 // one wrong color is still the start, 32 pieces on the start squares cant be anything else
 static int is_start_obs(const uint8_t *obs, int rotated)
 {
-    int seen = 0, flips = 0;
+    int seen = 0, flips[2] = {0, 0};
     for (int i = 0; i < 64; i++) {
         int want = i < 16 ? OBS_WHITE : (i >= 48 ? OBS_BLACK : OBS_EMPTY), got = obs[rotated ? 63 - i : i];
         if (got == OBS_UNKNOWN) continue;
         if ((got == OBS_EMPTY) != (want == OBS_EMPTY)) return 0;
-        if (got != want && ++flips > 1) return 0;
+        if (got != want) flips[i >= 48]++;
         seen++;
     }
-    return seen >= 52;
+    // the layout is what counts, colors can be off on pieces that are close to the square color (roblox)
+    return seen >= 52 && flips[0] <= 4 && flips[1] <= 4;
 }
 
 static int is_startpos(const Pos *p)
