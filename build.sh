@@ -6,7 +6,7 @@ target=linux
 if [ "${1:-}" = win ]; then target=win; shift; fi # cross compile the windows exe, needs mingw-w64
 out="${1:-bin}"
 mkdir -p "$out"
-common=(src/main.c src/engine.c src/vision.c src/tracker.c src/analyzer.c src/second.c src/draw.c src/replay.c)
+common=(src/main.c src/engine.c src/vision.c src/tracker.c src/analyzer.c src/second.c src/draw.c src/replay.c src/plugin.c)
 warn=(-std=gnu11 -Wall -Wextra -Wno-unused-parameter -Isrc -Ithird_party/include)
 
 case "$target" in

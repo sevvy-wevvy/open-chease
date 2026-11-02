@@ -13,6 +13,9 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 
 #include "plat.h"
 
@@ -71,6 +74,108 @@ int fd_wait(int fd, int ms)
     struct pollfd pf = {fd, POLLIN, 0};
     int r = poll(&pf, 1, ms);
     return r < 0 && errno == EINTR ? 0 : r;
+}
+
+static int split_cmd(char *s, char **argv, int max) // words, "quotes" and 'quotes' keep spaces
+{
+    int n = 0;
+    while (*s && n < max - 1) {
+        while (*s == ' ' || *s == '\t') s++;
+        if (!*s) break;
+        char *w = s, *o = s;
+        while (*s && *s != ' ' && *s != '\t') {
+            if (*s == '"' || *s == '\'') {
+                char q = *s++;
+                while (*s && *s != q) *o++ = *s++;
+                if (*s) s++;
+            } else
+                *o++ = *s++;
+        }
+        if (*s) s++;
+        *o = 0;
+        argv[n++] = w;
+    }
+    argv[n] = NULL;
+    return n;
+}
+
+static int ends_in(const char *s, const char *tail)
+{
+    size_t a = strlen(s), b = strlen(tail);
+    return a >= b && !strcmp(s + a - b, tail);
+}
+
+int proc_cmd(const char *cmd, const char *dir, int quiet, proc_t *p, int *to_fd, int *from_fd)
+{
+    char line[2048], first[4096], *argv[34], *av[35];
+    snprintf(line, sizeof(line), "%s", cmd);
+    int n = split_cmd(line, argv, 33);
+    if (!n) return 0;
+    int k = 0;
+    if (!strchr(argv[0], '/')) { // a file sitting in the plugin folder beats one on PATH
+        struct stat st;
+        snprintf(first, sizeof(first), "%s/%s", dir, argv[0]);
+        if (!stat(first, &st) && S_ISREG(st.st_mode)) {
+            if (access(first, X_OK)) av[k++] = ends_in(first, ".py") ? "python3" : "sh"; // zips lose the x bit
+            argv[0] = first;
+        }
+    }
+    for (int i = 0; i <= n; i++) av[k + i] = argv[i];
+    int to[2], from[2];
+    if (pipe(to)) return 0;
+    if (pipe(from)) {
+        close(to[0]), close(to[1]);
+        return 0;
+    }
+    for (int i = 0; i < 2; i++) fcntl(to[i], F_SETFD, FD_CLOEXEC), fcntl(from[i], F_SETFD, FD_CLOEXEC);
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(to[0]), close(to[1]), close(from[0]), close(from[1]);
+        return 0;
+    }
+    if (pid == 0) {
+        setpgid(0, 0);
+#ifdef __linux__
+        prctl(PR_SET_PDEATHSIG, SIGKILL); // we crashed, it goes too
+#endif
+        signal(SIGPIPE, SIG_DFL);
+        dup2(to[0], 0);
+        dup2(from[1], 1);
+        if (quiet) {
+            int nul = open("/dev/null", O_WRONLY);
+            if (nul >= 0) dup2(nul, 2);
+        }
+        for (int fd = 3; fd < 1024; fd++) close(fd);
+        if (chdir(dir)) _exit(127);
+        execvp(av[0], av);
+        _exit(127);
+    }
+    setpgid(pid, pid);
+    close(to[0]);
+    close(from[1]);
+    fcntl(to[1], F_SETFL, O_NONBLOCK);
+    fcntl(from[0], F_SETFL, O_NONBLOCK);
+    *p = pid, *to_fd = to[1], *from_fd = from[0];
+    return 1;
+}
+
+int fd_read_some(int fd, char *buf, int n)
+{
+    ssize_t r = read(fd, buf, (size_t)n);
+    if (r > 0) return (int)r;
+    return r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) ? 0 : -1;
+}
+
+int fd_write_some(int fd, const char *buf, int n)
+{
+    ssize_t r = write(fd, buf, (size_t)n);
+    if (r >= 0) return (int)r;
+    return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? 0 : -1;
+}
+
+void fd_close(int fd)
+{
+    if (fd >= 0) close(fd);
 }
 
 int cpu_count(void)

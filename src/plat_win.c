@@ -122,6 +122,93 @@ int proc_start(const char *path, int quiet, proc_t *p, int *to_fd, int *from_fd)
     return 1;
 }
 
+static int ends_with(const char *s, const char *tail);
+
+int proc_cmd(const char *cmd, const char *dir, int quiet, proc_t *p, int *to_fd, int *from_fd)
+{
+    char first[1024], full[4096], line[6000] = "", sysd[MAX_PATH];
+    const char *s = cmd;
+    size_t n = 0;
+    while (*s == ' ') s++;
+    if (*s == '"') {
+        for (s++; *s && *s != '"' && n < sizeof(first) - 1; s++) first[n++] = *s;
+        if (*s) s++;
+    } else
+        for (; *s && *s != ' ' && n < sizeof(first) - 1; s++) first[n++] = *s;
+    first[n] = 0;
+    while (*s == ' ') s++;
+    if (!n) return 0;
+    snprintf(full, sizeof(full), "%s\\%s", dir, first);
+    DWORD fa = GetFileAttributesA(full);
+    if (fa == INVALID_FILE_ATTRIBUTES || (fa & FILE_ATTRIBUTE_DIRECTORY)) snprintf(full, sizeof(full), "%s", first); // not in the folder, PATH then
+    UINT sl = GetSystemDirectoryA(sysd, sizeof(sysd));
+    if (!sl || sl >= sizeof(sysd)) sysd[0] = 0;
+    char pre[MAX_PATH + 80];
+    if (ends_with(full, ".bat") || ends_with(full, ".cmd")) {
+        snprintf(pre, sizeof(pre), "%s\\cmd.exe", sysd);
+        quote_arg(line, sizeof(line), pre);
+        snprintf(line + strlen(line), sizeof(line) - strlen(line), " /d /c");
+    } else if (ends_with(full, ".ps1")) {
+        snprintf(pre, sizeof(pre), "%s\\WindowsPowerShell\\v1.0\\powershell.exe", sysd);
+        quote_arg(line, sizeof(line), pre);
+        snprintf(line + strlen(line), sizeof(line) - strlen(line), " -NoProfile -ExecutionPolicy Bypass -File");
+    } else if (ends_with(full, ".py")) {
+        char py[MAX_PATH];
+        snprintf(line, sizeof(line), "%s", SearchPathA(NULL, "py.exe", NULL, sizeof(py), py, NULL) ? "py" : "python");
+    }
+    quote_arg(line, sizeof(line), full);
+    if (*s) snprintf(line + strlen(line), sizeof(line) - strlen(line), " %s", s);
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+    HANDLE in_r, in_w, out_r, out_w;
+    if (!CreatePipe(&in_r, &in_w, &sa, 0)) return 0;
+    if (!CreatePipe(&out_r, &out_w, &sa, 0)) {
+        CloseHandle(in_r), CloseHandle(in_w);
+        return 0;
+    }
+    SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
+    DWORD nowait = PIPE_NOWAIT; // a plugin that stops reading cant block our writes
+    SetNamedPipeHandleState(in_w, &nowait, NULL, NULL);
+    HANDLE err = quiet ? nul_handle() : INVALID_HANDLE_VALUE;
+    if (!quiet) DuplicateHandle(GetCurrentProcess(), GetStdHandle(STD_ERROR_HANDLE), GetCurrentProcess(), &err, 0, TRUE, DUPLICATE_SAME_ACCESS);
+    PROCESS_INFORMATION pi;
+    int ok = spawn(NULL, line, dir, in_r, out_w, err, &pi);
+    CloseHandle(in_r), CloseHandle(out_w);
+    if (err && err != INVALID_HANDLE_VALUE) CloseHandle(err);
+    if (!ok) {
+        CloseHandle(in_w), CloseHandle(out_r);
+        return 0;
+    }
+    CloseHandle(pi.hThread);
+    *p = (proc_t)pi.hProcess;
+    *to_fd = _open_osfhandle((intptr_t)in_w, _O_WRONLY | _O_BINARY);
+    *from_fd = _open_osfhandle((intptr_t)out_r, _O_RDONLY | _O_BINARY);
+    return 1;
+}
+
+int fd_read_some(int fd, char *buf, int n)
+{
+    HANDLE h = (HANDLE)_get_osfhandle(fd);
+    DWORD avail = 0, got = 0;
+    if (!PeekNamedPipe(h, NULL, 0, NULL, &avail, NULL)) return -1;
+    if (!avail) return 0;
+    if (!ReadFile(h, buf, avail < (DWORD)n ? avail : (DWORD)n, &got, NULL)) return -1;
+    return (int)got;
+}
+
+int fd_write_some(int fd, const char *buf, int n)
+{
+    HANDLE h = (HANDLE)_get_osfhandle(fd);
+    DWORD put = 0;
+    if (!WriteFile(h, buf, (DWORD)n, &put, NULL)) return GetLastError() == ERROR_NO_DATA || GetLastError() == ERROR_BROKEN_PIPE ? -1 : 0;
+    return (int)put;
+}
+
+void fd_close(int fd)
+{
+    if (fd >= 0) _close(fd);
+}
+
 void proc_kill(proc_t p)
 {
     if (p) TerminateProcess((HANDLE)p, 1);
