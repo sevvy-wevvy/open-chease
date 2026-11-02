@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 #include <direct.h>
 #include <fcntl.h>
 #include <io.h>
@@ -709,3 +710,105 @@ void engine_list(const char *dir, void (*add)(const char *label, const char *pat
 int ctl_open(const char *data) { return -1; } // RegisterHotKey works here, no need
 int ctl_read(int fd, char *buf, int n) { return 0; }
 int ctl_send(const char *data, const char *msg) { return -1; }
+
+typedef DWORD(WINAPI *ExtTable)(PVOID, PDWORD, BOOL, ULONG, int, ULONG);
+
+static void *net_table(ExtTable fn, ULONG af, int cls) // GetExtendedTcpTable / Udp, grows till it fits
+{
+    DWORD sz = 0;
+    void *t = NULL;
+    for (int k = 0; k < 4; k++) {
+        DWORD r = fn(t, &sz, FALSE, af, cls, 0);
+        if (r == 0 && t) return t;
+        if (r != 122) break; // ERROR_INSUFFICIENT_BUFFER
+        free(t);
+        if (!(t = malloc(sz + 4096))) return NULL;
+        sz += 4096;
+    }
+    free(t);
+    return NULL;
+}
+
+static int far_addr(const unsigned char *a, int v6, DWORD port, int any, char *out, int n)
+{
+    int pt = (int)((port & 0xFF) << 8 | (port >> 8 & 0xFF));
+    if (v6 && !memcmp(a, "\0\0\0\0\0\0\0\0\0\0\377\377", 12)) a += 12, v6 = 0;
+    if (any && !memcmp(a, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", v6 ? 16 : 4)) return snprintf(out, n, "any:%d", pt), 1;
+    if (!v6) {
+        if (a[0] == 127 || !(a[0] | a[1] | a[2] | a[3])) return 0;
+        snprintf(out, n, "%d.%d.%d.%d:%d", a[0], a[1], a[2], a[3], pt);
+        return 1;
+    }
+    static const unsigned char lo[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, zero[16] = {0};
+    if (!memcmp(a, lo, 16) || !memcmp(a, zero, 16)) return 0;
+    int l = snprintf(out, n, "[");
+    for (int k = 0; k < 8 && l < n; k++) l += snprintf(out + l, n - l, "%s%x", k ? ":" : "", a[2 * k] << 8 | a[2 * k + 1]);
+    if (l < n) snprintf(out + l, n - l, "]:%d", pt);
+    return 1;
+}
+
+int proc_net(proc_t root, char *out, int n)
+{
+    static HMODULE ip;
+    static ExtTable tcp, udp;
+    if (!ip && (ip = LoadLibraryA("iphlpapi.dll"))) {
+        tcp = (ExtTable)(void *)GetProcAddress(ip, "GetExtendedTcpTable");
+        udp = (ExtTable)(void *)GetProcAddress(ip, "GetExtendedUdpTable");
+    }
+    if (!tcp || !root) return 0;
+    DWORD mine[256];
+    int nm = 1;
+    mine[0] = GetProcessId((HANDLE)root);
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        static DWORD pid[4096], par[4096];
+        int np = 0;
+        PROCESSENTRY32 pe = {.dwSize = sizeof(pe)};
+        for (BOOL ok = Process32First(snap, &pe); ok && np < 4096; ok = Process32Next(snap, &pe)) pid[np] = pe.th32ProcessID, par[np++] = pe.th32ParentProcessID;
+        CloseHandle(snap);
+        for (int grew = 1; grew;) {
+            grew = 0;
+            for (int i = 0; i < np && nm < 256; i++) {
+                int in = 0, kid = 0;
+                for (int k = 0; k < nm; k++) in |= mine[k] == pid[i], kid |= mine[k] == par[i];
+                if (!in && kid) mine[nm++] = pid[i], grew = 1;
+            }
+        }
+    }
+    int hit = 0;
+    for (int t = 0; t < 4 && !hit; t++) {
+        int v6 = t & 1, isudp = t >= 2;
+        if (isudp && !udp) break;
+        unsigned char *tb = net_table(isudp ? udp : tcp, v6 ? 23 : 2, isudp ? 1 : 5); // UDP_TABLE_OWNER_PID, TCP_TABLE_OWNER_PID_ALL
+        if (!tb) continue;
+        DWORD cnt;
+        memcpy(&cnt, tb, 4);
+        int sz = isudp ? (v6 ? 28 : 12) : (v6 ? 56 : 24); // MIB_*ROW_OWNER_PID sizes
+        for (DWORD r = 0; r < cnt && !hit; r++) {
+            const unsigned char *row = tb + 4 + (size_t)r * sz;
+            DWORD f[14];
+            memcpy(f, row, sz);
+            DWORD owner = f[sz / 4 - 1];
+            int ours = 0;
+            for (int k = 0; k < nm; k++) ours |= mine[k] == owner;
+            if (!ours) continue;
+            if (!isudp && !v6) { // state laddr lport raddr rport pid
+                if (f[4] && far_addr((const unsigned char *)&f[3], 0, f[4], 0, out, n)) hit = 1;
+                else if (f[0] == 2 && far_addr((const unsigned char *)&f[1], 0, f[2], 1, out, n)) hit = 2;
+            } else if (!isudp) { // laddr[16] lscope lport raddr[16] rscope rport state pid
+                if (f[11] && far_addr(row + 24, 1, f[11], 0, out, n)) hit = 1;
+                else if (f[12] == 2 && far_addr(row, 1, f[5], 1, out, n)) hit = 2;
+            } else if (!v6) { // laddr lport pid
+                if (far_addr((const unsigned char *)&f[0], 0, f[1], 1, out, n)) hit = 3;
+            } else if (far_addr(row, 1, f[5], 1, out, n)) // laddr[16] lscope lport pid
+                hit = 3;
+        }
+        free(tb);
+    }
+    if (hit >= 2) {
+        char a[64];
+        snprintf(a, sizeof(a), "%s", out);
+        snprintf(out, n, "%s on %s", hit == 3 ? "udp" : "listening", a);
+    }
+    return hit > 0;
+}

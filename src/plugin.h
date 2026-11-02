@@ -12,6 +12,9 @@
 #define PL_LINES 10
 #define PL_CHOICES 10
 
+enum { PF_NET, PF_RUN, PF_BUILD, PF_BIN, PF_SHADY, PF_SECRET, PF_START, PF_KEYS, PF_WIPE, PF_N }; // PF_BIN and up are the scary ones
+#define PL_WHY 4
+
 enum { PS_BOOL, PS_CHOICE, PS_SLIDER, PS_BUTTON };
 
 typedef struct {
@@ -53,6 +56,15 @@ typedef struct {
     PlugItem item[PL_ITEMS], next[PL_ITEMS];
     int nitem, nnext;
     PlugPanel panel, npanel;
+    int nflag[PF_N];
+    char flag[PF_N][PL_WHY][80]; // file:line what, first few of each
+    char net_why[100], online[64]; // online = where it went, first time it got caught
+    int net_ok, net_new;
+    long net_t;
+    uint64_t hash; // every file plus the run line, an ok only counts for these exact files
+    int okv, trusted;
+    uint64_t made[64]; // files its build made, skipped by the check
+    int nmade;
 } Plugin;
 
 extern Plugin plugs[PL_MAX];
@@ -75,5 +87,14 @@ void plug_change(Plugin *p, int k, int v); // the user changed a setting
 void plug_cfg_line(const char *key, const char *val);
 void plug_cfg_save(FILE *f);
 int plug_square(const char *s); // "e4" -> 28, -1 if its not one
+extern const char *plug_flag_name[PF_N], *plug_flag_says[PF_N];
+int plug_flags(const Plugin *p); // bit per PF_ it found
+void plug_says(const Plugin *p, char *out, int n); // "uses the internet and runs programs"
+void plug_net_fine(Plugin *p, int ok); // going online is fine, remembered till its files change
+void plug_trust(Plugin *p); // the user read the warnings and said go
+void plug_recheck(Plugin *p); // scan again, stops it if the files changed under it
+int plug_cleared(Plugin *p); // scans again, 1 = clean or the user said ok to these exact files. call it right before a build
+void plug_built(Plugin *p); // after a build worked, whatever it made stops counting as the plugins own files
+int plug_check_dir(const char *dir, FILE *out); // --check-plugin, prints what the check finds
 
 #endif

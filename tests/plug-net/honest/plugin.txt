@@ -1,0 +1,4 @@
+name = Honest
+run = net.py
+description = test fixture, connects to OC_TEST_HOST and says why
+internet = talks to a test server on your network
