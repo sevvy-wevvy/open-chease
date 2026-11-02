@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -436,6 +437,20 @@ intptr_t cmd_start(const char *cmd, const char *dir, const char *log)
     }
     if (pid > 0) setpgid(pid, pid);
     return pid < 0 ? 0 : pid;
+}
+
+int one_instance(const char *data)
+{
+    char p[1100];
+    snprintf(p, sizeof(p), "%.1000s/running.lock", data);
+    int fd = open(p, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (fd < 0) return 1;
+    for (int i = 0; i < 30; i++) { // after an update the new one can start before the old one is gone
+        if (!flock(fd, LOCK_EX | LOCK_NB)) return 1;
+        usleep(100000);
+    }
+    close(fd);
+    return 0;
 }
 
 intptr_t stage_start(const char *home, const char *branch)

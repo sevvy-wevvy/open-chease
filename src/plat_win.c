@@ -657,6 +657,22 @@ int clip_get(char *out, int n)
     return *out != 0;
 }
 
+int one_instance(const char *data)
+{
+    unsigned long long h = 1469598103934665603ULL;
+    for (const char *s = data; *s; s++) h = (h ^ (unsigned char)(*s | 32)) * 1099511628211ULL;
+    char name[64];
+    snprintf(name, sizeof(name), "Local\\open-chease-%016llx", h);
+    for (int i = 0; i < 30; i++) {
+        HANDLE m = CreateMutexA(NULL, TRUE, name);
+        if (m && GetLastError() != ERROR_ALREADY_EXISTS) return 1; // kept open till we exit
+        if (m) CloseHandle(m);
+        Sleep(100);
+    }
+    MessageBoxA(NULL, "open-chease is already running", "open-chease", MB_OK | MB_ICONINFORMATION);
+    return 0;
+}
+
 intptr_t stage_start(const char *home, const char *branch)
 {
     Job *jb = calloc(1, sizeof(Job));

@@ -63,6 +63,7 @@ intptr_t fetch_start(const char *url, const char *out); // small file, short tim
 intptr_t stage_start(const char *home, const char *branch); // get.sh --stage, next version into app.new
 intptr_t tgz_start(const char *url, const char *dir); // download a .tar.gz and unpack it into dir
 int job_done(intptr_t h, int *ok);
+int one_instance(const char *data); // 0 = another one is already running on this data folder
 void job_kill(intptr_t h);
 void rm_tree(const char *path);
 int clip_get(char *out, int n); // clipboard text, 0 if theres none

@@ -6093,6 +6093,10 @@ int main(int argc, char **argv)
     const char *dd = full_path(data, real_data) && strlen(real_data) < sizeof(data_dir) ? real_data : data;
     snprintf(data_dir, sizeof(data_dir), "%.1023s", dd);
     if (updating) return updating_screen(force);
+    if (!replay_dir && !getenv("OPEN_CHEASE_GET") && !one_instance(data_dir)) {
+        fprintf(stderr, "open-chease is already running\n");
+        return 0;
+    }
     load_library();
     if (!engine_cli && have_saved_engine && (!*saved_engine || is_exec(saved_engine)))
         engine = *saved_engine ? saved_engine : NULL;
