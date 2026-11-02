@@ -1583,7 +1583,7 @@ void vision_fill_holes(float *m)
 // last read of every square, a square whose pixels didnt change gets its old result back
 typedef struct {
     uint64_t h;
-    uint8_t hidden, foreign, highlighted, occ;
+    uint8_t hidden, foreign, highlighted, occ, colored;
     float occ_frac, lum, mask[FEAT_N * FEAT_N];
 } SqMemo;
 
@@ -1691,9 +1691,11 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
                 out->occ_frac[sq] = me->occ_frac, out->lum[sq] = me->lum;
                 memcpy(out->mask[sq], me->mask, sizeof(me->mask));
                 occ[sq] = me->occ;
+                ncolored += me->colored;
                 lums[sq] = me->lum;
                 continue;
             }
+            int sqcol = 0;
             uint8_t ring[64][3];
             double ringy[64];
             int nring = 0;
@@ -1844,7 +1846,8 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             if (out->occ_frac[sq] > 0.075f) {
                 int colored = 0;
                 double fl = piece_fill_lum(f, x0, y0, s, bg, rows, base, masked, mctx, fthr, &colored);
-                ncolored += colored && !out->hidden[sq];
+                sqcol = colored && !out->hidden[sq];
+                ncolored += sqcol;
                 if (fl >= 0) out->lum[sq] = (float)fl;
             }
             occ[sq] = out->occ_frac[sq] > 0.075f;
@@ -1869,7 +1872,7 @@ void vision_read(const Frame *f, const Board *b, int white_bottom, float color_t
             lums[sq] = out->lum[sq];
             if (use) {
                 me->h = hh, me->hidden = out->hidden[sq], me->foreign = out->foreign[r * 8 + c], me->highlighted = out->highlighted[sq];
-                me->occ_frac = out->occ_frac[sq], me->lum = out->lum[sq], me->occ = (uint8_t)occ[sq];
+                me->occ_frac = out->occ_frac[sq], me->lum = out->lum[sq], me->occ = (uint8_t)occ[sq], me->colored = (uint8_t)sqcol;
                 memcpy(me->mask, out->mask[sq], sizeof(me->mask));
             }
         }
