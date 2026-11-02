@@ -30,7 +30,7 @@ enum {
     ACT_QUIT, ACT_QUIT_YES, ACT_QUIT_NO, ACT_SQ, ACT_PIECE, ACT_TURN, ACT_SETTINGS, ACT_SET, ACT_PICK, ACT_RESCAN, ACT_LIB_OPEN, ACT_LIB_CLOSE, ACT_LIB_TAB, ACT_LIB_KEY, ACT_LIB_FILTER,
     ACT_LIB_SCROLL, ACT_LIB_GET, ACT_LIB_USE, ACT_LIB_DEL, ACT_LIB_FOLDER, ACT_BLOCK, ACT_TAB, ACT_THEME, ACT_CSLOT, ACT_CCOPY,
     ACT_CPART, ACT_CSWATCH, ACT_RESET, ACT_MODE, ACT_HINT, ACT_LIB_SECOND, ACT_SLIDE, ACT_HIDE, ACT_KEYROW, ACT_SHEET, ACT_SEARCH, ACT_EXPORT,
-    ACT_IMPORT, ACT_EYES
+    ACT_IMPORT, ACT_EYES, ACT_UPGRADE
 };
 
 typedef struct {
@@ -158,10 +158,11 @@ static struct {
     int heatmap, safety, kingdanger, ghost, ghostlook, ghostnum, ghostcolor, arrowanim, style;
     int confview, eyes, findstrict, lockboard, lowpower, dragwait, popups;
     int eyespos, eyessize;
+    int autoupd;
 // positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
          0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5, 4, 1, 0, 0,
-         0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1, 0, 2},
+         0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1, 0, 2, 1},
   cfg_default; // copied before load_cfg, the reset button goes back to this
 
 static const char *theme_names[NTHEMES];
@@ -417,6 +418,7 @@ static Setting sets[] = {
     {"Power saver", "lowpower", &cfg.lowpower, 3, power_names, NULL, "looks at the screen less often to save cpu, max is for slow pcs"},
     {"Wait while dragging", "dragwait", &cfg.dragwait, 2, onoff, NULL, "doesnt update while you drag a piece, so it doesnt flash wrong moves"},
     {"Hide under popups", "popups", &cfg.popups, 2, onoff, NULL, "stops drawing over popups that cover the board, like the game over box"},
+    {"Background updates", "autoupd", &cfg.autoupd, 2, onoff, NULL, "grabs new versions while it runs, then you just hit restart to update. only for the one line install"},
     {"Teach one piece", "teachone", &btn_teachone, 1, NULL, NULL, "click a square it got wrong, pick what it really is, and it learns just that piece"},
     {"Rescan board", "rescan", &btn_rescan, 1, NULL, NULL, "reads the whole board again from scratch if it got lost"},
     {"Teach these pieces", "teach", &btn_teach, 1, NULL, NULL, "learns your piece set from the board right now. fix wrong pieces first"},
@@ -1534,6 +1536,7 @@ static void draw_icon(Canvas *c, Rect r, int kind, uint32_t col)
 }
 
 static int update_new; // github has a newer commit than this copy
+static int update_ready; // and its already sitting in app.new, a restart swaps it in
 static char set_query[24];
 static int set_typing;
 static double stats_tab(Canvas *c, Rect m, double y, double pad, int draw);
@@ -1545,11 +1548,12 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
 {
     const char *items[10] = {"Helper mode", debug_on ? "Hide what it sees" : "Show what it sees",
                              fix_mode ? "Done fixing" : "Fix pieces", tracker.pos.side == WHITE ? "Its black's turn" : "Its white's turn",
-                             "Rescan board", "Engines", "Switch team", "Restart", "Update", "Quit"};
+                             "Rescan board", "Engines", "Switch team", "Restart", update_ready ? "Restart to update" : "Update", "Quit"};
     const char *hint[10] = {cfg.mode == 1 ? "on, moves are hidden" : cfg.mode == 2 ? "moves + helper stuff" : "hides the moves", "tags on every square",
                             "click one, pick whats there", "", "if it got lost", "get, pick or delete them", "", "",
                             "pulls the newest version", ""};
     if (update_new) hint[8] = "new version out";
+    if (update_ready) hint[8] = "new version is ready";
     int acts[10] = {ACT_MODE, ACT_DEBUG, ACT_FIX, ACT_TURN, ACT_RESCAN, ACT_LIB_OPEN, ACT_FLIP, ACT_RESTART, ACT_UPDATE, ACT_QUIT};
     int icons[10] = {9, 0, 1, 2, 3, 4, 5, 6, 7, 8}; // 9 is the switch, flips to 10 when its on
     int group[10] = {0, 1, 1, 1, 1, 2, 2, 3, 3, 4}; // divider line wherever this changes
@@ -2807,15 +2811,16 @@ static void draw_helper_board(Canvas *c, Rect bl, int bottom)
     }
 }
 
-static void draw_wgraph(Canvas *c, Rect p, Rect bl, Rect outr)
+static Rect draw_wgraph(Canvas *c, Rect p, Rect bl, Rect outr) // where it went, 0 wide if nowhere
 {
-    if (!cfg.wgraph || nwhist < 2) return;
+    Rect none = {0, 0, 0, 0};
+    if (!cfg.wgraph || nwhist < 2) return none;
     double h = 42;
     Rect g = {p.x, p.y + p.h + 6, p.w, h};
     int over = g.x < bl.x + bl.w && bl.x < g.x + g.w && g.y < bl.y + bl.h && bl.y < g.y + h;
     if (over || g.y + h > outr.y + outr.h - 4) g.y = p.y - h - 6;
     over = g.x < bl.x + bl.w && bl.x < g.x + g.w && g.y < bl.y + bl.h && bl.y < g.y + h;
-    if (over || g.y < outr.y + 4) return;
+    if (over || g.y < outr.y + 4) return none;
     panel_bg(c, g, 10, faded(TH->panel));
     double x0 = g.x + 8, w = g.w - 16, y0 = g.y + 5, gh = h - 10;
     draw_line(c, x0, y0 + gh / 2, x0 + w, y0 + gh / 2, 1, faded(0x60FFFFFF));
@@ -2824,6 +2829,7 @@ static void draw_wgraph(Canvas *c, Rect p, Rect bl, Rect outr)
         double ya = y0 + gh * (1 - whist[k - 1] / 100), yb = y0 + gh * (1 - whist[k] / 100);
         draw_line(c, xa, ya, xb, yb, 2, faded(whist[k] >= 50 ? 0xFF2BD957 : 0xFFFF4D4D));
     }
+    return g;
 }
 
 static void rate_moves(const Analysis *an, int have_an, int my_turn)
@@ -3291,7 +3297,7 @@ static void redraw(void)
             double bs = cfg.size == 0 ? 22 : (cfg.size == 1 ? 26 : 34);
             Rect p, gb, mb, bx, hb = {0, 0, 0, 0}, er;
             double es = cfg.size == 0 ? 16 : cfg.size == 1 ? 20 : 26, ew = es + 2; // the hide eye at the top left
-            int show_hint = cfg.mode == 1 && cfg.hints && my_turn && nlegal, nbt = 3 + show_hint;
+            int show_hint = cfg.mode == 1 && cfg.hints && my_turn && nlegal, nbt = 3 + show_hint + update_ready;
             double vw = cfg.size == 0 ? 190 : (cfg.size == 1 ? 220 : 270);
             int side = (cfg.spot == 2 && bl.x - vw - 8 >= outr.x + 4) ||
                        (cfg.spot == 3 && bl.x + bl.w + 8 + vw <= outr.x + outr.w - 4);
@@ -3417,6 +3423,15 @@ static void redraw(void)
                 add_hit(gb, ACT_SETTINGS);
                 add_hit(mb, ACT_MENU);
                 add_hit(bx, ACT_STOP);
+            }
+            if (update_ready) { // green up arrow, restarts into the new version
+                Rect ub = {hb.x - (show_hint ? bs + 4 : 0), hb.y, bs, bs};
+                draw_round_rect(c, ub, 5, 0xFF2E7D4F);
+                double cx = ub.x + bs / 2, s3 = bs * 0.3;
+                draw_line(c, cx, ub.y + bs * 0.78, cx, ub.y + bs * 0.4, fmax(2, bs * 0.13), 0xFFFFFFFF);
+                draw_triangle(c, cx - s3, ub.y + bs * 0.5, cx + s3, ub.y + bs * 0.5, cx, ub.y + bs * 0.18, 0xFFFFFFFF);
+                tip_spot(ub, "new version is ready, click to restart into it");
+                if (i == lead) add_hit(ub, ACT_UPGRADE);
             }
             draw_extras(c, bl, p, outr, i == lead);
         }
@@ -4424,11 +4439,12 @@ static void update_and_relaunch(void)
 #ifdef _WIN32
     // windows wont let anyone replace an exe thats running, so the script waits for us to quit, updates, then starts us again
     snprintf(getsh, sizeof(getsh), "%s\\%s", home, strcmp(mode, "git") ? "get.ps1" : "run.ps1");
-    char *ps[40] = {"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", getsh, "-Update"};
+    int hide = getenv("OPEN_CHEASE_LAUNCHED") && strcmp(mode, "git"); // started from the start menu, no console then either
+    char *ps[40] = {"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", getsh, hide ? "-Launch" : "-Update"};
     int np = 7;
     for (int i = 1; g_argv[i] && np < 39; i++) ps[np++] = g_argv[i];
     ps[np] = NULL;
-    if (spawn_detached(ps)) {
+    if (spawn_detached(ps, hide)) {
         set_note("couldnt start the updater");
         return;
     }
@@ -5107,8 +5123,9 @@ static double stats_tab(Canvas *c, Rect m, double y, double pad, int draw)
 }
 
 // update check, compares this copy with the newest commit on its branch
-static intptr_t upd_pid;
+static intptr_t upd_pid, stage_pid;
 static char upd_have[41], upd_branch[64], upd_json[1100];
+static void stage_maybe(const char *latest);
 
 static size_t read_small(const char *path, char *buf, size_t n)
 {
@@ -5188,6 +5205,7 @@ static void update_check_start(int replay)
     }
     if (br && *br) take_branch(br);
     if (!*upd_have || !*upd_branch) return;
+    stage_maybe(NULL); // one from last time thats still waiting
     snprintf(p, sizeof(p), "%s/update-check", data_dir);
     long long when = 0;
     char latest[41] = "", inst[41] = "";
@@ -5199,6 +5217,7 @@ static void update_check_start(int replay)
     long long now = (long long)time(NULL);
     if (!strcmp(inst, upd_have) && now >= when && now - when < 6 * 3600) { // checked lately and nothing got installed since
         update_new = *latest && strcmp(latest, upd_have);
+        if (update_new) stage_maybe(latest);
         return;
     }
     char url[300];
@@ -5208,9 +5227,11 @@ static void update_check_start(int replay)
     upd_pid = fetch_start(url, upd_json);
 }
 
+static void stage_poll(void);
 static void update_poll(void)
 {
     int ok;
+    stage_poll();
     if (!upd_pid || !job_done(upd_pid, &ok)) return;
     upd_pid = 0;
     char buf[4096], latest[41] = "", p[1100];
@@ -5227,6 +5248,83 @@ static void update_poll(void)
     if (f) fprintf(f, "%lld %s %s\n", (long long)time(NULL), *latest ? latest : "-", upd_have), fclose(f);
     if (*latest) update_new = strcmp(latest, upd_have) != 0;
     if (verbose) fprintf(stderr, "update check on %s: have %s, newest %s\n", upd_branch, upd_have, *latest ? latest : "(failed)");
+    if (update_new) stage_maybe(latest);
+}
+
+static int staged_sha(char *out) // sha of a ready app.new, 0 if there isnt one
+{
+    const char *home = getenv("OPEN_CHEASE_HOME");
+    char p[1100], buf[200];
+    if (!home) return 0;
+    snprintf(p, sizeof(p), "%.1000s.new/.ready", home);
+    if (access(p, F_OK)) return 0;
+    snprintf(p, sizeof(p), "%.1000s.new/.commit", home);
+    read_small(p, buf, sizeof(buf));
+    return take_sha(buf, out) && strcmp(out, upd_have);
+}
+
+// background update, only for get.sh / get.ps1 copies. git clones keep the manual one
+static void stage_maybe(const char *latest)
+{
+    static int tried;
+    const char *mode = getenv("OPEN_CHEASE_UPDATE"), *home = getenv("OPEN_CHEASE_HOME");
+    char got[41];
+    if (!mode || strcmp(mode, "get") || !home || stage_pid || update_ready) return;
+    if (staged_sha(got) && (!latest || !strcmp(got, latest))) {
+        update_ready = 1;
+        return;
+    }
+    if (!latest || !cfg.autoupd || tried) return;
+    tried = 1;
+    stage_pid = stage_start(home, upd_branch);
+    if (verbose) fprintf(stderr, "grabbing %s in the background\n", latest);
+}
+
+static void stage_poll(void)
+{
+    int ok;
+    char got[41];
+    if (!stage_pid || !job_done(stage_pid, &ok)) return;
+    stage_pid = 0;
+    if (staged_sha(got)) {
+        update_ready = 1;
+        set_note("new version is ready, hit restart to update");
+        redraw();
+    }
+    if (verbose) fprintf(stderr, "background update %s\n", update_ready ? "is ready" : "failed");
+}
+
+static void apply_update(void) // get.sh / get.ps1 swap app.new in, then start it
+{
+    char got[41];
+    if (!staged_sha(got)) {
+        update_ready = 0;
+        update_and_relaunch();
+        return;
+    }
+#ifdef _WIN32
+    update_and_relaunch(); // it waits for us to quit before swapping
+#else
+    char getsh[1100];
+    snprintf(getsh, sizeof(getsh), "%s/get.sh", getenv("OPEN_CHEASE_HOME"));
+    char *av[44] = {"bash", getsh, "--no-stockfish"};
+    int n = 3;
+    for (int i = 1; g_argv[i] && n < 43; i++) av[n++] = g_argv[i];
+    av[n] = NULL;
+    setenv("OPEN_CHEASE_BRANCH", upd_branch, 1);
+    state = SCANNING;
+    redraw();
+    analyzer_stop();
+    second_quit();
+    job_kill(dl_pid);
+    job_kill(lib_pid);
+    usleep(150000);
+    fflush(stdout);
+    fflush(stderr);
+    for (int fd = 3; fd < 1024; fd++) close(fd);
+    execvp("bash", av);
+    _exit(1);
+#endif
 }
 
 static void handle_key(int ch)
@@ -5575,7 +5673,11 @@ static void handle_click(double x, double y)
             break;
         case ACT_UPDATE:
             menu_open = 0;
-            update_and_relaunch();
+            if (update_ready) apply_update();
+            else update_and_relaunch();
+            break;
+        case ACT_UPGRADE:
+            apply_update();
             break;
         case ACT_QUIT:
             menu_open = 0;
@@ -5612,6 +5714,105 @@ static void handle_click(double x, double y)
     }
 }
 
+static int open_screen(const char *force, int light)
+{
+#if defined(_WIN32) || defined(__APPLE__)
+    if (force) fprintf(stderr, "--backend only does something on linux, ignoring it\n");
+#ifdef _WIN32
+    cap = backend_win();
+    ov = overlay_win();
+#else
+    cap = backend_mac();
+    ov = overlay_mac();
+#endif
+    if (!cap->init(cap) || !ov->init(ov, cap)) {
+        fprintf(stderr, "couldnt start the screen grab or the overlay\n");
+        return 0;
+    }
+#else
+    const char *desk = getenv("XDG_CURRENT_DESKTOP");
+    int gnome = desk && strstr(desk, "GNOME");
+    const char *stype = getenv("XDG_SESSION_TYPE");
+    int x11_session = (stype && !strcmp(stype, "x11")) || (!getenv("WAYLAND_DISPLAY") && getenv("DISPLAY"));
+    if (force ? !strcmp(force, "x11") : x11_session || (light && gnome && getenv("DISPLAY"))) { // light = just drawing, no screencast popup on gnome
+        cap = backend_x11();
+        ov = overlay_x11();
+        if (!cap->init(cap) || !ov->init(ov, cap)) {
+            fprintf(stderr, "couldnt open the x11 display (DISPLAY=%s)\n",
+                    getenv("DISPLAY") ? getenv("DISPLAY") : "");
+            return 0;
+        }
+    }
+    int want_wl = !cap && (force ? !strcmp(force, "wayland") : !gnome);
+    if (want_wl && getenv("WAYLAND_DISPLAY") && backend_wl_init_shared()) {
+        cap = backend_wl();
+        ov = overlay_wl();
+        if (!cap->init(cap) || !ov->init(ov, cap)) cap = NULL;
+    }
+    if (!cap && !x11_session && (!force || !strcmp(force, "gnome"))) {
+        cap = backend_gnome();
+        if (!cap->init(cap)) {
+            cap = NULL;
+        } else {
+            cap->capture(cap);
+            ov = overlay_x11();
+            if (!ov->init(ov, cap)) {
+                fprintf(stderr, "couldnt open the overlay window, is xwayland turned off? (DISPLAY=%s)\n",
+                        getenv("DISPLAY") ? getenv("DISPLAY") : "");
+                return 0;
+            }
+        }
+    }
+    if (!cap) {
+        fprintf(stderr, "couldnt find a way to see your screen. it works on hyprland, sway, gnome and x11 desktops like xfce, "
+                        "try --backend if yours is one of those\n");
+        return 0;
+    }
+#endif
+    return 1;
+}
+
+static int updating_screen(const char *force) // get.sh runs the old copy like this while it swaps in the new one
+{
+    if (!open_screen(force, 1)) return 1;
+    char path[1100], st[200];
+    snprintf(path, sizeof(path), "%s/update-status", data_dir);
+    long t0 = now_ms(), end = 0;
+    while (!quit) {
+        long t = now_ms();
+        read_small(path, st, sizeof(st));
+        st[strcspn(st, "\r\n")] = 0;
+        if (!strcmp(st, "done") || (end && t > end) || t - t0 > 30 * 60000) break;
+        if (!end && !strncmp(st, "update failed", 13)) end = t + 2500;
+        for (int i = 0; i < ov->ncanvas; i++) {
+            Canvas *c = ov->canvas(ov, i);
+            if (!c) continue;
+            canvas_clear(c);
+            if (i) continue; // first screen only
+            Rect o = {c->ox, c->oy, c->w / c->scale, c->h / c->scale};
+            Rect p = {o.x + (o.w - 380) / 2, o.y + (o.h - 116) / 2, 380, 116};
+            panel_bg(c, p, 14, TH->panel | 0xFF000000);
+            draw_text(c, p.x + 20, p.y + 16, "Updating open-chease...", 1, TH->title);
+            draw_text(c, p.x + 20, p.y + 50, fit_text(c, *st ? st : "starting...", p.w - 40), 0, TH->sub);
+            Rect bar = {p.x + 20, p.y + 86, p.w - 40, 8};
+            draw_round_rect(c, bar, 4, TH->btn | 0xFF000000);
+            double f = (t - t0) % 1600 / 1600.0 * 1.35 - 0.35, x0 = fmax(0, f), x1 = fmin(1, f + 0.35); // a chunk sliding along, theres no real percent
+            if (x1 > x0) draw_round_rect(c, (Rect){bar.x + bar.w * x0, bar.y, bar.w * (x1 - x0), bar.h}, 4, TH->title);
+        }
+        ov->commit(ov, NULL, 0);
+        double cx, cy;
+        if (ov->wait_events(ov, 33, &cx, &cy) < 0) break;
+    }
+    for (int i = 0; i < ov->ncanvas; i++) {
+        Canvas *c = ov->canvas(ov, i);
+        if (c) canvas_clear(c);
+    }
+    ov->commit(ov, NULL, 0);
+    fflush(stdout);
+    fflush(stderr);
+    _exit(0);
+}
+
 static void usage(void)
 {
     printf("open-chease, shows the best move on any chess board on your screen\n\n"
@@ -5635,6 +5836,8 @@ int main(int argc, char **argv)
     dump_dir = getenv("OPEN_CHEASE_DUMP");
     const char *force = NULL;
     const char *replay_dir = NULL, *send = NULL;
+    int updating = 0;
+    drop_console();
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--engine") && i + 1 < argc)
             engine = argv[++i], engine_cli = 1;
@@ -5647,6 +5850,8 @@ int main(int argc, char **argv)
             force = argv[++i];
         else if (!strcmp(argv[i], "--send") && i + 1 < argc)
             send = argv[++i];
+        else if (!strcmp(argv[i], "--updating"))
+            updating = 1;
         else if (!strcmp(argv[i], "--replay") && i + 1 < argc)
             replay_dir = argv[++i];
         else if (!strcmp(argv[i], "--team") && i + 1 < argc) {
@@ -5689,6 +5894,7 @@ int main(int argc, char **argv)
     char real_data[4096];
     const char *dd = full_path(data, real_data) && strlen(real_data) < sizeof(data_dir) ? real_data : data;
     snprintf(data_dir, sizeof(data_dir), "%.1023s", dd);
+    if (updating) return updating_screen(force);
     load_library();
     if (!engine_cli && have_saved_engine && (!*saved_engine || is_exec(saved_engine)))
         engine = *saved_engine ? saved_engine : NULL;
@@ -5787,59 +5993,7 @@ int main(int argc, char **argv)
         fflush(stderr);
         _exit(0); // plain exit locks every FILE and the engine reader is stuck in fgets on one
     }
-#if defined(_WIN32) || defined(__APPLE__)
-    if (force) fprintf(stderr, "--backend only does something on linux, ignoring it\n");
-#ifdef _WIN32
-    cap = backend_win();
-    ov = overlay_win();
-#else
-    cap = backend_mac();
-    ov = overlay_mac();
-#endif
-    if (!cap->init(cap) || !ov->init(ov, cap)) {
-        fprintf(stderr, "couldnt start the screen grab or the overlay\n");
-        return 1;
-    }
-#else
-    const char *desk = getenv("XDG_CURRENT_DESKTOP");
-    int gnome = desk && strstr(desk, "GNOME");
-    const char *stype = getenv("XDG_SESSION_TYPE");
-    int x11_session = (stype && !strcmp(stype, "x11")) || (!getenv("WAYLAND_DISPLAY") && getenv("DISPLAY"));
-    if (force ? !strcmp(force, "x11") : x11_session) {
-        cap = backend_x11();
-        ov = overlay_x11();
-        if (!cap->init(cap) || !ov->init(ov, cap)) {
-            fprintf(stderr, "couldnt open the x11 display (DISPLAY=%s)\n",
-                    getenv("DISPLAY") ? getenv("DISPLAY") : "");
-            return 1;
-        }
-    }
-    int want_wl = !cap && (force ? !strcmp(force, "wayland") : !gnome);
-    if (want_wl && getenv("WAYLAND_DISPLAY") && backend_wl_init_shared()) {
-        cap = backend_wl();
-        ov = overlay_wl();
-        if (!cap->init(cap) || !ov->init(ov, cap)) cap = NULL;
-    }
-    if (!cap && !x11_session && (!force || !strcmp(force, "gnome"))) {
-        cap = backend_gnome();
-        if (!cap->init(cap)) {
-            cap = NULL;
-        } else {
-            cap->capture(cap);
-            ov = overlay_x11();
-            if (!ov->init(ov, cap)) {
-                fprintf(stderr, "couldnt open the overlay window, is xwayland turned off? (DISPLAY=%s)\n",
-                        getenv("DISPLAY") ? getenv("DISPLAY") : "");
-                return 1;
-            }
-        }
-    }
-    if (!cap) {
-        fprintf(stderr, "couldnt find a way to see your screen. it works on hyprland, sway, gnome and x11 desktops like xfce, "
-                        "try --backend if yours is one of those\n");
-        return 1;
-    }
-#endif
+    if (!open_screen(force, 0)) return 1;
     keys_register();
     ctl_fd = ctl_open(data_dir);
     analyzer_set_think_ms(think_secs[cfg.think] * 1000);

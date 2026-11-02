@@ -62,7 +62,7 @@ wget -qO- https://raw.githubusercontent.com/sevvy-wevvy/open-chease/dev/get.sh |
 ```
 
 <p align="center">
-Everything goes in <code>~/.local/share/open-chease</code>
+Everything goes in <code>~/.local/share/open-chease</code>, and it shows up in your app menu so next time you can just click it. Starting it from there checks for updates first.
 </p>
 
 <br>
@@ -88,7 +88,7 @@ Some engines in the library need the <a href="https://aka.ms/vs/17/release/vc_re
 </p>
 
 <p align="center">
-Everything goes in <code>%LOCALAPPDATA%\open-chease</code>
+Everything goes in <code>%LOCALAPPDATA%\open-chease</code>, and it adds open-chease to the start menu (no console window, checks for updates first). Want one on the desktop too? Use the Options way below with <code>--desktop-shortcut</code>.
 </p>
 
 <br>
@@ -114,7 +114,7 @@ macOS will ask you to let Terminal record the screen. Turn it on in System Setti
 </p>
 
 <p align="center">
-Everything goes in <code>~/Library/Application Support/open-chease</code>
+Everything goes in <code>~/Library/Application Support/open-chease</code>, and theres an open-chease app in <code>~/Applications</code> after the first run.
 </p>
 
 <br>
@@ -124,7 +124,7 @@ Everything goes in <code>~/Library/Application Support/open-chease</code>
 <h2 align="center">⚙️ Options</h2>
 
 <p align="center">
-The first run also grabs Stockfish (about 80 MB) so the moves are way stronger. Add <code>--no-stockfish</code> if you dont want it, or <code>--update</code> to get the newest open-chease.
+The first run also grabs Stockfish (about 80 MB) so the moves are way stronger. Add <code>--no-stockfish</code> if you dont want it, or <code>--update</code> to get the newest open-chease. On windows <code>--desktop-shortcut</code> puts one on your desktop too.
 </p>
 
 <p align="center"><b>Linux and mac</b></p>

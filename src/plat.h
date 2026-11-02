@@ -40,7 +40,8 @@ void default_data(char *out, size_t n);
 int open_folder(const char *dir);
 int run_wait(char *const argv[]);
 void relaunch_self(char **argv, const char *home);
-int spawn_detached(char *const argv[]); // windows wont replace a running exe, so updates need us gone
+int spawn_detached(char *const argv[], int hidden); // windows wont replace a running exe, so updates need us gone
+void drop_console(void); // windows, closes the console window a shortcut opened for us
 void quit_signals(void (*fn)(int));
 int ctl_open(const char *data); // fifo for open-chease --send, wayland has no global hotkeys. -1 = none (windows)
 int ctl_read(int fd, char *buf, int n); // never blocks, bytes read
@@ -53,6 +54,7 @@ typedef struct {
 intptr_t dl_start(const DlJob *j);
 intptr_t lists_start(const char *data, const char *a, const char *b);
 intptr_t fetch_start(const char *url, const char *out); // small file, short timeout, out only shows up if it worked
+intptr_t stage_start(const char *home, const char *branch); // get.sh --stage, next version into app.new
 int job_done(intptr_t h, int *ok);
 void job_kill(intptr_t h);
 

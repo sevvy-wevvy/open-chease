@@ -17,7 +17,7 @@ jobs:
       - name: deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc-mingw-w64-x86-64 librsvg2-2 libcairo2 fish zsh python3-pil
+          sudo apt-get install -y -qq gcc-mingw-w64-x86-64 librsvg2-2 libcairo2 fish zsh python3-pil desktop-file-utils
           pip3 install --break-system-packages chess
       - name: build
         run: |
@@ -49,6 +49,28 @@ jobs:
           tar czf rec.tgz rec
           python3 tools/make_board.py "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" board.ppm --theme chesscom --sq 72 --x 200 --y 60 --W 1000 --H 700 --pieces tests/pieces/cburnett
           python3 -c "from PIL import Image; Image.open('board.ppm').save('board.png')"
+      - name: updater
+        run: |
+          a=$(printf 'a%.0s' $(seq 40)); b=$(printf 'b%.0s' $(seq 40))
+          mkdir -p srv
+          git archive --prefix=open-chease-$a/ -o srv/$a.tar.gz HEAD
+          git archive --prefix=open-chease-$b/ -o srv/$b.tar.gz HEAD
+          (cd srv && python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1 &)
+          sleep 1
+          export OPEN_CHEASE_DATA=$PWD/up-test OPEN_CHEASE_APPS=$PWD/up-apps OPEN_CHEASE_BRANCH=$BRANCH
+          export OPEN_CHEASE_ARCHIVE=http://127.0.0.1:8765 OPEN_CHEASE_LATEST_URL=http://127.0.0.1:8765/latest.json
+          echo "{\"sha\": \"$a\"}" > srv/latest.json
+          bash get.sh --fetch-only --no-stockfish
+          test "$(head -1 up-test/app/.commit)" = "$a" && test -x up-test/get.sh
+          desktop-file-validate up-apps/open-chease.desktop
+          echo "{\"sha\": \"$b\"}" > srv/latest.json
+          bash up-test/get.sh --stage
+          test -f up-test/app.new/.ready && test "$(head -1 up-test/app/.commit)" = "$a"
+          bash up-test/get.sh --fetch-only --no-stockfish
+          test "$(head -1 up-test/app/.commit)" = "$b" && test ! -e up-test/app.new && echo "staged update swapped in"
+          rm up-apps/open-chease.desktop
+          bash up-test/get.sh --fetch-only --no-stockfish
+          test ! -e up-apps/open-chease.desktop && echo "deleted launcher stays gone"
       - name: engine downloads
         run: |
           export OPEN_CHEASE_DATA=$PWD/dl-test
