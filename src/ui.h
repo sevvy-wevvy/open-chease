@@ -19,7 +19,7 @@ typedef struct {
     uint32_t panel, title, title_off, sub, btn, btn_fg, grid, arrow, menu, item, item_fg;
 } Theme;
 
-#define NTABS 10
+#define NTABS 11
 #define TAB_PLUG NTABS // then one per plugin that wants its own
 #define MAX_TABS (NTABS + 5)
 

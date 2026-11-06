@@ -150,10 +150,12 @@ static struct {
     int autoupd;
     int font, compact;
     int gpu;
+    int premove, pmarrow, pmthick, pmfrom, pmto, pmlabel, pmcolor;
 // positional, has to stay in the same order as the fields
 } cfg = {0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 4, 2, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0,
          0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 0, 0, 8, 0, 5,
-         4, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1, 0, 2, 0, 1, 0, 0, 1},
+         4, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1, 0, 2, 0, 1, 0, 0, 1,
+         0, 0, 0, 0, 0, 0, 0},
   cfg_default; // copied before load_cfg, the reset button goes back to this
 
 static const char *theme_names[NTHEMES];
@@ -375,6 +377,13 @@ static Setting sets[] = {
     {"Where it goes", "tto", &cfg.tto, 14, mark_names, NULL, "marks where theyll probably move it"},
     {"Move name", "tlabel", &cfg.tlabel, 2, onoff, NULL, "writes their move like Nf3 on the board"},
     {"Color", "tcolor", &cfg.tcolor, 12, color_names, NULL, "color of their arrow and marks"},
+    {"Premoves", "premove", &cfg.premove, 2, onoff, "Premoves", "when its their turn, shows the move you could premove if they play what the engine expects"},
+    {"Arrow", "pmarrow", &cfg.pmarrow, 9, arrow_names, NULL, "how the premove arrow looks"},
+    {"Arrow size", "pmthick", &cfg.pmthick, 10, thick_names, NULL, "how thick the premove arrow is"},
+    {"Piece to move", "pmfrom", &cfg.pmfrom, 14, mark_names, NULL, "marks the piece you would premove"},
+    {"Where it goes", "pmto", &cfg.pmto, 14, mark_names, NULL, "marks where the premove goes"},
+    {"Move name", "pmlabel", &cfg.pmlabel, 2, onoff, NULL, "writes the premove like Nf3 on the board"},
+    {"Color", "pmcolor", &cfg.pmcolor, 12, color_names, NULL, "color of the premove arrow and marks"},
     {"Material", "material", &cfg.material, 2, onoff, "Helper", "shows whos up in material, like +3"},
     {"Taken pieces", "taken", &cfg.taken, 2, onoff, NULL, "lists the pieces each side has taken"},
     {"Opening & phase", "opening", &cfg.opening, 2, onoff, NULL, "names the opening youre in and if its the opening, middlegame or endgame"},
@@ -1624,10 +1633,10 @@ static void draw_menu(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
     canvas_blit(dst, c, closing ? 1 - an : an, 0, closing ? -6 * an : -12 * (1 - an), -1);
 }
 
-const char *tab_names[NTABS] = {"Look", "Yours", "Theirs", "Engine", "Fun", "Helper", "Vision", "Themes", "Hotkeys", "Stats"};
-#define TAB_THEMES 7
-#define TAB_KEYS 8
-#define TAB_STATS 9
+const char *tab_names[NTABS] = {"Look", "Yours", "Theirs", "Premoves", "Engine", "Fun", "Helper", "Vision", "Themes", "Hotkeys", "Stats"};
+#define TAB_THEMES 8
+#define TAB_KEYS 9
+#define TAB_STATS 10
 int set_tab;
 static int cslot, cpart;
 
@@ -1715,7 +1724,7 @@ static const char *teach_steps[] = {
     "3. do that for every wrong one, then hit Done fixing",
     "4. come back here and hit Teach these pieces, it remembers them for this board",
 };
-#define TAB_VISION 6
+#define TAB_VISION 7
 
 static uint32_t swatch(int i)
 {
@@ -1957,7 +1966,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
             Rect box = {row.x + row.w - (act ? 36 : 126), row.y + 3, act ? 30 : 120, row.h - 6};
             draw_round_rect(c, box, 5, dd_open == i ? TH->title : TH->btn);
             uint32_t fg = dd_open == i ? 0xFF181818 : TH->btn_fg;
-            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.thcolor || st->v == &cfg.theme) {
+            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.pmcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.thcolor || st->v == &cfg.theme) {
                 uint32_t sw = st->v == &cfg.theme ? TH->panel : pick_color(*st->v, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : st->v == &cfg.hcolor ? 0xD8FF8A1F : 0xC8FF4D4D);
                 draw_round_rect(c, (Rect){box.x - 18, box.y + 4, 12, 12}, 6, sw | 0xFF000000);
             }
@@ -2024,7 +2033,7 @@ static void draw_settings(Canvas *dst, Rect p, Rect bl, Rect outr, int hit)
         for (int k = 0; k < st->n; k++) {
             Rect it = {l.x + 3, l.y + 3 + k * ih, l.w - 6, ih - 2};
             if (k == *st->v) draw_round_rect(c, it, 5, TH->btn);
-            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.thcolor || st->v == &cfg.theme) {
+            if (st->v == &cfg.mcolor || st->v == &cfg.tcolor || st->v == &cfg.pmcolor || st->v == &cfg.gcolor || st->v == &cfg.hcolor || st->v == &cfg.thcolor || st->v == &cfg.theme) {
                 uint32_t sw = (st->v == &cfg.theme ? themes[k].panel : pick_color(k, st->v == &cfg.mcolor ? TH->arrow : st->v == &cfg.gcolor ? TH->grid : st->v == &cfg.hcolor ? 0xD8FF8A1F : 0xC8FF4D4D)) | 0xFF000000;
                 if (st->v != &cfg.theme && k == 11) draw_round_rect(c, (Rect){it.x + 5, it.y + 4, 14, 14}, 7, 0xFFB0B0B0); // rim, black on the dark menu is invisible
                 draw_round_rect(c, (Rect){it.x + 6, it.y + 5, 12, 12}, 6, sw);
@@ -3348,6 +3357,23 @@ void redraw(void)
                 if (have_an && an.best && cfg.theirs >= 2)
                     draw_move(bc, bl, an.best, bottom, pick_color(cfg.tcolor, 0xC8FF4D4D), cfg.tarrow, arrow_tk(cfg.tthick),
                               cfg.tfrom, cfg.tto, cfg.tlabel ? san : NULL);
+                if (cfg.premove && have_an && an.best && an.pvlen >= 2 && an.pv[0] == an.best && !hushed()) {
+                    Pos pp = tracker.pos;
+                    Undo pu;
+                    Move pm = an.pv[1], pms[256];
+                    char psn[16] = "";
+                    if (pos_make(&pp, an.best, &pu)) {
+                        int pn = pos_gen_legal(&pp, pms), pok = 0;
+                        for (int k = 0; k < pn; k++) pok |= pms[k] == pm;
+                        if (pok) {
+                            move_to_san(&pp, pm, psn);
+                            draw_move(bc, bl, pm, bottom, pick_color(cfg.pmcolor, 0xC84D9BFF), cfg.pmarrow, arrow_tk(cfg.pmthick),
+                                      cfg.pmfrom, cfg.pmto, cfg.pmlabel ? psn : NULL);
+                            size_t l = strlen(line1);
+                            snprintf(line1 + l, sizeof(line1) - l, "   Premove %s", psn);
+                        }
+                    }
+                }
             }
             if (!*cl) {
                 const char *cut = strstr(line1, "   ");
@@ -6084,7 +6110,8 @@ int main(int argc, char **argv)
     static char pct[20][8];
     for (int i = 0; i < 20; i++) snprintf(pct[i], sizeof(pct[i]), "%d%%", (i + 1) * 5), fade_names[i] = pct[i];
     cfg.fade = cfg.fade_move = cfg.fade_line = 19;
-    cfg.thick = cfg.tthick = cfg.ththick = 3;
+    cfg.thick = cfg.tthick = cfg.ththick = cfg.pmthick = 3;
+    cfg.pmarrow = 5, cfg.pmfrom = 1, cfg.pmto = 4, cfg.pmcolor = 6;
     cfg_default = cfg; // before load_cfg, reset needs the shipped values
     hk_reset();
     load_cfg();

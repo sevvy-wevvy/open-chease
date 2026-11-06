@@ -218,7 +218,7 @@ All of it is under Gear > Helper and you can turn each one off. The win graph, c
 <summary align="center"><b>🎛 Settings 🎛</b></summary>
 
 <p align="center">
-Settings are split into tabs: Look, Yours, Theirs, Engine, Fun, Helper, Vision and Themes. Every tab has a <b>Reset this tab</b> button if you mess something up. Not sure what something does? Leave the mouse on it for a sec and a little tip pops up<br> <br>
+Settings are split into tabs: Look, Yours, Theirs, Premoves, Engine, Fun, Helper, Vision and Themes. Every tab has a <b>Reset this tab</b> button if you mess something up. Not sure what something does? Leave the mouse on it for a sec and a little tip pops up<br> <br>
 <b>Look</b><br>
 14 themes, where the box sits (top, bottom, or stacked on the left or right), box size and how see-through it is<br>
 The grid can be lines, just the outline, corners or off, in any color<br>
@@ -233,6 +233,8 @@ Top moves shows the 2nd and 3rd best too, as thinner faded arrows with a number 
 Rainbow is one of the colors too<br> <br>
 <b>Theirs</b> (their move)<br>
 Same options as yours, shown as text, on the board or both<br> <br>
+<b>Premoves</b> (off by default)<br>
+On their turn it shows the move you could premove, the one after what it expects them to play. Has its own arrow, size, piece and square marks, move name and color. Needs the engine to be thinking on their turn. If they play something else it just changes<br> <br>
 <b>Engine</b><br>
 <b>Engine</b> picks which one it uses and remembers it. <b>Get engines</b> opens the library with 44 engines (Reckless, Pawnocchio and a bunch more besides Stockfish) and how strong and how big each one is. You can type to search in it, Esc closes it<br>
 Think time, updates a second, threads, memory, and whether it keeps thinking on their turn<br>
